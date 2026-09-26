@@ -2,6 +2,9 @@
 
 **中文** | [English](README.en.md)
 
+[![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
+[![Phase 0](https://img.shields.io/badge/Phase%200-16%2F16%20gates-brightgreen)](scripts/verify.sh)
+
 > 不是造一台装置，而是造一个**能不断产生、验证、淘汰下一代装置设计的工程系统**。
 > Forge 是这个系统的第一版：电磁线圈设计的设计—评分—记录—学习闭环。
 

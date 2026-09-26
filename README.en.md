@@ -2,6 +2,9 @@
 
 [中文](README.md) | **English**
 
+[![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
+[![Phase 0](https://img.shields.io/badge/Phase%200-16%2F16%20gates-brightgreen)](scripts/verify.sh)
+
 > Not a machine. An engineering system that keeps producing, validating and
 > killing the designs of the *next* machine. Forge is its first version: a
 > design → score → record → learn loop for electromagnetic coil configurations.
