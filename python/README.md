@@ -19,8 +19,11 @@ parameters, so the two languages cannot drift apart silently.
 # gate G5: recompute the golden numbers and compare
 python3 python/aux/oracle.py --check-golden testdata/
 
-# compare a Go field export with the scipy oracle, point by point
-python3 python/aux/oracle.py --compare-go <go_xcheck.json>
+# compare a Go field export with the scipy oracle, point by point.
+# `forge xcheck` writes runs/scratch/field_samples.json in exactly this shape.
+python3 python/aux/oracle.py --compare-go runs/scratch/field_samples.json
+# ... and like-for-like against Go's 5 mm near-wire clamp (see below)
+python3 python/aux/oracle.py --compare-go runs/scratch/field_samples.json --proximity-floor 0.005
 
 # regenerate golden files into a scratch dir for human review (refuses testdata/)
 python3 python/aux/oracle.py --emit-golden /tmp/golden_review
@@ -66,6 +69,30 @@ same path can be tested without Go.
    docs do not say whether the reported `rho` is the mean, median or worst-case of
    the per-run coefficients. `rules_check.py` computes all three and requires the
    published value to match the closest one within 0.02.
+4. **The 5 mm near-wire clamp is applied at different scopes.** api.go describes the
+   floor for the coil-to-coil singular case in `B_coil_max` ("if another coil sits
+   closer than 5e-3 m"). `internal/physics/magnet.go` applies it to *every* sample
+   whose squared distance to the nearest wire (`alpha2`) is below the floor. On the
+   golden probe set this is invisible (nothing comes within 5 mm of a wire), but the
+   `forge xcheck` perturbed design puts one probe 4.896 mm from a wire and the two
+   definitions then differ by 4.3% (Go 67.85 T vs exact 70.78 T). The oracle's
+   default is the exact closed form; `--proximity-floor 0.005` reproduces Go's
+   clamp for a like-for-like cross-check, and `compare_go` always reports how many
+   points are inside the floor so the mode cannot hide the difference.
+
+## Measured cross-language agreement
+
+`forge xcheck` (3 designs x 32 points, 96 samples: the golden textbook mirror, a
+perturbed design at r+5%/z-5%/I+8%, and a box-centre design):
+
+```
+exact closed form           max relative 5.4e-02  (1 point inside the 5 mm wire floor)
+--proximity-floor 0.005     max relative 2.2e-12   <-- like-for-like, PASS
+```
+
+So Go's analytic solver and this scipy oracle agree to ~1e-12 everywhere the
+singular branch is not deliberately clamped, and the only divergence is the
+documented near-wire definition above.
 
 ## Definitions that the golden files cannot pin (chosen here, documented honestly)
 

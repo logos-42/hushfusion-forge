@@ -131,7 +131,7 @@ def elliptic_ke(m):
     return ellipk(m), ellipe(m)
 
 
-def loop_field(radius, current, r, z):
+def loop_field(radius, current, r, z, proximity_floor=0.0):
     """(Br, Bz) of one circular filament loop centred at z = 0, axis on z.
 
     Closed form (Simpson et al., NASA/TM-2001-211135) with
@@ -148,7 +148,15 @@ def loop_field(radius, current, r, z):
     point of golden_field_samples.json it returns -1.2185 T where the golden file,
     and a direct Biot-Savart quadrature, both give -4.05 T). The golden values win:
     the physically correct 1/r is implemented here, and the omission is reported as
-    a contract defect rather than reproduced.
+    a contract defect rather than reproduced. (Stage A's magnet.go reached the same
+    conclusion independently and restores the 1/r as well.)
+
+    proximity_floor: when > 0, samples whose squared distance to the nearest wire
+    point (alpha2) is below floor^2 are evaluated with alpha2 clamped to floor^2,
+    which is what Go's AnalyticSolver does near the wire (the closed form is
+    singular there). Default 0.0 = the exact closed form -- that is what the golden
+    anchors were generated with, and it is the stricter comparison. Pass 5e-3 to
+    compare like-for-like against a Go field export that contains near-wire probes.
 
     On the axis (r -> 0) the exact limit is used: Br = 0, Bz = mu0 I a^2 /
     (2 (a^2 + z^2)^1.5).
@@ -160,6 +168,8 @@ def loop_field(radius, current, r, z):
     s = radius * radius + r * r + z * z
     alpha2 = s - 2.0 * radius * r
     beta2 = s + 2.0 * radius * r
+    if proximity_floor > 0.0:
+        alpha2 = np.maximum(alpha2, proximity_floor * proximity_floor)
     m = 1.0 - alpha2 / beta2
     with np.errstate(invalid="ignore", divide="ignore", over="ignore"):
         k, e = elliptic_ke(m)
@@ -194,21 +204,21 @@ def loop_field_discrete(radius, current, r, z, n_seg=512):
     return br, bz
 
 
-def coilset_field(coils, r, z):
+def coilset_field(coils, r, z, proximity_floor=0.0):
     """Vector-summed (Br, Bz) of a coil set; coils are (radius, z, current)."""
     r = np.asarray(r, dtype=float)
     z = np.asarray(z, dtype=float)
     br = np.zeros_like(r)
     bz = np.zeros_like(r)
     for a, zc, cur in coils:
-        b1, b2 = loop_field(a, cur, r, z - zc)
+        b1, b2 = loop_field(a, cur, r, z - zc, proximity_floor=proximity_floor)
         br = br + b1
         bz = bz + b2
     return br, bz
 
 
-def coilset_magnitude(coils, r, z):
-    br, bz = coilset_field(coils, r, z)
+def coilset_magnitude(coils, r, z, proximity_floor=0.0):
+    br, bz = coilset_field(coils, r, z, proximity_floor=proximity_floor)
     return np.sqrt(br * br + bz * bz)
 
 
@@ -590,8 +600,25 @@ def _pick(d, *names, default=None):
     return default
 
 
-def compare_go(path, verbose=True):
-    """Compare a Go-exported field table against the scipy oracle, point by point."""
+def nearest_wire_distance(coils, r, z):
+    """Distance from each sample point to the nearest wire point of any coil."""
+    r = np.asarray(r, dtype=float)
+    z = np.asarray(z, dtype=float)
+    best = np.full(r.shape, np.inf)
+    for a, zc, _ in coils:
+        alpha2 = a * a + r * r + (z - zc) ** 2 - 2.0 * a * r
+        best = np.minimum(best, np.sqrt(np.maximum(alpha2, 0.0)))
+    return best
+
+
+def compare_go(path, verbose=True, proximity_floor=0.0):
+    """Compare a Go-exported field table against the scipy oracle, point by point.
+
+    proximity_floor mirrors Go's near-wire clamp (see loop_field): pass 5e-3 to
+    compare like-for-like when the export contains probes closer than 5 mm to a
+    wire. Points inside the floor are always counted and reported separately, so a
+    like-for-like run cannot hide where the clamp did the work.
+    """
     path = Path(path)
     if not path.is_file():
         print(f"error: missing {path}", file=sys.stderr)
@@ -607,7 +634,10 @@ def compare_go(path, verbose=True):
     ok = True
     worst_rel = 0.0
     worst_abs = 0.0
-    print(f"cross-language field check: {path} ({len(cases)} case(s))")
+    n_floored = 0
+    n_points = 0
+    print(f"cross-language field check: {path} ({len(cases)} case(s), "
+          f"proximity floor {proximity_floor or 0.0:g} m)")
     for ci, case in enumerate(cases):
         design = _pick(case, "design", "x", "vector")
         if design is None:
@@ -626,10 +656,15 @@ def compare_go(path, verbose=True):
             return 2
         r = np.asarray(r, dtype=float)
         z = np.asarray(z, dtype=float)
-        mine_br, mine_bz = coilset_field(coils, r, z)
+        mine_br, mine_bz = coilset_field(coils, r, z, proximity_floor=proximity_floor)
         mine_mag = np.sqrt(mine_br ** 2 + mine_bz ** 2)
+        dist = nearest_wire_distance(coils, r, z)
+        inside = dist < COIL_PROXIMITY_FLOOR
+        n_floored += int(np.sum(inside))
+        n_points += r.size
         name = _pick(case, "design_name", "name", default=f"case{ci}") if isinstance(case, dict) else f"case{ci}"
         checked = []
+        case_ok = True
         for mine, keys in ((mine_br, ("br", "B_r")), (mine_bz, ("bz", "B_z")),
                            (mine_mag, ("b_mag", "magnitude", "|B|", "mag"))):
             ref = _pick(case, *keys)
@@ -640,15 +675,25 @@ def compare_go(path, verbose=True):
             absmax = float(np.max(np.abs(mine - ref)))
             worst_rel = max(worst_rel, rel)
             worst_abs = max(worst_abs, absmax)
-            ok &= bad == 0
+            case_ok &= bad == 0
             checked.append(f"{keys[0]}: rel={rel:.3e} abs={absmax:.3e}"
                            + ("" if bad == 0 else f" BAD={bad} at point {i_rel}"))
         if not checked:
             print(f"  error: case {ci} carries no Go field values (looked for br/bz/b_mag)", file=sys.stderr)
             return 2
-        print(f"  [{'OK  ' if ok else 'FAIL'}] {name:<20} n={r.size} " + " | ".join(checked))
+        ok &= case_ok
+        flag = "OK  " if case_ok else "FAIL"
+        print(f"  [{flag}] {name:<34} n={r.size} " + " | ".join(checked))
+        if np.any(inside):
+            k = int(np.argmin(dist))
+            note = ("clamped to the floor" if proximity_floor > 0.0
+                    else "NOT clamped: re-run with --proximity-floor 0.005 for like-for-like")
+            print(f"         {int(np.sum(inside))} point(s) closer than "
+                  f"{COIL_PROXIMITY_FLOOR:g} m to a wire (nearest {dist[k]:.3e} m at point {k}); "
+                  f"Go's solver clamps alpha2 there, the exact closed form does not ({note})")
     print(f"cross-language field check {'PASS' if ok else 'FAIL'} "
-          f"(max relative {worst_rel:.3e}, max absolute {worst_abs:.3e} T)")
+          f"(max relative {worst_rel:.3e}, max absolute {worst_abs:.3e} T; "
+          f"{n_floored}/{n_points} point(s) inside the {COIL_PROXIMITY_FLOOR:g} m wire floor)")
     return 0 if ok else 1
 
 
@@ -715,11 +760,14 @@ def main(argv=None) -> int:
     g.add_argument("--compare-go", metavar="FILE", help="compare a Go field export point by point")
     g.add_argument("--emit-golden", metavar="DIR", help="regenerate golden files into DIR")
     ap.add_argument("--force", action="store_true", help="allow --emit-golden into testdata/")
+    ap.add_argument("--proximity-floor", type=float, default=0.0, metavar="M",
+                    help="clamp the near-wire singularity at M metres for --compare-go "
+                         "(Go uses 5e-3; default 0 = exact closed form)")
     args = ap.parse_args(argv)
     if args.check_golden:
         return check_golden(args.check_golden)
     if args.compare_go:
-        return compare_go(args.compare_go)
+        return compare_go(args.compare_go, proximity_floor=args.proximity_floor)
     return emit_golden(args.emit_golden, force=args.force)
 
 

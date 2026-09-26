@@ -158,6 +158,39 @@ def test_compare_go_goes_red_on_a_perturbed_field(tmp_path, capsys):
     assert "FAIL" in capsys.readouterr().out
 
 
+def test_nearest_wire_distance_is_measured_to_the_wire():
+    coils = [(0.3, -1.0, 1.0)]
+    d = oracle.nearest_wire_distance(coils, np.array([0.3, 0.0, 0.5]), np.array([-0.996, 0.0, -1.0]))
+    assert d[0] == pytest.approx(4e-3, rel=1e-9)          # 4 mm below the loop plane
+    # on the axis the nearest wire point is sqrt(a^2 + dz^2) away, not a
+    assert d[1] == pytest.approx(math.sqrt(0.3 ** 2 + 1.0 ** 2), rel=1e-12)
+    assert d[2] == pytest.approx(0.2, rel=1e-9)           # in the loop plane, 0.2 m outside
+
+
+def test_compare_go_near_wire_floor_flag(tmp_path, capsys):
+    """Plumbing check for the like-for-like mode (the Go side is simulated here)."""
+    spec = oracle.Spec.load(TESTDATA / "golden_spec.json")
+    design = oracle.textbook_mirror(spec)["design"]
+    n = spec.n_coils
+    coils = [(design[i], design[n + i], design[2 * n + i]) for i in range(n)]
+    r = np.array([0.3, 0.05, 0.6])
+    z = np.array([-0.996, 0.0, 0.4])                      # first point is 4 mm from a wire
+    br, bz = oracle.coilset_field(coils, r, z, proximity_floor=5e-3)
+    case = {"design": design, "design_name": "near_wire_probe",
+            "points_r": list(r), "points_z": list(z),
+            "br": list(br), "bz": list(bz), "b_mag": list(np.sqrt(br * br + bz * bz))}
+    p = tmp_path / "near_wire.json"
+    p.write_text(json.dumps({"samples": [case]}))
+
+    assert oracle.main(["--compare-go", str(p)]) == 1     # exact form vs the clamped one
+    out = capsys.readouterr().out
+    assert "closer than 0.005 m to a wire" in out and "NOT clamped" in out
+
+    assert oracle.main(["--compare-go", str(p), "--proximity-floor", "0.005"]) == 0
+    out = capsys.readouterr().out
+    assert "PASS" in out and "clamped to the floor" in out
+
+
 def test_emit_golden_refuses_to_overwrite_testdata(tmp_path, capsys):
     assert oracle.main(["--emit-golden", str(TESTDATA)]) == 2
     assert "refusing" in capsys.readouterr().err
