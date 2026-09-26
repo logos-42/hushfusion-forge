@@ -1,7 +1,7 @@
-// Package baseline: human baselines — deliberately strong, because a weak
-// baseline proves nothing.
+// Package baseline: 人类 baseline —— 刻意做强, 因为弱的
+// baseline 什么都证明不了。
 //
-// FROZEN INTERFACE (v0.1) — owner: stage B.
+// FROZEN INTERFACE (v0.1) — 负责人: stage B。
 package baseline
 
 import (
@@ -9,22 +9,22 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 )
 
-// Geom are the hand-written proportions of the textbook mirror.
+// Geom 是 textbook mirror 手工写定的比例。
 type Geom struct {
-	RCell              float64 // [m] central-cell loop radius
-	HalfGapCell        float64 // [m] half the central-cell spacing (Helmholtz: = RCell/2)
-	RThroat            float64 // [m] mirror-throat loop radius
-	ZThroat            float64 // [m] |z| of the throat loops
-	ThroatCurrentRatio float64 // throat current / cell current
+	RCell              float64 // [m] 中心 cell 线圈半径
+	HalfGapCell        float64 // [m] 中心 cell 间距的一半(Helmholtz: = RCell/2)
+	RThroat            float64 // [m] mirror throat 线圈半径
+	ZThroat            float64 // [m] throat 线圈的 |z|
+	ThroatCurrentRatio float64 // throat 电流 / cell 电流
 }
 
-// DefaultGeom is the reference geometry: r_cell=0.50, half-gap 0.25 (Helmholtz
-// condition spacing = radius), r_throat=0.30, |z_throat|=1.00, ratio 3.5.
+// DefaultGeom 是 reference 几何: r_cell=0.50, half-gap 0.25 (Helmholtz
+// 条件: 间距 = 半径), r_throat=0.30, |z_throat|=1.00, ratio 3.5。
 func DefaultGeom() Geom {
 	return Geom{RCell: 0.50, HalfGapCell: 0.25, RThroat: 0.30, ZThroat: 1.00, ThroatCurrentRatio: 3.5}
 }
 
-// Baseline is a named human design.
+// Baseline 是一个有名字的人类设计。
 type Baseline struct {
 	Name   string         `json:"name"`
 	Note   string         `json:"note"`
@@ -33,27 +33,27 @@ type Baseline struct {
 	Design []float64      `json:"design"`
 }
 
-// HelmholtzPair is two identical loops separated by their own radius.
+// HelmholtzPair 是两个相同线圈, 间距等于它们自身的半径。
 func HelmholtzPair(radius, current float64) []physics.Coil {
-	// Spacing = radius, centred on z = 0 (the textbook uniform-field pair).
+	// 间距 = 半径, 以 z = 0 为中心(textbook 的均匀场对)。
 	return []physics.Coil{
 		{Radius: radius, Z: -radius / 2.0, Current: current},
 		{Radius: radius, Z: radius / 2.0, Current: current},
 	}
 }
 
-// TextbookMirror is the hand-designed mirror the machine is asked to beat:
-// a Helmholtz-like central cell plus two mirror throats.
+// TextbookMirror 是被要求让机器打败的手工设计 mirror:
+// 一个类 Helmholtz 的中心 cell 加两个 mirror throat。
 //
-// The cell current is SOLVED (not guessed) so the midplane volume-averaged field
-// equals spec.BRef exactly, using a bracketing scan over a geometric grid
-// followed by bisection to ~1e-9 relative. The resulting throat current is
-// ~1.62 MA, which is why config.Bounds.Current[1] is 2.5e6.
+// cell 电流是求解出来的(不是猜的), 使中平面体积平均场
+// 精确等于 spec.BRef: 先在几何网格上做包围扫描,
+// 再用二分细化到约 1e-9 相对精度。得到的 throat 电流约为
+// 1.62 MA, 这就是 config.Bounds.Current[1] 取 2.5e6 的原因。
 //
-// Golden values live in testdata/golden_baseline.json (score -0.2905708...):
-// the Go implementation must reproduce that file within 1e-6.
+// golden 值位于 testdata/golden_baseline.json (score -0.2905708...):
+// Go 实现必须在该文件的 1e-6 之内复现它。
 func TextbookMirror(spec config.Spec) (Baseline, error) {
-	// The reference implementation solves against its default closed-form
-	// solver; same here (see analyticSolver).
+	// reference 实现是拿它的默认闭合形式 solver 求解的;
+	// 这里同样如此(见 analyticSolver)。
 	return textbookMirror(spec, analyticSolver(), physics.BuildGrids(spec))
 }

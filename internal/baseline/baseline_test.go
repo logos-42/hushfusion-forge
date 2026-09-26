@@ -1,9 +1,9 @@
-// Tests for the hand-designed baseline that do not need the physics core: the
-// coil layout, the ohmic cost proxy, the search-box audit, the bracketing
-// solver, and a freeze check on testdata/golden_baseline.json.
+// 手工设计 baseline 的测试, 不需要 physics 核心:
+// 线圈布局、欧姆成本代理、搜索盒审计、包围
+// 求解器, 以及对 testdata/golden_baseline.json 的冻结检查。
 //
-// The tests that DO need the field solver (does the solved cell current
-// reproduce the golden score / metrics?) are in golden_test.go.
+// 确实需要 field solver 的测试(求解出的 cell 电流是否
+// 复现 golden 得分 / metrics?)在 golden_test.go 里。
 package baseline
 
 import (
@@ -18,11 +18,11 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 )
 
-// --------------------------------------------------------------- fixtures ----
+// --------------------------------------------------------------- 测试夹具 ----
 
-// stubSolver is a deterministic, physics-free field: the same |B| everywhere.
-// Needed only to let probePhysics() call physics.MetricsFor without a real
-// solver (see evaluate-style tests in stage A); it computes no physics itself.
+// stubSolver 是一个确定性的、不含 physics 的 field: 处处同一个 |B|。
+// 只是为了在没有真实 solver 的情况下让 probePhysics() 能调用
+// physics.MetricsFor(见 stage A 里的 evaluate 风格测试); 它本身不算任何 physics。
 type stubSolver struct{ mag float64 }
 
 func (s stubSolver) Name() string { return "stub_constant" }
@@ -39,10 +39,10 @@ func (s stubSolver) Magnitude(coils []physics.Coil, r, z []float64) []float64 {
 	return out
 }
 
-// probePhysics calls every physics entry point stage B depends on and returns
-// the panic the core still raises (nil once stage A has landed). It exists so
-// "not implemented yet" is a precise test failure instead of an unrecovered
-// panic that would take the whole test binary down and hide the other results.
+// probePhysics 调用 stage B 依赖的每一个 physics 入口, 并返回
+// 核心仍然抛出的 panic(stage A 落地后为 nil)。它存在的意义是让
+// "尚未实现" 变成一次精确的测试失败, 而不是一个未恢复的
+// panic —— 那会把整个测试二进制拖垮并掩盖其他结果。
 func probePhysics() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -77,13 +77,13 @@ func requirePhysics(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------------- golden file ---
+// ------------------------------------------------------------- golden 文件 ---
 
-// goldenBaseline mirrors testdata/golden_baseline.json (the frozen cross-language
-// artifact). metrics is decoded as a map of floats because the file stores the
-// bool and int slots as JSON floats — the Python emitter float()ed them — so it
-// will not decode straight into physics.Metrics. Coil decodes directly: its JSON
-// tags are exactly the file's keys.
+// goldenBaseline 镜像 testdata/golden_baseline.json(冻结的跨语言
+// 产物)。metrics 解码成 float 的 map, 因为该文件把
+// bool 与 int 槽位存成 JSON float —— Python 生成端给它们 float() 了 —— 所以它
+// 无法直接解码进 physics.Metrics。Coil 可以直接解码: 它的 JSON
+// tag 恰好就是该文件的 key。
 type goldenBaseline struct {
 	Name      string             `json:"name"`
 	Note      string             `json:"note"`
@@ -124,15 +124,15 @@ func relDiff(got, want float64) float64 {
 	return d
 }
 
-// withinRelTol is "relative difference below tol, with an absolute floor of tol
-// for quantities that are (near) zero": the CONTRACT states metrics as relative
-// 1e-6, but ripple = 0 exactly, where a purely relative test is undefined.
+// withinRelTol 的含义是 "相对差小于 tol, 同时对 (近似)为零的量
+// 采用 tol 作为绝对下限": CONTRACT 把 metrics 规定为相对
+// 1e-6, 但 ripple 恰好 = 0, 此时纯相对检验是无定义的。
 func withinRelTol(got, want, tol float64) bool {
 	d := math.Abs(got - want)
 	return d <= tol || d <= tol*math.Abs(want)
 }
 
-// ---------------------------------------------------------- coil layout ------
+// ---------------------------------------------------------- 线圈布局 ------
 
 func TestHelmholtzPairGeometry(t *testing.T) {
 	const (
@@ -151,7 +151,7 @@ func TestHelmholtzPairGeometry(t *testing.T) {
 			t.Errorf("coil %d current = %v, want %v", i, c.Current, current)
 		}
 	}
-	// Helmholtz condition: separation equals the loop radius, centred on z = 0.
+	// Helmholtz 条件: 间距等于线圈半径, 以 z = 0 为中心。
 	if got, want := coils[0].Z, -radius/2.0; got != want {
 		t.Errorf("coil 0 z = %v, want %v", got, want)
 	}
@@ -163,9 +163,9 @@ func TestHelmholtzPairGeometry(t *testing.T) {
 	}
 }
 
-// TestDefaultGeomMatchesTheFrozenReference pins the hand-written proportions
-// against the geometry inside testdata/golden_baseline.json, so an edit to
-// DefaultGeom cannot silently change which machine the human baseline is.
+// TestDefaultGeomMatchesTheFrozenReference 把手写的比例钉在
+// testdata/golden_baseline.json 里的几何上, 这样对
+// DefaultGeom 的修改就不能静默改变人类 baseline 是哪台机器。
 func TestDefaultGeomMatchesTheFrozenReference(t *testing.T) {
 	g := loadGoldenBaseline(t)
 	geom := DefaultGeom()
@@ -174,8 +174,8 @@ func TestDefaultGeomMatchesTheFrozenReference(t *testing.T) {
 	if geom != want {
 		t.Fatalf("DefaultGeom() = %+v, want %+v", geom, want)
 	}
-	// Coils are built as (cell, cell, throat, throat) — the order the reference
-	// writes into the golden file.
+	// 线圈按 (cell, cell, throat, throat) 构造 —— 也就是 reference
+	// 写进 golden 文件的顺序。
 	wantR := []float64{geom.RCell, geom.RCell, geom.RThroat, geom.RThroat}
 	wantZ := []float64{-geom.HalfGapCell, geom.HalfGapCell, -geom.ZThroat, geom.ZThroat}
 	if len(g.Coils) != len(wantR) {
@@ -191,13 +191,13 @@ func TestDefaultGeomMatchesTheFrozenReference(t *testing.T) {
 	}
 }
 
-// TestMirrorCoilsMatchesGoldenGeometry lays out the solver-independent part of
-// the baseline at the golden cell current and compares it, element by element,
-// with the frozen file (structure exactly, currents from the file's own value).
+// TestMirrorCoilsMatchesGoldenGeometry 在 golden cell 电流下摆出 baseline 里
+// 与 solver 无关的那部分, 并逐元素地与冻结文件
+// 比较(结构精确一致, 电流取自文件自身的值)。
 func TestMirrorCoilsMatchesGoldenGeometry(t *testing.T) {
 	g := loadGoldenBaseline(t)
 	geom := DefaultGeom()
-	iCell := g.Design[9] // canonical design = [r..., z..., I...] with z ascending
+	iCell := g.Design[9] // canonical design = [r..., z..., I...], z 升序
 
 	coils := mirrorCoils(geom, iCell)
 	if len(coils) != len(g.Coils) {
@@ -215,11 +215,11 @@ func TestMirrorCoilsMatchesGoldenGeometry(t *testing.T) {
 			t.Errorf("coil %d current = %v, want %v", i, got.Current, want.Current)
 		}
 	}
-	// The throat current is the cell current times the frozen ratio.
+	// throat 电流等于 cell 电流乘以冻结的 ratio。
 	if got, want := coils[2].Current, geom.ThroatCurrentRatio*iCell; got != want {
 		t.Errorf("throat current = %v, want %v", got, want)
 	}
-	// The canonical vector is z-sorted; the golden file's "design" is that vector.
+	// canonical 向量按 z 排序; golden 文件的 "design" 就是那个向量。
 	design := []float64{0.30, 0.50, 0.50, 0.30, -1.00, -0.25, 0.25, 1.00,
 		coils[2].Current, coils[0].Current, coils[1].Current, coils[3].Current}
 	for i := range design {
@@ -229,9 +229,9 @@ func TestMirrorCoilsMatchesGoldenGeometry(t *testing.T) {
 	}
 }
 
-// TestCostProxyMatchesGoldenCost checks the ohmic cost proxy: the closed form
-// sum_k I_k^2 r_k, against both the golden number and its algebraic form for this
-// geometry (2 identical cell loops + 2 identical throats at 3.5x current).
+// TestCostProxyMatchesGoldenCost 检验欧姆成本代理: 闭合形式
+// sum_k I_k^2 r_k, 同时对照 golden 数字与它在此几何下的
+// 代数形式(2 个相同 cell 线圈 + 2 个在 3.5 倍电流下的相同 throat)。
 func TestCostProxyMatchesGoldenCost(t *testing.T) {
 	g := loadGoldenBaseline(t)
 	geom := DefaultGeom()
@@ -254,7 +254,7 @@ func TestCostProxyMatchesGoldenCost(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------- search-box audit ----
+// ------------------------------------------------------- 搜索盒审计 ----
 
 func TestCheckInsideBoundsRejectsClipping(t *testing.T) {
 	spec := config.DefaultSpec()
@@ -263,7 +263,7 @@ func TestCheckInsideBoundsRejectsClipping(t *testing.T) {
 	if err := checkInsideBounds(g.Coils, spec); err != nil {
 		t.Fatalf("the human baseline must sit inside the search box: %v", err)
 	}
-	// Exactly on a bound is fine: clipping does not move it.
+	// 恰好落在边界上是允许的: 裁剪不会移动它。
 	edge := []physics.Coil{{Radius: spec.Bounds.Radius[1], Z: spec.Bounds.Z[0], Current: spec.Bounds.Current[1]}}
 	if err := checkInsideBounds(edge, spec); err != nil {
 		t.Errorf("a coil exactly on the bounds must be accepted: %v", err)
@@ -285,7 +285,7 @@ func TestCheckInsideBoundsRejectsClipping(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------- bracketing root solve -----
+// ------------------------------------------------- 包围法求根 -----
 
 func TestBisectBracket(t *testing.T) {
 	const root = 463222.63959687366
@@ -302,7 +302,7 @@ func TestBisectBracket(t *testing.T) {
 	})
 
 	t.Run("nonlinear_monotone_root", func(t *testing.T) {
-		// f is the reference face of a real solve: strictly increasing, curved.
+		// f 是真实求解的 reference 面: 严格递增、弯曲。
 		f := func(i float64) float64 { return math.Pow(i, 1.5) - 2.0e7 }
 		want := math.Pow(2.0e7, 1.0/1.5)
 		got, err := bisectBracket(cellCurrentScanLo, cellCurrentScanHi, cellCurrentScanN, cellCurrentRelTol, f)
@@ -312,8 +312,8 @@ func TestBisectBracket(t *testing.T) {
 		if relDiff(got, want) > 1e-8 {
 			t.Errorf("root = %.16g, want %.16g", got, want)
 		}
-		// The residual must actually be small at the returned point (bisection is
-		// only useful if it lands on the root, not merely inside the bracket).
+		// 在返回点上残差必须真的小(二分只有在落在根上
+		// 才有用, 仅仅落在包围区间内不算)。
 		if res := math.Abs(f(got)); res > 1.0 {
 			t.Errorf("residual at the root = %v, want ~0", res)
 		}
@@ -373,13 +373,13 @@ func TestBisectBracket(t *testing.T) {
 	})
 }
 
-// ------------------------------------------------------------- file freeze ---
+// ------------------------------------------------------------- 文件冻结 ---
 
-// TestGoldenBaselineFilePinsTheFrozenAnchors re-states the headline numbers of
-// testdata/golden_baseline.json as literals. The file is parent-owned and frozen:
-// if it is edited, every comparison below (and in the golden tests) would happily
-// compare the implementation to a moved target, so the anchors are pinned here
-// once, in prose-and-numbers form.
+// TestGoldenBaselineFilePinsTheFrozenAnchors 把 testdata/golden_baseline.json 的
+// 头条数字以字面量形式重述一遍。该文件归父线所有且已冻结:
+// 如果它被改动, 下面每一个比较(以及 golden 测试里的比较)都会愉快地
+// 拿实现去和一个已经移动的目标比, 所以这些锚点在这里
+// 以文字加数字的形式一次性钉住。
 func TestGoldenBaselineFilePinsTheFrozenAnchors(t *testing.T) {
 	g := loadGoldenBaseline(t)
 

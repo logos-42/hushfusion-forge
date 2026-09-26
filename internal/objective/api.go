@@ -1,20 +1,20 @@
-// Package objective: one number for the machine, plus every raw term it came
-// from.
+// Package objective: 给机器的一个数字,
+// 以及构成它的每一个原始 term。
 //
-// FROZEN INTERFACE (v0.1) — owner: stage B.
+// FROZEN INTERFACE (v0.1) — 负责人: stage B。
 //
-// Design principle (important): the composite score is NEVER stored alone.
-// Every evaluation records the raw physical terms and every constraint residual
-// so that any weighting can be re-derived afterwards, and a reviewer can ask
-// "did the machine win on physics, or did it just buy a cheaper magnet?"
-// without re-running anything.
+// 设计原则(重要): composite score 绝不单独存储。
+// 每一次评估都记录原始物理 term 与每一条约束残差,
+// 这样任何权重都能在事后重新推导, 审阅者也能直接问
+// "机器是靠物理赢的, 还是只是买了个更便宜的磁体?"
+// 而无须重跑任何东西。
 //
 //	score = + w_field  * log10(B_mid / B_ref)
 //	        + w_mirror * log10(max(R, 0.2) / R_ref)
 //	        + w_volume * V_good
 //	        - w_ripple * ripple
 //	        - w_cost   * (cost / cost_ref)
-//	        - w_penalty * (sum of constraint violations)
+//	        - w_penalty * (约束违反量之和)
 package objective
 
 import (
@@ -25,15 +25,15 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 )
 
-// Mirror log-term floor and "not a mirror" threshold. FROZEN: they are part of
-// the score definition and the Python reference uses the same constants.
+// mirror log term 的下限与 "not a mirror" 阈值。FROZEN: 它们属于
+// 得分定义的一部分, Python reference 用的是同一组常量。
 const (
-	MirrorFloor = 0.2 // floor inside the mirror log term, keeps it finite
-	MirrorMin   = 1.1 // below this mirror ratio, the "not_a_mirror" penalty applies
+	MirrorFloor = 0.2 // mirror log term 内部的下限, 保证它有限
+	MirrorMin   = 1.1 // mirror ratio 低于此值时, "not_a_mirror" penalty 生效
 )
 
-// Term keys used in Terms / Weighted. FROZEN — they appear in registry records
-// and in the Python reference.
+// Terms / Weighted 中使用的 term key。FROZEN — 它们出现在 registry record
+// 以及 Python reference 中。
 const (
 	TermField  = "field"
 	TermMirror = "mirror"
@@ -42,14 +42,14 @@ const (
 	TermCost   = "cost"
 )
 
-// Penalty keys. FROZEN.
+// Penalty key。FROZEN。
 const (
 	PenConductorField = "conductor_field"
 	PenCoilSeparation = "coil_separation"
 	PenNotAMirror     = "not_a_mirror"
 )
 
-// EvalResult is everything one evaluation produced.
+// EvalResult 是一次评估产出的全部内容。
 type EvalResult struct {
 	Score        float64            `json:"score"`
 	Terms        map[string]float64 `json:"terms"`
@@ -62,12 +62,12 @@ type EvalResult struct {
 	ExperimentID int                `json:"-"`
 }
 
-// Evaluator scores designs. It holds the spec/grids/solver/cost reference so
-// callers stay thin.
+// Evaluator 给设计打分。它持有 spec/grids/solver/cost reference,
+// 好让调用方保持很薄。
 //
-// CONCURRENCY: Evaluator is safe for concurrent use (the search layer evaluates
-// candidates from several goroutines). Any mutable state must be atomic or
-// immutable; do not add plain counters without a mutex or atomic.
+// CONCURRENCY: Evaluator 可安全并发使用(search 层会从多个 goroutine
+// 评估候选设计)。任何可变状态必须是 atomic 或
+// 不可变的; 不要在没有 mutex 或 atomic 的情况下添加普通计数器。
 type Evaluator struct {
 	Spec    config.Spec
 	Solver  physics.Solver
@@ -75,15 +75,15 @@ type Evaluator struct {
 	Grids   physics.Grids
 }
 
-// NewEvaluator builds an evaluator. costRef is the ohmic cost of the human
-// baseline, so the cost term reads 1.0 == "as expensive as the reference
-// design". Callers pass baseline.TextbookMirror(spec).Cost.
+// NewEvaluator 构造一个 evaluator。costRef 是人类 baseline 的
+// 欧姆成本, 因此 cost term 读到 1.0 == "与 reference design
+// 一样贵"。调用方传 baseline.TextbookMirror(spec).Cost。
 func NewEvaluator(spec config.Spec, solver physics.Solver, costRef float64, grids physics.Grids) *Evaluator {
-	// Nothing is defaulted here on purpose. A nil solver or an empty grid set
-	// would silently produce a score made of NaNs, and a search comparing NaNs
-	// burns an entire budget to learn nothing. Preconditions are loud instead.
-	// The score's own divisors and limits are checked too: every one of them
-	// turns a term into Inf/NaN if it is zero.
+	// 这里刻意不做任何默认。nil solver 或空 grid 集
+	// 会静默产出一个全由 NaN 组成的得分, 而比较 NaN 的 search
+	// 会烧掉整个 budget 却什么也学不到。前置条件改为大声报错。
+	// 得分自身的除数与上限也一并检查: 它们之中任何一个
+	// 为零都会把一个 term 变成 Inf/NaN。
 	if solver == nil {
 		panic("objective.NewEvaluator: nil solver (no default: pass the analytic or discrete solver explicitly)")
 	}
@@ -116,7 +116,7 @@ func NewEvaluator(spec config.Spec, solver physics.Solver, costRef float64, grid
 	return &Evaluator{Spec: spec, Solver: solver, CostRef: costRef, Grids: grids}
 }
 
-// Evaluate scores one design vector.
+// Evaluate 给一个 design 向量打分。
 //
 //	terms[field]  = log10(max(B_mid, 1e-9) / B_ref)
 //	terms[mirror] = log10(max(R, MirrorFloor) / MirrorRef)
@@ -128,14 +128,14 @@ func NewEvaluator(spec config.Spec, solver physics.Solver, costRef float64, grid
 //	penalties[coil_separation] = max(0, (MinCoilSep - min_gap)/MinCoilSep)
 //	penalties[not_a_mirror]    = max(0, (MirrorMin - R)/MirrorMin)
 //
-//	Feasible = all penalties <= 0
-//	Design   = the canonical (z-sorted, clipped) vector actually evaluated
+//	Feasible = 所有 penalties <= 0
+//	Design   = 实际被评估的 canonical(z 排序、裁剪后)向量
 func (e *Evaluator) Evaluate(x []float64) EvalResult {
-	// The frozen signature has no error return, and every caller in the tree
-	// builds vectors of exactly spec.NParams() entries (RandomDesign, mutation +
-	// clip). A vector of another length is a programming error, never a design:
-	// padding or truncating it would score a machine nobody proposed, so this
-	// fails loudly instead. Checked before any physics call.
+	// 冻结签名没有 error 返回值, 而仓库里每个调用方
+	// 构造的向量都恰好有 spec.NParams() 项(RandomDesign、mutation +
+	// clip)。长度不对的向量是编程错误, 绝不是设计:
+	// 给它补零或截断等于给一台没人提出过的机器打分,
+	// 所以这里改为大声失败。在调用任何 physics 之前检查。
 	if len(x) != e.Spec.NParams() {
 		panic(fmt.Sprintf("objective.Evaluate: design vector has %d entries, spec wants %d", len(x), e.Spec.NParams()))
 	}
@@ -146,5 +146,5 @@ func (e *Evaluator) Evaluate(x []float64) EvalResult {
 	return e.evalFromMetrics(physics.MetricsFor(coils, e.Spec, e.Grids, e.Solver), physics.CoilsToVector(coils))
 }
 
-// Score is a convenience wrapper returning only the composite score.
+// Score 是只返回 composite score 的便利包装。
 func (e *Evaluator) Score(x []float64) float64 { return e.Evaluate(x).Score }

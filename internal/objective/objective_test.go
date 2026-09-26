@@ -1,10 +1,10 @@
-// Unit tests for the objective's algebra.
+// objective 代数部分的单元测试。
 //
-// These run WITHOUT stage A: the metrics are handed in directly (or through a
-// stub Solver), because the scoring law — five terms, three constraint
-// residuals, feasibility and the exact score decomposition — is stage B's and
-// must be verifiable on its own. The tests that do need the physics core live in
-// evaluate_fullpath_test.go and are parked until internal/physics lands.
+// 这些测试在没有 stage A 的情况下运行: metrics 直接传入(或经由
+// stub Solver), 因为计分律 —— 五个 term、三条约束
+// 残差、feasibility 以及精确的得分分解 —— 属于 stage B,
+// 必须能独立验证。确实需要 physics 核心的测试位于
+// evaluate_fullpath_test.go, 在 internal/physics 落地前先搁置。
 package objective
 
 import (
@@ -19,11 +19,11 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 )
 
-// ---------------------------------------------------------------- fixtures ---
+// ---------------------------------------------------------------- 测试夹具 ---
 
-// stubSolver is a deterministic, physics-free Solver: the same |B| at every
-// sample point. Physics-free on purpose — it lets the evaluator be exercised
-// (and, in evaluate_fullpath_test.go, the whole Evaluate path) without stage A.
+// stubSolver 是一个确定性的、不含 physics 的 Solver: 每个
+// 采样点都是同一个 |B|。刻意不含 physics —— 它让 evaluator 能被检验
+// (并且在 evaluate_fullpath_test.go 里, 整条 Evaluate 路径也能)而不需要 stage A。
 type stubSolver struct{ mag float64 }
 
 func (s stubSolver) Name() string { return "stub_constant" }
@@ -40,9 +40,9 @@ func (s stubSolver) Magnitude(coils []physics.Coil, r, z []float64) []float64 {
 	return out
 }
 
-// evalFixture builds an Evaluator whose only interesting content is the spec and
-// the cost reference. The grid is syntactically valid because NewEvaluator
-// insists on that; its sample values never reach the algebra.
+// evalFixture 构造一个 Evaluator, 它唯一有意义的内容是 spec 与
+// cost reference。grid 在语法上有效, 因为 NewEvaluator
+// 坚持如此; 它的采样值永远不会到达代数部分。
 func evalFixture(t *testing.T, spec config.Spec, costRef float64) *Evaluator {
 	t.Helper()
 	return NewEvaluator(spec, stubSolver{mag: 1.0}, costRef, miniGrids(spec))
@@ -68,8 +68,8 @@ func designVector(spec config.Spec) []float64 {
 	return x
 }
 
-// cleanMirror is a metric set that violates nothing: a real mirror (R = 3.5),
-// conductors well inside the limit, coils far apart.
+// cleanMirror 是一组不违反任何约束的 metric: 真正的 mirror(R = 3.5)、
+// conductor 远在限值之内、线圈相距很远。
 func cleanMirror() physics.Metrics {
 	return physics.Metrics{
 		BMidT:       1.0,
@@ -86,9 +86,9 @@ func cleanMirror() physics.Metrics {
 	}
 }
 
-// The frozen key sets, spelled out as literals on purpose: if a rename slips
-// into the implementation, the registry schema and the Python reference diverge
-// silently, and this is the cheap place to catch it.
+// 冻结的 key 集合, 刻意写成字面量: 如果某个重命名溜进
+// 实现里, registry schema 与 Python reference 会静默地
+// 分叉, 而这里是廉价地抓到它的地方。
 var (
 	frozenTermKeys    = []string{"field", "mirror", "volume", "ripple", "cost"}
 	frozenPenaltyKeys = []string{"conductor_field", "coil_separation", "not_a_mirror"}
@@ -102,7 +102,7 @@ func relDiff(got, want float64) float64 {
 	return d
 }
 
-// ------------------------------------------------------ terms / weights ------
+// ------------------------------------------------------ term / weight ------
 
 func TestTermsAndWeightedForMirrorShapedMetrics(t *testing.T) {
 	spec := config.DefaultSpec()
@@ -168,9 +168,9 @@ func TestTermsAndWeightedForMirrorShapedMetrics(t *testing.T) {
 	if got := res.Weighted[TermCost]; got != -1.0 {
 		t.Errorf("weighted[cost] = %v, want -1", got)
 	}
-	// -0.0, not +0.0: the ripple contribution is negated, and the Python
-	// reference writes "-0.0" into testdata/golden_baseline.json. Keeping the
-	// sign keeps the two implementations byte-comparable.
+	// 是 -0.0, 不是 +0.0: ripple 的贡献取了负号, 而 Python
+	// reference 往 testdata/golden_baseline.json 里写的是 "-0.0"。保持这个
+	// 符号可以让两个实现可按字节比较。
 	if v := res.Weighted[TermRipple]; v != 0 || !math.Signbit(v) {
 		t.Errorf("weighted[ripple] = %v, want -0.0 (sign below zero)", v)
 	}
@@ -191,11 +191,11 @@ func TestTermsAndWeightedForMirrorShapedMetrics(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------- penalty branches --
+// --------------------------------------------------------- penalty 分支 --
 
-// TestPenaltyBranches builds one design per constraint, each engineered to
-// trigger exactly that constraint, and checks the residual, the feasibility flag
-// and that the score stays finite.
+// TestPenaltyBranches 为每条约束构造一个设计, 每个都刻意
+// 触发恰好那条约束, 并检查残差、feasibility 标志
+// 以及得分保持有限。
 func TestPenaltyBranches(t *testing.T) {
 	spec := config.DefaultSpec()
 	e := evalFixture(t, spec, 1.0e12)
@@ -238,7 +238,7 @@ func TestPenaltyBranches(t *testing.T) {
 
 	t.Run("not_a_mirror", func(t *testing.T) {
 		m := cleanMirror()
-		m.MirrorRatio = 1.0 // uniform field: R < MirrorMin = 1.1
+		m.MirrorRatio = 1.0 // 均匀场: R < MirrorMin = 1.1
 		res := e.evalFromMetrics(m, designVector(spec))
 
 		want := (MirrorMin - 1.0) / MirrorMin
@@ -251,7 +251,7 @@ func TestPenaltyBranches(t *testing.T) {
 		if res.Feasible {
 			t.Error("a device with no mirror ratio must be infeasible")
 		}
-		// Above the floor: the log term uses R itself.
+		// 在下限之上: log term 直接用 R 本身。
 		if want := math.Log10(1.0 / spec.MirrorRef); res.Terms[TermMirror] != want {
 			t.Errorf("terms[mirror] = %v, want %v", res.Terms[TermMirror], want)
 		}
@@ -260,7 +260,7 @@ func TestPenaltyBranches(t *testing.T) {
 
 	t.Run("mirror_ratio_at_zero_hits_the_floor", func(t *testing.T) {
 		m := cleanMirror()
-		m.MirrorRatio = 0.0 // must not become log10(0) = -Inf
+		m.MirrorRatio = 0.0 // 不能变成 log10(0) = -Inf
 		res := e.evalFromMetrics(m, designVector(spec))
 
 		if want := math.Log10(MirrorFloor / spec.MirrorRef); res.Terms[TermMirror] != want {
@@ -273,11 +273,11 @@ func TestPenaltyBranches(t *testing.T) {
 	})
 
 	t.Run("empty_field_and_single_coil_stay_finite", func(t *testing.T) {
-		m := physics.Metrics{ // no field at all, one coil, no cost
+		m := physics.Metrics{ // 完全没有 field, 一个线圈, 无成本
 			BMidT:       0.0,
 			MirrorRatio: 0.0,
 			BCoilMaxT:   0.0,
-			MinCoilGapM: math.Inf(1), // physics.MinCoilGap returns +Inf for < 2 coils
+			MinCoilGapM: math.Inf(1), // 线圈数 < 2 时 physics.MinCoilGap 返回 +Inf
 			CostProxy:   0.0,
 			NCoils:      1,
 			MU0:         config.MU0,
@@ -300,12 +300,12 @@ func TestPenaltyBranches(t *testing.T) {
 	})
 }
 
-// -------------------------------------------- score == its own components ---
+// -------------------------------------------- score == 它自己的组成部分 ---
 
-// TestScoreIsExactlyTheSumOfItsParts is the anti-drift gate: the composite must
-// be reproducible, bit for bit, from the weighted terms and residuals that are
-// stored next to it. "Close enough" is not good enough here — a registry whose
-// score cannot be re-derived from its own terms is a registry nobody can audit.
+// TestScoreIsExactlyTheSumOfItsParts 是防漂移门禁: composite 必须
+// 能仅凭与它并存的 weighted term 与残差逐位复现。
+// 这里 "差不多" 不够好 —— 一个得分无法从自身 term
+// 重新推导出来的 registry 是没人能审计的 registry。
 func TestScoreIsExactlyTheSumOfItsParts(t *testing.T) {
 	spec := config.DefaultSpec()
 	e := evalFixture(t, spec, 1.0e12)
@@ -337,8 +337,8 @@ func TestScoreIsExactlyTheSumOfItsParts(t *testing.T) {
 	for name, m := range scenarios {
 		res := e.evalFromMetrics(m, designVector(spec))
 
-		// Key sets are frozen: the registry schema and the Python reference read
-		// these names.
+		// key 集合是冻结的: registry schema 与 Python reference 读的
+		// 就是这些名字。
 		if len(res.Terms) != len(frozenTermKeys) {
 			t.Fatalf("%s: %d term keys, want %d", name, len(res.Terms), len(frozenTermKeys))
 		}
@@ -356,7 +356,7 @@ func TestScoreIsExactlyTheSumOfItsParts(t *testing.T) {
 			}
 		}
 
-		// weighted == weight * term (sign included), exactly.
+		// weighted == weight * term(含符号), 精确成立。
 		w := spec.Weights
 		exact := map[string]float64{
 			TermField:  w.Field * res.Terms[TermField],
@@ -371,7 +371,7 @@ func TestScoreIsExactlyTheSumOfItsParts(t *testing.T) {
 			}
 		}
 
-		// The decomposition itself, summed in the documented order.
+		// 分解本身, 按文档化的顺序累加。
 		sumWeighted := 0.0
 		for _, k := range frozenTermKeys {
 			sumWeighted += res.Weighted[k]
@@ -389,21 +389,21 @@ func TestScoreIsExactlyTheSumOfItsParts(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------- golden anchor -------
+// ------------------------------------------------------- golden 锚点 -------
 
-// TestGoldenScoreReproducedFromFrozenMetrics checks the scoring law against the
-// cross-language anchor: feed testdata/golden_baseline.json's own metrics and
-// cost reference into the objective and the score must come back out at
-// -0.2905708161. This part needs no physics at all, so it is green today; the
-// same number from the real field path is in internal/baseline
-// (TestTextbookMirrorMatchesGolden).
+// TestGoldenScoreReproducedFromFrozenMetrics 用跨语言锚点检验计分律:
+// 把 testdata/golden_baseline.json 自己的 metrics 与
+// cost reference 喂给 objective, 得分必须原样吐出
+// -0.2905708161。这部分完全不需要 physics, 所以今天就是绿的;
+// 真实 field 路径给出的同一个数字位于 internal/baseline
+// (TestTextbookMirrorMatchesGolden)。
 func TestGoldenScoreReproducedFromFrozenMetrics(t *testing.T) {
 	g := loadGoldenBaseline(t)
 	spec := config.DefaultSpec()
 	e := evalFixture(t, spec, g.CostRef)
 
-	// The frozen artifact is what it claims to be (a tampered testdata/ must not
-	// be able to fake a green run here).
+	// 冻结产物就是它自称的东西(被篡改的 testdata/ 不能
+	// 在这里伪造出一次绿跑)。
 	if math.Abs(g.Score-(-0.2905708160753513)) > 1e-12 {
 		t.Fatalf("testdata/golden_baseline.json score = %.16g, want -0.2905708160753513", g.Score)
 	}
@@ -455,12 +455,12 @@ func TestGoldenScoreReproducedFromFrozenMetrics(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------------ concurrency ----
+// ------------------------------------------------------------ 并发 ----
 
-// TestConcurrentAlgebraMatchesSerial is the -race half of the Evaluator's
-// concurrency contract (api.go: "safe for concurrent use"): the shared Evaluator
-// must produce results identical to the serial ones when hammered from many
-// goroutines. The full Evaluate path is raced in evaluate_fullpath_test.go.
+// TestConcurrentAlgebraMatchesSerial 是 Evaluator 并发契约的 -race
+// 那一半(api.go: "safe for concurrent use"): 共享的 Evaluator
+// 在被许多 goroutine 猛打时必须产出与串行相同的结果。
+// 完整的 Evaluate 路径在 evaluate_fullpath_test.go 里做 race。
 func TestConcurrentAlgebraMatchesSerial(t *testing.T) {
 	spec := config.DefaultSpec()
 	e := evalFixture(t, spec, 1.0e12)
@@ -526,9 +526,9 @@ func TestConcurrentAlgebraMatchesSerial(t *testing.T) {
 	}
 }
 
-// TestEvaluatePanicsOnWrongLengthDesign pins the "no silent resize" rule:
-// Evaluate has no error return, so a wrong-length vector must fail loudly rather
-// than be padded or truncated (which would score a machine nobody proposed).
+// TestEvaluatePanicsOnWrongLengthDesign 钉住 "不做静默缩放" 规则:
+// Evaluate 没有 error 返回, 所以长度不对的向量必须大声失败,
+// 而不是被补零或截断(那会给一台没人提出过的机器打分)。
 func TestEvaluatePanicsOnWrongLengthDesign(t *testing.T) {
 	spec := config.DefaultSpec()
 	e := evalFixture(t, spec, 1.0e12)
@@ -545,14 +545,14 @@ func TestEvaluatePanicsOnWrongLengthDesign(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------------- golden file ---
+// ------------------------------------------------------------- golden 文件 ---
 
-// goldenBaseline mirrors testdata/golden_baseline.json.
+// goldenBaseline 镜像 testdata/golden_baseline.json。
 //
-// metrics is decoded as a map of floats on purpose: the file stores the bool and
-// int slots (coil_proximity_floor_hit, n_coils) as JSON floats, so it will not
-// decode straight into physics.Metrics (reported to mainline in the stage-B
-// report). Coil decodes directly because physics.Coil's tags are the file's.
+// metrics 刻意解码成 float 的 map: 该文件把 bool 与
+// int 槽位(coil_proximity_floor_hit、n_coils)存成 JSON float, 所以它无法
+// 直接解码进 physics.Metrics(已在 stage-B 报告中
+// 上报主线)。Coil 可以直接解码, 因为 physics.Coil 的 tag 就是该文件的 key。
 type goldenBaseline struct {
 	Name      string             `json:"name"`
 	Note      string             `json:"note"`
@@ -600,7 +600,7 @@ func loadGoldenBaseline(t *testing.T) goldenBaseline {
 	return g
 }
 
-// ----------------------------------------------------------------- helpers ---
+// ----------------------------------------------------------------- 辅助函数 ---
 
 func requireFinite(t *testing.T, v float64) {
 	t.Helper()

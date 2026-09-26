@@ -1,12 +1,12 @@
-// The objective's algebra, split out of api.go so that it can be exercised
-// without the physics core running (see CONTRACT.md §4: stage B's unit tests
-// must not be blocked by stage A's package).
+// objective 的代数部分, 从 api.go 拆出来, 以便
+// 在 physics 核心不运行的情况下也能被检验(见 CONTRACT.md §4: stage B 的单元测试
+// 不能被 stage A 的包阻塞)。
 //
-// Evaluate is the thin wrapper: decode the design vector, run
-// physics.MetricsFor once, land here. Everything that decides the number — the
-// five terms, their weights, the three constraint residuals, feasibility and the
-// composite — lives in this one function, so there is exactly one place where a
-// score can be formed.
+// Evaluate 是那层薄包装: 解码 design 向量, 跑一次
+// physics.MetricsFor, 然后落到这里。决定那个数字的一切 ——
+// 五个 term、它们的 weight、三条约束残差、feasibility 以及
+// composite —— 都活在这一个函数里, 所以形成一个 score 的位置
+// 恰好只有一处。
 package objective
 
 import (
@@ -15,31 +15,31 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 )
 
-// termOrder and penaltyOrder are the only orders in which the composite score is
-// summed. The score is formed by summing the weighted terms and the normalised
-// violations in exactly this order, so that
+// termOrder 和 penaltyOrder 是 composite score 求和时唯一允许的顺序。
+// 得分由加权 term 与归一化违反量按这个确切顺序累加而成,
+// 使得
 //
 //	score == Σ weighted - weights.penalty * Σ penalties
 //
-// holds bit-for-bit rather than "to within a rounding". The registry is meant to
-// be re-auditable after the fact, and "the score does not match its own terms" is
-// a hard failure, not a tolerance question. Keep in sync with the score formula
-// at the top of api.go; the test spells the keys out as literals on purpose.
+// 逐位成立, 而不是 "在舍入误差内"成立。registry 的意义就在于
+// 事后可重新审计, 而 "得分与它自己的 term 对不上"
+// 是硬失败, 不是容差问题。与 api.go 顶部的 score 公式
+// 保持同步; 测试刻意把 key 写成字面量。
 var (
 	termOrder    = [...]string{TermField, TermMirror, TermVolume, TermRipple, TermCost}
 	penaltyOrder = [...]string{PenConductorField, PenCoilSeparation, PenNotAMirror}
 )
 
-// evalFromMetrics builds the full evaluation of one design from its already
-// computed field metrics, and from the canonical design vector it came from.
+// evalFromMetrics 从某个设计已经算好的 field metrics,
+// 以及它来源的 canonical design 向量, 构造这个设计的完整评估。
 //
-// Deliberately no error return and no clamping of NaN away: a metric the physics
-// layer could not compute must reach the caller as NaN (loud) instead of being
-// silently replaced by a plausible finite number (which would be a fabricated
-// score). What this function does guarantee is that a *well defined* infeasible
-// design — huge conductor field, coils on top of each other, no mirror at all —
-// yields a finite score: the floor terms (MirrorFloor, 1e-9) and the max(0, ·)
-// residuals are exactly what keeps those cases on the finite side.
+// 刻意不返回 error, 也不把 NaN 钳掉: physics 层算不出来的 metric
+// 必须以 NaN 形式(大声地)到达调用方, 而不是
+// 被静默替换成一个看似合理的有限数(那将是一个伪造的
+// 得分)。这个函数确实保证的是: 一个*定义良好*的不可行
+// 设计 —— 巨大的 conductor field、线圈叠在一起、完全没有 mirror ——
+// 会得到有限得分: 那些下限项(MirrorFloor、1e-9)与 max(0, ·)
+// 残差正是把这些情形留在有限一侧的东西。
 func (e *Evaluator) evalFromMetrics(m physics.Metrics, design []float64) EvalResult {
 	s := e.Spec
 	w := s.Weights
@@ -74,9 +74,9 @@ func (e *Evaluator) evalFromMetrics(m physics.Metrics, design []float64) EvalRes
 	}
 	score -= w.Penalty * violation
 
-	// Feasible mirrors the reference's all(v <= 0): written as !(v <= 0) so a NaN
-	// residual counts as infeasible instead of slipping through as "no
-	// violation".
+	// Feasible 复刻 reference 的 all(v <= 0): 写成 !(v <= 0) 是为了让 NaN
+	// 残差被算作 infeasible, 而不是以 "无违反"
+	// 的名义溜过去。
 	feasible := true
 	for _, k := range penaltyOrder {
 		if !(penalties[k] <= 0) {

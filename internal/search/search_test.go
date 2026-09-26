@@ -1,29 +1,29 @@
-// Unit tests for the four search algorithms.
+// 四个搜索算法的单元测试。
 //
-// Design choice (this is the reason runner.Scorer exists): every test injects a
-// TOY scorer instead of a real *runner.Runner. The toy is a deterministic smooth
-// bowl on the design box whose optimum sits exactly on the human baseline
-// design, and it synthesises its own ascending design ids ("D0001"...). Nothing
-// here touches internal/physics or internal/registry, so stage D is verified
-// end-to-end on its own, and the tests stay fast and bit-exact.
+// 设计选择(这正是 runner.Scorer 存在的原因): 每个测试都注入一个
+// TOY scorer, 而不是真的 *runner.Runner。这个玩具是一个确定性的光滑
+// 碗形函数, 定义在设计盒上, 其最优点恰好落在人类 baseline
+// 设计上, 并且它自己合成递增的 design id("D0001"...)。这里
+// 不碰 internal/physics 或 internal/registry, 因此 stage D 可以独立地
+// 做端到端验证, 测试也保持快速且逐位精确。
 //
-// What is proven here:
+// 这里证明了什么:
 //
-//	budget exactness      NEvals == Budget for every method, including budgets
-//	                      that do not divide mu/lambda and a chunk boundary
-//	trajectory            len(History) == Budget, monotone non-decreasing,
-//	                      History[last] == BestScore, BestScore == max scored
-//	reproducibility       same Options -> bit-identical Result (twice)
-//	Workers invariance    Workers=4/8 == Workers=1, bit-identical scores,
-//	                      trajectory, best design and the multiset of evaluated
-//	                      designs (run this file under -race)
-//	quality               evolution beats random's mean over 3 seeds, equal budget
-//	warm start            EvolutionWarm's first evaluation IS the warm design
-//	lineage               every child record carries the design_id of a parent
-//	                      that really exists, from an earlier generation
-//	EvalsToBeat           first index above the baseline, -1 when never beaten
-//	LHS structure         one point per stratum per dimension, canonical + in box
-//	dispatch              unknown method is a hard error
+//	budget 精确性        每个方法都有 NEvals == Budget, 包括不能整除
+//	                      mu/lambda 的 budget 以及块边界情形
+//	轨迹                  len(History) == Budget、单调不减、
+//	                      History[last] == BestScore, BestScore == 已打分中的最大值
+//	可复现性              相同 Options -> 逐位相同的 Result(两次)
+//	Workers 不变性        Workers=4/8 == Workers=1, 得分、轨迹、最佳设计
+//	                      以及被评估设计的多重集都逐位相同
+//	                      (在 -race 下跑本文件)
+//	质量                  等 budget 下 evolution 在 3 个 seed 上胜过 random 的均值
+//	warm start            EvolutionWarm 的第一次评估就是 warm design
+//	lineage               每条 child record 都带着某个 parent 的 design_id,
+//	                      该 parent 真实存在且来自更早的代数
+//	EvalsToBeat           超过 baseline 的第一个下标, 从未超过时为 -1
+//	LHS 结构              每个维度每个分层一个点, canonical 且在盒内
+//	分发                  未知方法是硬错误
 package search
 
 import (
@@ -44,15 +44,15 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/runner"
 )
 
-// ---------------------------------------------------------------- toy scorer --
+// ---------------------------------------------------------------- 玩具 scorer --
 
-// toyScorer implements runner.Scorer. Scores are a pure function of the design;
-// the id counter is the only mutable state and it is mutex-guarded, so the toy
-// is safe for the concurrent (Workers > 1) path.
+// toyScorer 实现 runner.Scorer。得分是设计的纯函数;
+// id 计数器是唯一的可变状态, 且由 mutex 保护, 所以这个玩具
+// 对并发(Workers > 1)路径是安全的。
 type toyScorer struct {
 	spec config.Spec
-	opt  []float64 // optimum, in normalised box coordinates
-	seq  []float64 // when non-nil, score = seq[EvalIndex % len(seq)] (x ignored)
+	opt  []float64 // 最优点, 用归一化盒坐标表示
+	seq  []float64 // 非 nil 时 score = seq[EvalIndex % len(seq)](忽略 x)
 
 	mu      sync.Mutex
 	n       int
@@ -64,7 +64,7 @@ type toyScorer struct {
 }
 
 func newToyScorer(spec config.Spec) *toyScorer {
-	base := textbookMirrorDesign // the toy optimum IS the human baseline design
+	base := textbookMirrorDesign // 玩具的最优点就是人类 baseline 设计
 	lo, hi := spec.Lower(), spec.Upper()
 	opt := make([]float64, len(base))
 	for j := range opt {
@@ -80,7 +80,7 @@ func (s *toyScorer) score(x []float64, meta runner.Meta) float64 {
 	lo, hi := s.spec.Lower(), s.spec.Upper()
 	total := 0.0
 	for j := range x {
-		u := (x[j] - lo[j]) / (hi[j] - lo[j]) // normalised box coordinate
+		u := (x[j] - lo[j]) / (hi[j] - lo[j]) // 归一化盒坐标
 		d := u - s.opt[j]
 		total -= d * d
 	}
@@ -123,9 +123,9 @@ func (s *toyScorer) snapshot() (designs [][]float64, metas []runner.Meta, ids []
 		append([]float64(nil), s.scores...)
 }
 
-// fingerprint is the order-independent multiset of evaluated designs: it must be
-// identical for Workers = 1 and Workers = 4 even though the recording order is
-// not.
+// fingerprint 是被评估设计的顺序无关多重集: 它必须在
+// Workers = 1 与 Workers = 4 下相同, 尽管记录顺序
+// 并非如此。
 func (s *toyScorer) fingerprint() string {
 	designs, _, _, _ := s.snapshot()
 	parts := make([]string, len(designs))
@@ -136,7 +136,7 @@ func (s *toyScorer) fingerprint() string {
 	return strings.Join(parts, "|")
 }
 
-// --------------------------------------------------------------- test helpers --
+// --------------------------------------------------------------- 测试辅助函数 --
 
 const testBudget = 600
 
@@ -159,10 +159,10 @@ func floatsEqual(a, b []float64) bool {
 	return true
 }
 
-// sameResult describes the first difference between two Results, "" when they
-// agree bit-for-bit. strictIDs is off only for the Workers comparison, where the
-// registry (here: the toy id counter) may hand out ids in completion order —
-// the documented single exception to reproducibility.
+// sameResult 描述两个 Result 之间的第一处差异, 逐位一致
+// 时返回 ""。strictIDs 只在 Workers 比较里关闭, 因为那里的
+// registry(此处是玩具的 id 计数器)可能按完成顺序发 id ——
+// 这是可复现性已文档化的唯一例外。
 func sameResult(got, want Result, strictIDs bool) string {
 	switch {
 	case got.Algorithm != want.Algorithm:
@@ -196,8 +196,8 @@ func allMethods() []string {
 	return []string{AlgorithmRandom, AlgorithmLHS, AlgorithmEvolution, AlgorithmEvolutionWarm}
 }
 
-// checkInsideBoxAndCanonical asserts every design handed to the scorer is inside
-// the box and in canonical (z-ascending) order — the mutation/decoding contract.
+// checkInsideBoxAndCanonical 断言交给 scorer 的每个设计都在
+// 盒内且为 canonical(z 升序)顺序 —— 这就是 mutation/解码契约。
 func checkInsideBoxAndCanonical(t *testing.T, spec config.Spec, designs [][]float64) {
 	t.Helper()
 	lo, hi := spec.Lower(), spec.Upper()
@@ -219,7 +219,7 @@ func checkInsideBoxAndCanonical(t *testing.T, spec config.Spec, designs [][]floa
 	}
 }
 
-// --------------------------------------------------------- default / constants --
+// --------------------------------------------------------- 默认值 / 常量 --
 
 func TestDefaultOptionsMatchesDocumentedDefaults(t *testing.T) {
 	spec := config.DefaultSpec()
@@ -290,7 +290,7 @@ func TestBudgetIsExactAndHistoryIsBestSoFar(t *testing.T) {
 				if len(designs) != budget {
 					t.Fatalf("scorer saw %d designs, want %d", len(designs), budget)
 				}
-				// EvalIndex must be exactly 0..budget-1, in order.
+				// EvalIndex 必须恰好是按顺序的 0..budget-1。
 				for i, m := range metas {
 					if m.EvalIndex != i {
 						t.Fatalf("meta[%d].EvalIndex = %d, want %d", i, m.EvalIndex, i)
@@ -305,8 +305,8 @@ func TestBudgetIsExactAndHistoryIsBestSoFar(t *testing.T) {
 					}
 					return
 				}
-				// Independent recomputation of the trajectory from what the
-				// scorer actually received.
+				// 独立地根据 scorer 实际收到的东西重算
+				// 轨迹。
 				wantBestIdx, wantRun := 0, math.Inf(-1)
 				var wantHist []float64
 				for i, v := range rawScores {
@@ -336,7 +336,7 @@ func TestBudgetIsExactAndHistoryIsBestSoFar(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------------ reproducibility --
+// ------------------------------------------------------------ 可复现性 --
 
 func TestReproducibilityIsBitIdentical(t *testing.T) {
 	spec := config.DefaultSpec()
@@ -362,11 +362,11 @@ func TestReproducibilityIsBitIdentical(t *testing.T) {
 	}
 }
 
-// TestDifferentSeedsDiverge guards against a Seed that is silently ignored. It
-// compares the multiset of evaluated designs rather than the trajectory, because
-// evolution_warm's trajectory is legitimately flat in this toy: the warm start
-// IS the toy optimum, so every seed's best-so-far is already maximal at
-// evaluation 0.
+// TestDifferentSeedsDiverge 防止 Seed 被静默忽略。它
+// 比较的是被评估设计的多重集而不是轨迹, 因为
+// evolution_warm 的轨迹在这个玩具里合法地是平的: warm start
+// 就是玩具最优点, 所以每个 seed 的 best-so-far 在第 0 次
+// 评估时就已经是最大值了。
 func TestDifferentSeedsDiverge(t *testing.T) {
 	spec := config.DefaultSpec()
 	for _, method := range allMethods() {
@@ -384,7 +384,7 @@ func TestDifferentSeedsDiverge(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------- Workers invariance --
+// --------------------------------------------------------- Workers 不变性 --
 
 func TestWorkersDoNotChangeResults(t *testing.T) {
 	spec := config.DefaultSpec()
@@ -418,7 +418,7 @@ func TestWorkersDoNotChangeResults(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------------------- quality --
+// ------------------------------------------------------------------- 质量 --
 
 func TestEvolutionBeatsRandomOnTheToyProblem(t *testing.T) {
 	spec := config.DefaultSpec()
@@ -499,7 +499,7 @@ func TestWarmStartIsTheFirstEvaluation(t *testing.T) {
 			t.Fatalf("default warm start %v is not the textbook mirror %v", want, textbookMirrorDesign)
 		}
 		checkInsideBoxAndCanonical(t, spec, [][]float64{want})
-		// The knowledge must actually pay: the toy optimum is the baseline.
+		// 知识必须真的赚钱: 玩具最优点就是 baseline。
 		if res.BestScore < -1e-12 {
 			t.Fatalf("warm start began at the toy optimum but BestScore = %v", res.BestScore)
 		}
@@ -550,7 +550,7 @@ func TestLineageParentsExistAndPrecedeTheirChildren(t *testing.T) {
 				}
 				designs, metas, ids, _ := sc.snapshot()
 
-				// id bookkeeping: when was each design first seen, and in which generation?
+				// id 记账: 每个设计第一次出现是什么时候, 在哪一代?
 				seenGen := map[string]int{}
 				seenIdx := map[string]int{}
 				roots, children := 0, 0
@@ -682,14 +682,14 @@ func TestLHSStratificationAndDeterminism(t *testing.T) {
 		}
 		checkInsideBoxAndCanonical(t, spec, designs)
 
-		// One point per stratum per dimension.
+		// 每个维度每个分层一个点。
 		//
-		// The check has to be permutation-invariant: canonicalisation reorders a
-		// design's (r, z, I) triples by z, so the k-th coil of design i is NOT
-		// the k-th stratum draw. What canonicalisation cannot change is the
-		// multiset of values per parameter family (radius / z / current), so the
-		// invariant is: over all n designs and all nc coil positions of a
-		// family, every stratum of that family is hit exactly nc times.
+		// 这个检查必须是排列不变的: canonicalisation 会把一个设计的
+		// (r, z, I) 三元组按 z 重排, 所以设计 i 的第 k 个线圈并不是
+		// 第 k 次分层抽取。canonicalisation 无法改变的是
+		// 每个参数族(radius / z / current)的取值多重集, 因此
+		// 不变量是: 对某个族的全部 n 个设计与全部 nc 个线圈位置而言,
+		// 该族的每个分层都恰好被命中 nc 次。
 		for fam := 0; fam < 3; fam++ {
 			j := fam * nc
 			width := (hi[j] - lo[j]) / float64(n)
@@ -703,7 +703,7 @@ func TestLHSStratificationAndDeterminism(t *testing.T) {
 					}
 					k := int((v - lo[j]) / width)
 					if k < 0 || k >= n {
-						k = n - 1 // a value rounding to exactly hi belongs to the last stratum
+						k = n - 1 // 舍入后恰好等于 hi 的值属于最后一个分层
 					}
 					counts[k]++
 					total++
@@ -721,7 +721,7 @@ func TestLHSStratificationAndDeterminism(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------------ sigma schedule --
+// ------------------------------------------------------------ sigma 调度 --
 
 func TestMutationScaleFollowsTheAnnealedSigma(t *testing.T) {
 	spec := config.DefaultSpec()
@@ -768,7 +768,7 @@ func TestMutationScaleFollowsTheAnnealedSigma(t *testing.T) {
 	}
 }
 
-// ------------------------------------------------------------------ dispatch --
+// ------------------------------------------------------------------ 分发 --
 
 func TestRunDispatch(t *testing.T) {
 	spec := config.DefaultSpec()
@@ -791,24 +791,24 @@ func TestRunDispatch(t *testing.T) {
 	}
 }
 
-// -------------------------------------------------- stage-A wiring (skippable) --
+// -------------------------------------------------- stage-A 接线(可跳过) --
 
-// nonCanonicalProbe is a design with the coils out of z-order and two entries
-// outside the box, so canonicalisation has real work to do.
+// nonCanonicalProbe 是一个线圈不按 z 排序、且有两个项
+// 在盒外的设计, 所以 canonicalisation 有真活要干。
 func nonCanonicalProbe() []float64 {
 	return []float64{0.4, 0.9, 0.2, 0.7, 0.5, -2.0, 1.0, -0.1, 3.0e6, 1.0, 5.0e5, 2.0e6}
 }
 
-// TestDesignHelperSeamsAreWiredToPhysics is the parity gate for design.go:
+// TestDesignHelperSeamsAreWiredToPhysics 是 design.go 的 parity gate:
 //
-//  1. the local reference implementation equals the physics one;
-//  2. the wired (shipping) Canonicalise is the physics one;
-//  3. the wired SampleDesign consumes the RNG stream exactly like
-//     physics.RandomDesign, i.e. the wiring is a no-op for the random path.
+//  1. 本地 reference 实现等于 physics 实现;
+//  2. 已接线的(出厂)Canonicalise 就是 physics 那个;
+//  3. 已接线的 SampleDesign 消耗 RNG 流的方式与
+//     physics.RandomDesign 完全一致, 即接线对随机路径是 no-op。
 //
-// internal/physics is an independent parallel line, so the test skips while it
-// is still a set of panicking stubs; now that it is implemented the gate is
-// hard.
+// internal/physics 是一条独立的并行线, 所以当它还是一堆会 panic 的 stub
+// 时测试会跳过; 现在它已实现, 这道门禁
+// 是硬的。
 func TestDesignHelperSeamsAreWiredToPhysics(t *testing.T) {
 	spec := config.DefaultSpec()
 	if !physicsAvailable(spec) {
@@ -835,8 +835,8 @@ func TestDesignHelperSeamsAreWiredToPhysics(t *testing.T) {
 	}
 }
 
-// physicsAvailable reports whether the stage-A functions behind the seam are
-// implemented, by probing them once and treating a panic as "not yet".
+// physicsAvailable 报告接缝背后的 stage-A 函数是否已实现,
+// 做法是探测一次并把 panic 当作 "尚未"。
 func physicsAvailable(spec config.Spec) (ok bool) {
 	defer func() {
 		if recover() != nil {
@@ -848,10 +848,10 @@ func physicsAvailable(spec config.Spec) (ok bool) {
 	return len(x) == spec.NParams()
 }
 
-// TestWarmStartDefaultIsTheGoldenBaseline checks the hard-coded fallback warm
-// start against the cross-language anchor in testdata/: EvolutionWarm must be
-// seeded with the human design the machine is asked to beat, not with something
-// that merely looks like it.
+// TestWarmStartDefaultIsTheGoldenBaseline 对照 testdata/ 里的跨语言锚点, 检验硬编码的
+// 兜底 warm start: EvolutionWarm 播种用的必须是那个被要求让机器
+// 打败的人类设计, 而不是一个仅仅
+// 看起来像它的东西。
 func TestWarmStartDefaultIsTheGoldenBaseline(t *testing.T) {
 	spec := config.DefaultSpec()
 	warm := WarmStartDesign(spec)
@@ -873,17 +873,17 @@ func TestWarmStartDefaultIsTheGoldenBaseline(t *testing.T) {
 	checkInsideBoxAndCanonical(t, spec, [][]float64{warm})
 }
 
-// ---------------------------------------------------------------------- misc --
+// ---------------------------------------------------------------------- 杂项 --
 
-// TestZeroValuedOptionsUseTheDocumentedDefaults feeds a literally zero-valued
-// Options (not built by DefaultOptions) to the evolution strategy: the knobs
-// must fall back to mu=16 / lambda=48 / sigma0=0.25 / sigmaFloor=0.03, the last
-// generation must be truncated to the remaining budget, and the run must still
-// be budget-exact. The spec is also zero, so the design vectors are empty and
-// only the structure is being checked.
+// TestZeroValuedOptionsUseTheDocumentedDefaults 把一个字面意义上零值的
+// Options(不是由 DefaultOptions 构造的)喂给进化策略: 各旋钮
+// 必须回退到 mu=16 / lambda=48 / sigma0=0.25 / sigmaFloor=0.03, 最后一
+// 代必须被截断到剩余 budget, 且这次运行仍必须
+// 是 budget 精确的。spec 也是零值, 所以 design 向量为空,
+// 检查的只是结构。
 func TestZeroValuedOptionsUseTheDocumentedDefaults(t *testing.T) {
 	var opt Options
-	opt.Budget = 100 // 16 parents + 48 + 36 (the last generation is truncated)
+	opt.Budget = 100 // 16 个 parent + 48 + 36(最后一代被截断)
 
 	sc := &toyScorer{seq: []float64{0.0, 1.0, 0.5}, seen: map[string]bool{}}
 	res, err := Run(AlgorithmEvolution, sc, opt)
@@ -916,12 +916,12 @@ func TestZeroValuedOptionsUseTheDocumentedDefaults(t *testing.T) {
 func TestToyScorerSanity(t *testing.T) {
 	spec := config.DefaultSpec()
 	sc := newToyScorer(spec)
-	// The optimum of the toy is the human baseline, so it scores 0.
+	// 玩具的最优点就是人类 baseline, 所以它的得分是 0。
 	if got := sc.score(textbookMirrorDesign, runner.Meta{}); math.Abs(got) > 1e-12 {
 		t.Fatalf("toy optimum scores %v, want 0", got)
 	}
-	// Far corners score strictly worse, and the score is symmetric in so far as
-	// the bowl definition is.
+	// 远处角落的得分严格更差, 而得分在碗的定义允许的
+	// 范围内是对称的。
 	lo, hi := spec.Lower(), spec.Upper()
 	if got := sc.score(lo, runner.Meta{}); got >= 0 {
 		t.Fatalf("corner score %v should be negative", got)
@@ -929,7 +929,7 @@ func TestToyScorerSanity(t *testing.T) {
 	if got := sc.score(hi, runner.Meta{}); got >= 0 {
 		t.Fatalf("corner score %v should be negative", got)
 	}
-	// The toy's design ids ascend, which is what makes lineage checkable.
+	// 玩具的 design id 递增, 这正是 lineage 可被检查的原因。
 	r1 := sc.Score(lo, runner.Meta{EvalIndex: 0})
 	r2 := sc.Score(hi, runner.Meta{EvalIndex: 1})
 	if r1.DesignID != "D0001" || r2.DesignID != "D0002" {

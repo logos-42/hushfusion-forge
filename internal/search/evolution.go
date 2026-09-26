@@ -1,15 +1,15 @@
-// Elitist (mu+lambda) evolution strategy — the shared body of Evolution and
-// EvolutionWarm (api.go). The only difference between the two is where the
-// warm-start design comes from.
+// 精英 (mu+lambda) 进化策略 —— Evolution 与
+// EvolutionWarm(api.go)共用的主体。两者唯一的区别是
+// warm-start 设计来自哪里。
 //
-// Determinism notes (why Workers cannot change a Result):
+// 确定性说明(为什么 Workers 不能改变 Result):
 //
-//   - every child is drawn on the calling goroutine, in a fixed order, before
-//     any evaluation happens;
-//   - results are stored by logical evaluation index, never in completion order;
-//   - selection is a STABLE sort of (parents ++ children) by score descending, so
-//     ties keep the logical order irrespective of which child finished first;
-//   - the best-so-far trajectory is folded from the logical index order.
+//   - 每个 child 都在调用方 goroutine 上、按固定顺序、在任何评估
+//     发生之前抽出来;
+//   - 结果按逻辑评估下标存储, 绝不按完成顺序;
+//   - 选择是对 (parents ++ children) 按 score 降序做稳定排序,
+//     因此并列时保持逻辑顺序, 与哪个 child 先算完无关;
+//   - best-so-far 轨迹是按逻辑下标顺序折叠出来的。
 package search
 
 import (
@@ -20,15 +20,15 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/runner"
 )
 
-// member is one member of the current population.
+// member 是当前种群中的一个成员。
 type member struct {
-	design []float64 // canonical design the scorer was handed
+	design []float64 // 交给 scorer 的 canonical 设计
 	score  float64
-	id     string // design_id returned by the scorer (lineage handle)
+	id     string // scorer 返回的 design_id(lineage 句柄)
 }
 
-// evolutionRun is Evolution's body with the warm-start design and the algorithm
-// name passed in. When warm is empty the initial population is pure i.i.d. random.
+// evolutionRun 是 Evolution 的主体, warm-start 设计与算法名
+// 由外部传入。warm 为空时初始种群是纯 i.i.d. 随机。
 func evolutionRun(sc runner.Scorer, opt Options, name string, warm []float64) Result {
 	spec := opt.Spec
 	budget := budgetOf(opt)
@@ -42,7 +42,7 @@ func evolutionRun(sc runner.Scorer, opt Options, name string, warm []float64) Re
 	rng := rand.New(rand.NewSource(int64(opt.Seed)))
 	st := newRunState(sc, name, opt)
 
-	// --- generation 0: the initial population (the warm start is drawn first) --
+	// --- 第 0 代: 初始种群(warm start 最先抽出) --------------------------
 	nInit := min(mu, budget)
 	xs := make([][]float64, 0, nInit)
 	for i := 0; i < nInit; i++ {
@@ -63,7 +63,7 @@ func evolutionRun(sc runner.Scorer, opt Options, name string, warm []float64) Re
 		})
 	}
 
-	// --- generations 1.. : children, then (mu+lambda) elitist selection --------
+	// --- 第 1.. 代: 先 children, 再做 (mu+lambda) 精英选择 --------------
 	for gen := 1; st.nEvals() < budget; gen++ {
 		spent := st.nEvals()
 		sigma := math.Max(sigmaFloor, sigma0*(1.0-float64(spent)/float64(budget)))

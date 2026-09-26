@@ -1,14 +1,14 @@
-// Full-path tests for objective.Evaluate: design vector -> physics metrics ->
-// score. These need stage A (internal/physics) to be implemented, so they are
-// parked today and fail with a precise "blocked on stage A" message rather than
-// crashing the test binary. Do not delete or skip them: this file is the
-// cross-line gate that the objective's algebra is fed by the real metric
-// definitions (CONTRACT.md §4), and the golden end-to-end number lives in
-// internal/baseline/golden_test.go.
+// objective.Evaluate 的全路径测试: design 向量 -> physics metrics ->
+// score。这些测试需要 stage A(internal/physics)实现完成, 所以目前
+// 被搁置, 会以一条精确的 "blocked on stage A" 消息失败,
+// 而不是让测试二进制崩溃。不要删除或跳过它们: 本文件是
+// 跨线门禁, 用来保证 objective 的代数部分吃的是真实 metric
+// 定义(CONTRACT.md §4), 而 golden 端到端数字位于
+// internal/baseline/golden_test.go。
 //
-// The fields the stubs return are hand-computable on purpose, so the expected
-// values below are derived from the documented metric definitions rather than
-// from the physics core itself.
+// stub 返回的字段刻意做成可手算的, 因此下面的期望值是从文档化的
+// metric 定义推导出来的, 而不是从 physics 核心
+// 本身得来的。
 package objective
 
 import (
@@ -21,9 +21,9 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 )
 
-// gradientSolver returns |B| = b0 + slope*|z|: a single-peaked on-axis profile,
-// so the mirror ratio is > 1 by construction and every metric is a closed-form
-// function of the two constants.
+// gradientSolver 返回 |B| = b0 + slope*|z|: 一个单峰的轴上剖面,
+// 因此由构造可知 mirror ratio > 1, 且每个 metric 都是这两个常量的
+// 闭合形式函数。
 type gradientSolver struct{ b0, slope float64 }
 
 func (s gradientSolver) Name() string { return "stub_gradient" }
@@ -40,10 +40,10 @@ func (s gradientSolver) Magnitude(coils []physics.Coil, r, z []float64) []float6
 	return out
 }
 
-// fourCoil builds a canonical (z ascending) in-box design of four equal coils.
-// Every current and radius is identical, so the ohmic cost proxy is
-// 4 * I^2 * r = 4e11 [A^2 m] and the tests can pass costRef = 4e11 to place the
-// cost term at exactly 1.0.
+// fourCoil 构造一个 canonical(z 升序)、位于盒内的四等线圈设计。
+// 每个电流与半径都相同, 所以欧姆成本代理为
+// 4 * I^2 * r = 4e11 [A^2 m], 测试可以传 costRef = 4e11 把
+// cost term 恰好放在 1.0。
 func fourCoil(z0, z1, z2, z3 float64) []float64 {
 	const (
 		radius  = 0.4
@@ -58,9 +58,9 @@ func fourCoil(z0, z1, z2, z3 float64) []float64 {
 
 const fourCoilCostRef = 4.0e11
 
-// probePhysics calls every physics entry point stage B depends on, with a benign
-// well-separated design, and returns the panic the core still raises (nil once
-// stage A has landed).
+// probePhysics 用一个良性的、彼此分离良好的设计调用 stage B 依赖的
+// 每一个 physics 入口, 并返回核心仍然抛出的 panic(stage A 落地后
+// 为 nil)。
 func probePhysics() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -94,11 +94,11 @@ func requirePhysics(t *testing.T) {
 	}
 }
 
-// TestEvaluateFullPathHandComputed drives Evaluate through the real metric
-// computations with a fake field, and checks the result against values derived by
-// hand from the documented definitions. Each subtest is built so that exactly one
-// constraint is violated (or none), which is what makes the penalty branch
-// attribution unambiguous.
+// TestEvaluateFullPathHandComputed 用假 field 驱动 Evaluate 走真实的
+// metric 计算, 并把结果与由文档化定义手工推导出的
+// 值对照。每个子测试都构造得恰好违反一条
+// 约束(或一条都不违反), 这正是让 penalty 分支
+// 归因不含糊的原因。
 func TestEvaluateFullPathHandComputed(t *testing.T) {
 	requirePhysics(t)
 	spec := config.DefaultSpec()
@@ -109,7 +109,7 @@ func TestEvaluateFullPathHandComputed(t *testing.T) {
 		x := fourCoil(-1.0, -0.3, 0.3, 1.0)
 		res := e.Evaluate(x)
 
-		// Uniform 2 T: B_mid = B_throat = 2 T, R = 1.
+		// 均匀 2 T: B_mid = B_throat = 2 T, R = 1。
 		if math.Abs(res.Metrics.BMidT-2.0) > 1e-12 {
 			t.Errorf("B_mid = %v, want 2 (constant field)", res.Metrics.BMidT)
 		}
@@ -122,8 +122,8 @@ func TestEvaluateFullPathHandComputed(t *testing.T) {
 		if want := math.Log10(1.0 / spec.MirrorRef); math.Abs(res.Terms[TermMirror]-want) > 1e-12 {
 			t.Errorf("terms[mirror] = %v, want %v", res.Terms[TermMirror], want)
 		}
-		// 2 T <= confine_factor * B_mid = 2.5 T at every sample, and a constant
-		// profile has no interior extremum, so no ripple.
+		// 在每个采样点都有 2 T <= confine_factor * B_mid = 2.5 T, 而常值
+		// 剖面没有内部极值, 所以没有 ripple。
 		if res.Terms[TermVolume] != 1.0 {
 			t.Errorf("terms[volume] = %v, want 1 (2 T <= 1.25*2 T everywhere)", res.Terms[TermVolume])
 		}
@@ -133,7 +133,7 @@ func TestEvaluateFullPathHandComputed(t *testing.T) {
 		if math.Abs(res.Terms[TermCost]-1.0) > 1e-12 {
 			t.Errorf("terms[cost] = %v, want 1 (cost == cost_ref)", res.Terms[TermCost])
 		}
-		// 3 * 2 T from the other coils + the winding-pack self field.
+		// 来自其他线圈的 3 * 2 T + 绕线包自场。
 		if got, want := res.Metrics.BCoilMaxT, 3*2.0+spec.SelfField(); math.Abs(got-want) > 1e-9*want {
 			t.Errorf("B_coil_max = %v, want %v (3 other coils at 2 T + self field)", got, want)
 		}
@@ -158,25 +158,25 @@ func TestEvaluateFullPathHandComputed(t *testing.T) {
 		x := fourCoil(-1.0, -0.3, 0.3, 1.0)
 		res := e.Evaluate(x)
 
-		// Midplane volume: |B| = 2 + 5|z| over z = linspace(-0.15, 0.15, 5), so
-		// the mean is 2 + 5*(0.15+0.075+0+0.075+0.15)/5 = 2.45 T.
+		// 中平面体积: 在 z = linspace(-0.15, 0.15, 5) 上 |B| = 2 + 5|z|, 所以
+		// 均值为 2 + 5*(0.15+0.075+0+0.075+0.15)/5 = 2.45 T。
 		if math.Abs(res.Metrics.BMidT-2.45) > 1e-12 {
 			t.Errorf("B_mid = %v, want 2.45", res.Metrics.BMidT)
 		}
-		// Throat: on-axis max is at |z| = z_axis_max = 1.4 -> 2 + 5*1.4 = 9 T.
+		// Throat: 轴上最大值在 |z| = z_axis_max = 1.4 处 -> 2 + 5*1.4 = 9 T。
 		if math.Abs(res.Metrics.BThroatT-9.0) > 1e-12 {
 			t.Errorf("B_throat = %v, want 9", res.Metrics.BThroatT)
 		}
 		if math.Abs(res.Metrics.MirrorRatio-9.0/2.45) > 1e-12 {
 			t.Errorf("mirror ratio = %v, want %v", res.Metrics.MirrorRatio, 9.0/2.45)
 		}
-		// Cell samples: 2 + 5|z| <= 1.25*2.45 = 3.0625 -> |z| <= 0.2125, i.e. 9 of
-		// the 33 axial samples on each of the 13 radii.
+		// Cell 采样点: 2 + 5|z| <= 1.25*2.45 = 3.0625 -> |z| <= 0.2125, 即 13 条半径每条
+		// 33 个轴向采样点中的 9 个。
 		if got, want := res.Terms[TermVolume], 117.0/429.0; math.Abs(got-want) > 1e-9 {
 			t.Errorf("terms[volume] = %v, want %v (9 of 33 axial samples x 13 radii)", got, want)
 		}
-		// Outermost coils see 26 T from their neighbours ((2+3.5)+(2+6.5)+(2+10))
-		// plus the self field: far over the 12 T limit.
+		// 最外侧线圈从其邻居看到 26 T((2+3.5)+(2+6.5)+(2+10))
+		// 再加上自场: 远超 12 T 的上限。
 		wantB := 26.0 + spec.SelfField()
 		if math.Abs(res.Metrics.BCoilMaxT-wantB) > 1e-9*wantB {
 			t.Errorf("B_coil_max = %v, want %v (Σ over the other coils at their |Δz| + self field)", res.Metrics.BCoilMaxT, wantB)
@@ -209,9 +209,9 @@ func TestEvaluateFullPathHandComputed(t *testing.T) {
 		if got, want := res.Penalties[PenCoilSeparation], (spec.MinCoilSep-0.01)/spec.MinCoilSep; math.Abs(got-want) > 1e-12 {
 			t.Errorf("penalties[coil_separation] = %v, want %v", got, want)
 		}
-		// 2 + 0.4|z| is a weak gradient: R = 2.56/2.036 = 1.257 > 1.1 and the
-		// worst conductor sees 7.92 + π = 11.06 T < 12 T, so separation is the
-		// only violated constraint.
+		// 2 + 0.4|z| 是弱梯度: R = 2.56/2.036 = 1.257 > 1.1, 且
+		// 最差 conductor 看到 7.92 + π = 11.06 T < 12 T, 所以被违反的
+		// 唯一约束是 separation。
 		if got := res.Penalties[PenNotAMirror]; got != 0 {
 			t.Errorf("penalties[not_a_mirror] = %v, want 0", got)
 		}
@@ -224,7 +224,7 @@ func TestEvaluateFullPathHandComputed(t *testing.T) {
 		if res.Feasible {
 			t.Error("coils 1 cm apart must be infeasible")
 		}
-		// Every cell sample passes the confinement test at this gradient.
+		// 在此梯度下每个 cell 采样点都通过 confining 检验。
 		if res.Terms[TermVolume] != 1.0 {
 			t.Errorf("terms[volume] = %v, want 1", res.Terms[TermVolume])
 		}
@@ -251,9 +251,9 @@ func TestEvaluateFullPathHandComputed(t *testing.T) {
 	})
 }
 
-// TestEvaluateConcurrentFullPathMatchesSerial is the -race check of the frozen
-// concurrency contract on the real code path (design decode + metrics + score):
-// many goroutines sharing one Evaluator must get exactly the serial results.
+// TestEvaluateConcurrentFullPathMatchesSerial 是对冻结的并发契约在真实代码路径
+// (design 解码 + metrics + score)上做的 -race 检查:
+// 许多 goroutine 共享一个 Evaluator 必须得到与串行完全相同的结果。
 func TestEvaluateConcurrentFullPathMatchesSerial(t *testing.T) {
 	requirePhysics(t)
 	spec := config.DefaultSpec()
@@ -317,8 +317,8 @@ func TestEvaluateConcurrentFullPathMatchesSerial(t *testing.T) {
 	}
 }
 
-// TestScoreWrapperEqualsEvaluate pins that the convenience wrapper is the same
-// evaluation, not a parallel implementation that can drift from it.
+// TestScoreWrapperEqualsEvaluate 钉住: 便利包装就是同一次
+// 评估, 而不是一个可能与它跑偏的并行实现。
 func TestScoreWrapperEqualsEvaluate(t *testing.T) {
 	requirePhysics(t)
 	spec := config.DefaultSpec()

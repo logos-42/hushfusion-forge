@@ -1,14 +1,14 @@
-// Shared machinery for the search algorithms of api.go.
+// api.go 里各搜索算法共用的机制。
 //
-// Two invariants are enforced here rather than in each algorithm:
+// 有两条不变量在这里强制, 而不是在每个算法里:
 //
-//   - the budget is EXACT: designs are only ever produced when a slot of the
-//     budget is still free (see the min(...) guards), so NEvals == Budget always;
-//   - results never depend on Options.Workers: results are stored by logical
-//     evaluation index, the RNG is only ever advanced on the calling goroutine,
-//     and the selection sort is stable over a logically ordered candidate slice.
-//     Concurrency may only change the order in which a Scorer records, which is
-//     the documented exception in api.go.
+//   - budget 是精确的: 只有当 budget 还剩槽位时
+//     才会产出设计(见那些 min(...) 守卫), 所以恒有 NEvals == Budget;
+//   - 结果绝不依赖 Options.Workers: 结果按逻辑评估
+//     下标存储, RNG 只在调用方 goroutine 上推进,
+//     选择排序在一个按逻辑排好序的候选切片上做稳定排序。
+//     并发只可能改变 Scorer 记录的顺序, 这正是
+//     api.go 中已文档化的例外。
 package search
 
 import (
@@ -20,19 +20,19 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/runner"
 )
 
-// evalChunk is how many designs are handed to the scorer per concurrent batch.
-// It is a constant, so it cannot make results depend on Workers.
+// evalChunk 是每个并发批次交给 scorer 的设计数量。
+// 它是常量, 所以不可能让结果依赖 Workers。
 const evalChunk = 512
 
-// runState accumulates the evaluations of one run in logical (EvalIndex) order.
+// runState 按逻辑(EvalIndex)顺序累积一次运行的所有评估。
 type runState struct {
 	sc      runner.Scorer
 	name    string
 	seed    int
 	workers int
 
-	results []objective.EvalResult // indexed by EvalIndex
-	designs [][]float64            // the designs submitted, indexed by EvalIndex
+	results []objective.EvalResult // 以 EvalIndex 为下标
+	designs [][]float64            // 提交的设计, 以 EvalIndex 为下标
 }
 
 func newRunState(sc runner.Scorer, name string, opt Options) *runState {
@@ -48,9 +48,9 @@ func newRunState(sc runner.Scorer, name string, opt Options) *runState {
 
 func (s *runState) nEvals() int { return len(s.results) }
 
-// evalAll scores xs (in order) in chunks of evalChunk and appends the results in
-// the same logical order. parents is optional: when non-nil, parents[i] becomes
-// the lineage edge of xs[i].
+// evalAll 按顺序以 evalChunk 为块给 xs 打分, 并按同样的逻辑顺序
+// 追加结果。parents 可选: 非 nil 时 parents[i] 成为
+// xs[i] 的 lineage 边。
 func (s *runState) evalAll(xs [][]float64, gen int, parents []string) {
 	for start := 0; start < len(xs); start += evalChunk {
 		end := min(start+evalChunk, len(xs))
@@ -74,9 +74,9 @@ func (s *runState) evalAll(xs [][]float64, gen int, parents []string) {
 	}
 }
 
-// pass evaluates one batch. Workers <= 1 runs it inline; more workers pull
-// indices from a shared counter, so each result is still written to its own
-// logical slot and the outcome is independent of scheduling.
+// pass 评估一个批次。Workers <= 1 时内联执行; 更多 worker 会
+// 从共享计数器取下标, 因此每个结果仍写在它自己的
+// 逻辑槽位里, 结果与调度无关。
 func (s *runState) pass(xs [][]float64, metas []runner.Meta) []objective.EvalResult {
 	out := make([]objective.EvalResult, len(xs))
 	if s.workers <= 1 || len(xs) <= 1 {
@@ -105,8 +105,8 @@ func (s *runState) pass(xs [][]float64, metas []runner.Meta) []objective.EvalRes
 	return out
 }
 
-// evaluatedDesign is the canonical vector actually evaluated at EvalIndex i: the
-// scorer's echo of it when it reports one, otherwise what was submitted.
+// evaluatedDesign 是在 EvalIndex i 实际被评估的 canonical 向量:
+// scorer 若回传了它就用回传的, 否则用提交的那个。
 func (s *runState) evaluatedDesign(i int) []float64 {
 	if d := s.results[i].Design; len(d) > 0 {
 		return append([]float64(nil), d...)
@@ -114,9 +114,9 @@ func (s *runState) evaluatedDesign(i int) []float64 {
 	return append([]float64(nil), s.designs[i]...)
 }
 
-// result folds the evaluations into the frozen Result: best-so-far trajectory,
-// the best evaluation (earliest wins ties, so it is deterministic) and the index
-// of the first evaluation that exceeded the baseline.
+// result 把评估折叠成冻结的 Result: best-so-far 轨迹、
+// 最佳评估(并列时取最早, 因此是确定性的), 以及第一个
+// 超过 baseline 的评估的下标。
 func (s *runState) result(opt Options) Result {
 	res := Result{
 		Algorithm:   s.name,
@@ -155,8 +155,8 @@ func (s *runState) result(opt Options) Result {
 
 func budgetOf(opt Options) int { return max(opt.Budget, 0) }
 
-// positive applies the documented default to an unset (<= 0) evolution knob, so
-// a zero-valued Options behaves like DefaultOptions.
+// positive 给未设置(<= 0)的 evolution 旋钮套用文档默认值,
+// 使零值的 Options 表现得像 DefaultOptions。
 func positive(v, def float64) float64 {
 	if v <= 0 {
 		return def
