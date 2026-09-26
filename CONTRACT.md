@@ -1,0 +1,153 @@
+# CONTRACT — Forge v0.1 并行构建合同
+
+本文件是**所有并行子线的唯一权威合同**。子线开工前必须完整读一遍；与本文件冲突的任何"顺手改进"一律不做，改为在报告里提出。
+
+---
+
+## 0. 目标（一句话）
+
+**Go 为主栈**：把 HUSHFUSION Forge 建成一个能自动提出、评分、记录并改进下一代电磁线圈设计的工程系统。
+**Python 只做辅助**：独立数值 oracle（交叉验证）+ 出图/统计核对。Python 不再承载引擎逻辑。
+
+Phase 0 的验收问题只有一个：
+
+> **机器能不能找到一个比"人工设计基线"更好的电磁设计？** 并且这条结论必须能被独立复现。
+
+---
+
+## 1. 权威文件
+
+| 文件 | 作用 | 谁写 |
+|---|---|---|
+| `internal/config/config.go` | 全部物理常数/边界/权重（唯一真源） | parent（已完成，勿改） |
+| `internal/*/api.go` | **冻结接口**：类型 + 函数签名 + 语义定义 | parent（已完成，勿改签名） |
+| `internal/owners/owners.go` + `owners_test.go` | 文件所有权名册 + 冻结门（互不重叠 / 无遗漏 / 变异会红） | parent（已完成，勿改） |
+| `testdata/golden_*.json` | 跨语言数值锚点（Python 参考实现产出） | parent（已完成，勿改数值） |
+| `python/aux/oracle.py` | **独立**数值 oracle（scipy 实现，不 import Go 的任何东西） | stage G |
+| `scripts/verify.sh` | 总验收脚本 | parent |
+
+---
+
+## 2. 文件所有权名册（机器可验，见 `internal/owners/owners.go`）
+
+| Stage | 包/路径 | 所有者 |
+|---|---|---|
+| root | `go.mod` `LICENSE` `README.md` `PLAN.md` `CONTRACT.md` `.gitignore` `internal/config/` `internal/owners/` `testdata/` `scripts/` | parent |
+| A | `internal/physics/` | agent-A |
+| B | `internal/objective/` `internal/baseline/` | agent-B |
+| C | `internal/registry/` `internal/runner/` | agent-C |
+| D | `internal/search/` | agent-D |
+| E | `internal/experiment/` `internal/knowledge/` `internal/report/` | agent-E |
+| F | `internal/rlenv/` `cmd/` | agent-F |
+| G | `python/` | agent-G |
+
+**冻结门**（`go test ./internal/owners/`）三条判据：
+1. 名册互不重叠；2. 仓库内每个被跟踪文件都恰好属于一个 stage；3. 变异验证——把两个 stage 指到同一个包/同一文件必须报 overlap。
+你在 **自己路径之外** 新增文件会让门变红；这是设计行为，不要绕。
+
+---
+
+## 3. 纪律（四件，写死）
+
+1. **只准动分给你的路径**。提交用**显式 pathspec**：`git add internal/physics/`。
+   **禁止** `git add -A` / `git add .`（会误纳入其他子线正在写的文件）。
+2. **不许 push**。所有线落地、parent 复核、验收之后由 parent 统一推一次。
+3. **禁"后台跑 + sleep 轮询"**。要等就前台跑一次、给足 timeout。墙钟不许烧在等待上。
+4. **报告必须含"没做到/有保留"的逐条如实清单**：未做 · 半成品 · 只验了一部分 ·
+   **需要主线做的事**。只报"已完成"= 把缺口留给 parent 猜。
+
+另外：范围上限——**只交你这一段，不许顺手做下一段**。优先交付"能跑完的最小集"，
+每验完一处**当场 commit 自己的 pathspec**，宁可少做几处也要交一个已落库的完成批。
+
+---
+
+## 4. 跨线接口纪律
+
+- 阶段之间**只通过 `api.go` 里已冻结的类型/签名耦合**；需要新钩子时**不要改别人的文件、不要改冻结签名**，
+  在报告里写"我需要主线加 X"，由 parent 汇成一条串行收口。
+- **依赖注入**：`Evaluator` 依赖 `physics.Solver` 接口（不是具体类型）；`search` 依赖 `runner.Scorer` 接口
+  （不是 `*Runner`）——这是为了让 D 段的单测能注入玩具 scorer、独立于物理层通过。
+- 不要 import 你不该 import 的包（防止 import cycle）。依赖方向固定：
+
+```
+config <- physics <- objective <- runner <- search <- experiment <- report(,knowledge)
+                       ^            ^
+                  baseline      registry
+                  rlenv <- runner, config, physics      cmd/forge -> 全部
+```
+
+---
+
+## 5. 数值锚点（跨语言真值，来自 `testdata/`）
+
+Python 参考实现（已逐条验证过解析锚点）产出的 golden 数值。**Go 实现必须复现**：
+
+`testdata/golden_baseline.json`（人工基线 = Helmoltz 中央室 + 两个镜喉）：
+
+| 量 | 值 |
+|---|---|
+| design（canonical, z 升序） | `r=[0.3,0.5,0.5,0.3] z=[-1.0,-0.25,0.25,1.0] I=[1621279.24,463222.64,463222.64,1621279.24]` |
+| `cost_proxy` = `cost_ref` | `1.791703035e12` |
+| `B_mid_T` | `1.000000`（由求解器定到 1.0 T） |
+| `B_throat_T` | `3.536386` |
+| `mirror_ratio` | `3.536386` |
+| `volume_good` | `0.780886` |
+| `ripple` | `0.0` |
+| `B_coil_max_T` | `3.416271` |
+| `min_coil_gap_m` | `0.5` |
+| `z_throat_m` | `-0.9975` |
+| terms | `field=0.0, mirror=0.247530, volume=0.780886, ripple=0.0, cost=1.0` |
+| `score` | **`-0.2905708161`** |
+
+复现判据：**score 与 golden 之差 < 1e-6**；各项 metrics 相对差 < 1e-6。做不到就说明物理或目标函数有偏差，不许放宽阈值改判据（改判据 = 造假）。
+
+`testdata/golden_field_samples.json`：3 个设计 × 32 个采样点的 `Br/Bz/|B|`（含轴上点、近圈点、远场点）。Go 的 `AnalyticSolver.Magnitude` 与之相对差必须 < 1e-9。
+
+`testdata/golden_spec.json`：`config.Spec.AsMap()` 的键集合必须与之一致（schema parity gate）。
+
+**轴解析锚点**（不依赖 Python，必须自证）：
+- 单圈轴上：`B_z(0,z) = mu0*I*a^2/(2*(a^2+z^2)^1.5)`，`B_r(0,z) = 0`（精确）
+- Helmholtz 对（半径 a、间距 a、电流 I）：中心 `B = (4/5)^1.5 * mu0*I/a`；且 `|z| <= 0.1a` 内不均匀度 `< 1.2e-4`
+- 独立分段求和 vs 闭式解：`nSeg=512` 时相对差 `< 1e-9`
+- 真空恒等式：`div B ~ 0`、`curl B ~ 0`（中心差分，相对 `< 1e-5`）
+
+---
+
+## 6. 验收门（parent 亲自跑，不采信自述）
+
+| 门 | 命令 | 判据 |
+|---|---|---|
+| G1 编译/静态 | `go build ./... && go vet ./...` | 干净 |
+| G2 格式 | `gofmt -l .` | 无输出 |
+| G3 所有权冻结 | `go test ./internal/owners/` | 3 个测试全绿（含变异会红） |
+| G4 单元锚点 | `go test ./...` | 全绿 |
+| G5 跨语言 oracle | `python3 python/aux/oracle.py --check-golden testdata/` | 与 Go 相对差 < 1e-9 / score < 1e-6 |
+| G6 基线在搜索盒内 | `go test ./internal/baseline/ -run TestBaselineInsideSearchBox` | 人工基线解码后**不被裁剪**（否则"人机对比"分数对象不是同一个设计） |
+| G7 复现性 | `forge run --method evolution --seed 7` 跑两次 | best_score 完全一致 |
+| G8 registry 完整性 | `forge registry --check` | id 连续、parent 存在、必填字段齐全 |
+| G9 schema parity | `python3 python/aux/schema_check.py runs/phase0/registry.jsonl` | Go 记录字段与冻结 schema 一致 |
+| G10 反造假 | `go test ./internal/rlenv/ -run TestNoLearnedPolicy` | 未实现的策略必须显式报错，不许返回编造数值 |
+
+---
+
+## 7. 报告格式（子线交回时用）
+
+```
+stage: <A..G>
+状态: 完成 / 部分完成 / 阻塞
+已实现: <文件:函数 列表>
+已自验: <命令 + 真实输出摘要>
+未做 / 半成品: <逐条>
+只验了一部分: <哪一部分>
+需要主线做的事: <钩子/接口/决策>
+与合同不符之处: <无 或 逐条说明>
+```
+
+---
+
+## 8. 已知的跨阶段依赖（不必自行解决，报告即可）
+
+- E 段的端到端 benchmark 需要 A/B/C/D 均已落地；E 段先把**纯函数**（Aggregate/ApplyVariant/markdown 渲染/JSON round-trip/Spearman）验绿，
+  端到端由 parent 在收口后跑。
+- F 段的 CLI 依赖全部包；允许先 `go build ./cmd/forge` 通过即算完成编译级验证，端到端由 parent 跑。
+- G 段的 oracle 必须**独立实现**，不许 import `internal/`，也不许调用 Go 二进制来"验证" Go。

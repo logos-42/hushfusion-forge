@@ -1,0 +1,77 @@
+{
+  "coils": [
+    {
+      "current_A": 463222.63959687366,
+      "radius_m": 0.5,
+      "z_m": -0.25
+    },
+    {
+      "current_A": 463222.63959687366,
+      "radius_m": 0.5,
+      "z_m": 0.25
+    },
+    {
+      "current_A": 1621279.2385890577,
+      "radius_m": 0.3,
+      "z_m": -1.0
+    },
+    {
+      "current_A": 1621279.2385890577,
+      "radius_m": 0.3,
+      "z_m": 1.0
+    }
+  ],
+  "cost_proxy": 1791703035523.044,
+  "cost_ref": 1791703035523.044,
+  "design": [
+    0.3,
+    0.5,
+    0.5,
+    0.3,
+    -1.0,
+    -0.25,
+    0.25,
+    1.0,
+    1621279.2385890577,
+    463222.63959687366,
+    463222.63959687366,
+    1621279.2385890577
+  ],
+  "feasible": true,
+  "metrics": {
+    "B_coil_max_T": 3.416271368796406,
+    "B_mid_T": 1.0000000000000002,
+    "B_throat_T": 3.5363862409275857,
+    "coil_proximity_floor_hit": 0.0,
+    "cost_proxy": 1791703035523.044,
+    "min_coil_gap_m": 0.5,
+    "mirror_ratio": 3.536386240927585,
+    "mu0": 1.2566370614359173e-06,
+    "n_coils": 4.0,
+    "ripple": 0.0,
+    "volume_good": 0.7808857808857809,
+    "z_throat_m": -0.9974999999999999
+  },
+  "name": "textbook_mirror",
+  "note": "Helmholtz-like central cell (r=0.50 m, spacing=r) + mirror throats (r=0.30 m, |z|=1.00 m, I=3.5x cell). Cell current solved so the midplane field hits spec.b_ref exactly; not a straw man.",
+  "penalties": {
+    "coil_separation": 0.0,
+    "conductor_field": 0.0,
+    "not_a_mirror": 0.0
+  },
+  "score": -0.2905708160753513,
+  "terms": {
+    "cost": 1.0,
+    "field": 9.64327466553287e-17,
+    "mirror": 0.2475296965206261,
+    "ripple": 0.0,
+    "volume": 0.7808857808857809
+  },
+  "weighted": {
+    "cost": -1.0,
+    "field": 9.64327466553287e-17,
+    "mirror": 0.12376484826031305,
+    "ripple": -0.0,
+    "volume": 0.5856643356643356
+  }
+}

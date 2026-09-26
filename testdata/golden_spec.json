@@ -1,0 +1,49 @@
+{
+  "provenance": {
+    "forge_version": "0.1.0",
+    "generated_by": "scripts/emit_golden.py",
+    "numpy": "1.26.4",
+    "python": "3.12.8"
+  },
+  "spec": {
+    "b_ref": 1.0,
+    "bounds": {
+      "current": [
+        10000.0,
+        2500000.0
+      ],
+      "radius": [
+        0.1,
+        1.0
+      ],
+      "z": [
+        -1.2,
+        1.2
+      ]
+    },
+    "coil_field_limit": 12.0,
+    "confine_factor": 1.25,
+    "j_eng": 100000000.0,
+    "min_coil_sep": 0.05,
+    "mirror_ref": 2.0,
+    "n_axis": 161,
+    "n_coils": 4,
+    "n_params": 12,
+    "n_vol_r": 13,
+    "n_vol_z": 33,
+    "r_plasma": 0.15,
+    "self_field_T": 3.141592653589793,
+    "t_pack": 0.05,
+    "weights": {
+      "cost": 1.0,
+      "field": 1.0,
+      "mirror": 0.5,
+      "penalty": 10.0,
+      "ripple": 0.5,
+      "volume": 0.75
+    },
+    "z_axis_max": 1.4,
+    "z_cell": 0.8,
+    "z_mid": 0.15
+  }
+}

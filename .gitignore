@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.DS_Store
+
+# generated run artifacts: keep the registry/report evidence, drop scratch
+runs/scratch/
+runs/**/*.tmp
