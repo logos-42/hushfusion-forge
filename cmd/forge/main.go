@@ -1414,13 +1414,7 @@ func cmdRun(args []string) int {
 		return fail("%v", err)
 	}
 
-	opt := search.DefaultOptions(spec)
-	opt.Algorithm = *method
-	opt.Seed = *seed
-	opt.Budget = *budget
-	opt.Workers = *workers
-	opt.BaselineScore = baseScore
-	opt.WarmStart = append([]float64(nil), base.Design...)
+	opt := runOptions(spec, *method, *seed, *budget, *workers, baseScore, base.Design)
 
 	rn := runner.New(reg, ev, *tag)
 	before := reg.Len()
@@ -1458,6 +1452,27 @@ func cmdRun(args []string) int {
 		note("result JSON: %s", *out)
 	}
 	return 0
+}
+
+// runOptions builds the search options for one run.
+//
+// The human baseline design is injected as WarmStart ONLY for evolution_warm.
+// The reason to run both evolution and evolution_warm is to measure what
+// inherited design knowledge buys; injecting the baseline into the cold variant
+// as well would silently delete that comparison and make the two methods
+// identical (stage E's harness applies the same rule).
+func runOptions(spec config.Spec, method string, seed, budget, workers int,
+	baselineScore float64, warmDesign []float64) search.Options {
+	opt := search.DefaultOptions(spec)
+	opt.Algorithm = method
+	opt.Seed = seed
+	opt.Budget = budget
+	opt.Workers = workers
+	opt.BaselineScore = baselineScore
+	if method == search.AlgorithmEvolutionWarm {
+		opt.WarmStart = append([]float64(nil), warmDesign...)
+	}
+	return opt
 }
 
 func cmdBenchmark(args []string) int {

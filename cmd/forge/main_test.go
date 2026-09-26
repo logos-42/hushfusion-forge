@@ -13,6 +13,7 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 	"github.com/logos-42/hushfusion-forge/internal/registry"
 	"github.com/logos-42/hushfusion-forge/internal/rlenv"
+	"github.com/logos-42/hushfusion-forge/internal/search"
 )
 
 // These tests cover the wiring itself: the frozen schema accessors the CLI
@@ -363,6 +364,47 @@ func TestParseFlagsExitCodes(t *testing.T) {
 	_ = fs.Bool("check", true, "a bool flag")
 	if code := parseFlags(fs, []string{"--check=false"}); code != -1 {
 		t.Errorf("parseFlags(--check=false) = %d, want -1 (continue)", code)
+	}
+}
+
+// TestWarmStartIsOnlyInjectedForTheWarmMethod guards the cold-vs-warm
+// comparison: 'forge run --method evolution' must run the cold variant, or the
+// measured "value of inherited design knowledge" would be zero by construction.
+func TestWarmStartIsOnlyInjectedForTheWarmMethod(t *testing.T) {
+	spec := config.DefaultSpec()
+	warm := make([]float64, spec.NParams())
+	for i := range warm {
+		warm[i] = float64(i)
+	}
+	for _, m := range allMethods {
+		opt := runOptions(spec, m, 7, 123, 2, -0.2905708161, warm)
+		if opt.Algorithm != m || opt.Seed != 7 || opt.Budget != 123 || opt.Workers != 2 {
+			t.Errorf("%s: options were not passed through: %+v", m, opt)
+		}
+		if opt.BaselineScore != -0.2905708161 {
+			t.Errorf("%s: BaselineScore = %v, want the baseline score", m, opt.BaselineScore)
+		}
+		if m == search.AlgorithmEvolutionWarm {
+			if len(opt.WarmStart) != len(warm) {
+				t.Fatalf("%s: WarmStart = %v, want the caller's design", m, opt.WarmStart)
+			}
+			for i := range warm {
+				if opt.WarmStart[i] != warm[i] {
+					t.Fatalf("%s: WarmStart[%d] = %v, want %v", m, i, opt.WarmStart[i], warm[i])
+				}
+			}
+			continue
+		}
+		if opt.WarmStart != nil {
+			t.Errorf("%s: WarmStart = %v, want nil (the baseline must not seed a cold method)",
+				m, opt.WarmStart)
+		}
+	}
+
+	// The decision must follow the frozen algorithm name, not a literal.
+	opt := runOptions(spec, search.AlgorithmEvolution, 0, 10, 1, 0, warm)
+	if opt.WarmStart != nil {
+		t.Errorf("evolution got a warm start: %v", opt.WarmStart)
 	}
 }
 
