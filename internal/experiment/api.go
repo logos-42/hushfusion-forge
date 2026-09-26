@@ -275,10 +275,7 @@ func RunBenchmark(reg *registry.Registry, spec config.Spec, opt Opts) (*Report, 
 		return nil, err
 	}
 
-	solver, err := defaultSolver()
-	if err != nil {
-		return nil, err
-	}
+	solver := defaultSolver()
 	grids := physics.BuildGrids(spec)
 	ev := objective.NewEvaluator(spec, solver, base.Cost, grids)
 	sc := runner.New(reg, ev, opt.Tag)
@@ -420,31 +417,11 @@ func designVectorOf(b baseline.Baseline, spec config.Spec) ([]float64, error) {
 		b.Name, len(b.Design), spec.NParams())
 }
 
-// defaultSolver resolves the stage-A analytic solver at RUN time, not at compile
-// time.
-//
-// Why the indirection: this package is built in parallel with internal/physics.
-// While stage A is still a skeleton, the direct form
-//
-//	var s physics.Solver = physics.AnalyticSolver{}
-//
-// does not compile ("does not implement physics.Solver"), which would take
-// `go build ./...` (gate G1) red for the whole tree because of a *different*
-// stage's progress. The assertion below is interface-to-interface (through
-// `any`), so it compiles either way, and starts resolving the moment stage A
-// lands the methods — no edit needed here. Until then the harness reports
-// "not ready" instead of inventing numbers.
-//
-// Both receiver styles are tried, so the shim survives A implementing Magnitude
-// on a value or on a pointer.
-func defaultSolver() (physics.Solver, error) {
-	for _, candidate := range []any{physics.AnalyticSolver{}, &physics.AnalyticSolver{}} {
-		if s, ok := candidate.(physics.Solver); ok {
-			return s, nil
-		}
-	}
-	return nil, errors.New("experiment: physics.AnalyticSolver does not implement physics.Solver yet (stage A not landed)")
-}
+// defaultSolver is the analytic (exact circular-filament) solver: the same
+// solver the CLI's `forge verify` anchors against testdata/golden_field_samples.json,
+// and the one the score is defined with. DiscreteSolver exists as the
+// independent cross-check, not as the benchmark solver.
+func defaultSolver() physics.Solver { return physics.AnalyticSolver{} }
 
 // Aggregate computes per-method statistics across seeds.
 //
@@ -560,10 +537,7 @@ func RobustnessProbe(spec config.Spec, designs map[string][]float64, variants []
 		}
 	}
 
-	solver, err := defaultSolver()
-	if err != nil {
-		return out, err
-	}
+	solver := defaultSolver()
 	for i, v := range variants {
 		vspec := vspecs[i]
 		human, err := baseline.TextbookMirror(vspec)
