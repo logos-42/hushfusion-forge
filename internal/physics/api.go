@@ -53,7 +53,7 @@ type DiscreteSolver struct{ NSeg int }
 //
 // with the n = 0 term of the sum being c_0^2 / 2. Iterate until c_n ~ 0
 // (typically 5-10 iterations to machine precision).
-func EllipticKE(m float64) (k, e float64) { panic("TODO(stage A): implement AGM elliptic integrals") }
+func EllipticKE(m float64) (k, e float64) { return ellipticKE(m) }
 
 // LoopField returns (B_r, B_z) of one circular filament loop of the given
 // radius and current at the point (r, z), the loop lying in the plane z = 0.
@@ -74,25 +74,25 @@ func EllipticKE(m float64) (k, e float64) { panic("TODO(stage A): implement AGM 
 //
 // The on-axis branch is exercised by the golden field samples in testdata/.
 func LoopField(radius, current, r, z float64) (br, bz float64) {
-	panic("TODO(stage A): implement exact circular-loop field")
+	return loopField(radius, current, r, z)
 }
 
 // LoopFieldDiscrete is the independent implementation: a direct Biot-Savart sum
 // over nSeg straight segments approximating the loop. It must agree with
 // LoopField to < 1e-9 relative for nSeg >= 512 at points away from the wire.
 func LoopFieldDiscrete(radius, current, r, z float64, nSeg int) (br, bz float64) {
-	panic("TODO(stage A): implement discrete Biot-Savart sum")
+	return loopFieldDiscrete(radius, current, r, z, nSeg)
 }
 
 // CoilsetField superposes the field of every coil (each shifted to its own z).
 func CoilsetField(coils []Coil, r, z []float64) (br, bz []float64) {
-	panic("TODO(stage A): implement coil-set superposition")
+	return coilsetField(coils, r, z)
 }
 
 // OnAxisField returns |B| on the axis (r = 0). Exact and cheaper than the
 // general evaluation: only the on-axis branch of LoopField is needed.
 func OnAxisField(coils []Coil, z []float64) []float64 {
-	panic("TODO(stage A): implement on-axis field")
+	return onAxisField(coils, z)
 }
 
 // Grids are the stacked evaluation sample points:
@@ -119,7 +119,7 @@ type Grids struct {
 // Note the midplane volume uses a fixed 5 axial samples. Sample order matters:
 // golden comparisons slice the stacked array by [NAxis, NMid].
 func BuildGrids(spec config.Spec) Grids {
-	panic("TODO(stage A): implement evaluation grids")
+	return buildGrids(spec)
 }
 
 // Metrics are the objective-relevant field metrics of one coil set.
@@ -159,7 +159,7 @@ type Metrics struct {
 // and set CoilProximityFloorHit = true (the objective penalises that geometry;
 // a finite number must still reach the record instead of a NaN).
 func MetricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
-	panic("TODO(stage A): implement metrics")
+	return metricsFor(coils, spec, g, s)
 }
 
 // AxisRipple is the normalised amplitude of NON-monotonic structure on the axis.
@@ -169,24 +169,24 @@ func MetricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 // then divide by BMid. A monotonic or single-peaked profile returns exactly 0.
 // Interior extrema are found by 3-point comparison B[i-1] < B[i] > B[i+1].
 func AxisRipple(bAxisCell []float64, bMid, prominence float64) float64 {
-	panic("TODO(stage A): implement axis ripple")
+	return axisRipple(bAxisCell, bMid, prominence)
 }
 
 // MinCoilGap is the smallest distance between two coil centres; +Inf if fewer
 // than two coils are given.
-func MinCoilGap(coils []Coil) float64 { panic("TODO(stage A): implement min coil gap") }
+func MinCoilGap(coils []Coil) float64 { return minCoilGap(coils) }
 
 // VectorToCoils decodes a design vector, clipping to the spec bounds and
 // sorting by z (canonical form: kills the K! permutation degeneracy).
 // An error is returned if len(x) != spec.NParams().
 func VectorToCoils(x []float64, spec config.Spec) ([]Coil, error) {
-	panic("TODO(stage A): implement design-vector decoding")
+	return vectorToCoils(x, spec)
 }
 
 // CoilsToVector encodes coils (any order) into the canonical design vector.
-func CoilsToVector(coils []Coil) []float64 { panic("TODO(stage A): implement encoding") }
+func CoilsToVector(coils []Coil) []float64 { return coilsToVector(coils) }
 
 // RandomDesign draws a uniform sample of the search box in canonical order.
 func RandomDesign(rng *rand.Rand, spec config.Spec) []float64 {
-	panic("TODO(stage A): implement uniform random design")
+	return randomDesign(rng, spec)
 }
