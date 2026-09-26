@@ -14,8 +14,8 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/search"
 )
 
-// frozenSections are the section headings the frozen interface pins, in the
-// order api.go declares them.
+// frozenSections 是冻结接口所钉住的那些小节标题，顺序与 api.go
+// 中声明的顺序一致。
 var frozenSections = []string{
 	"## 1. 设置",
 	"## 2. 人工基线 vs 机器最优",
@@ -45,8 +45,8 @@ func sampleRules() []knowledge.Rule {
 	}
 }
 
-// sampleReport is a fully populated Report literal, built by hand so the
-// renderer is exercised independently of the harness.
+// sampleReport 是一个手工构造、填充完整的 Report 字面量，这样渲染器
+// 就能独立于 benchmark 工具链被检验。
 func sampleReport() *experiment.Report {
 	return &experiment.Report{
 		Meta: experiment.Meta{
@@ -157,12 +157,12 @@ func TestRenderMarkdownHonestLimitsSectionIsSubstantive(t *testing.T) {
 		t.Fatalf("诚实边界 section is only %d chars; it must name the gaps, not gesture at them", len(body))
 	}
 	for _, must := range []string{
-		"没有建模", // what v0.1 does not model
+		"没有建模", // v0.1 没有建模的东西
 		"没有 plasma",
-		"推翻",   // what would falsify the result
-		"实测",   // which numbers are measured
-		"假设",   // vs assumed
-		"ddof", // the statistical convention is stated
+		"推翻",   // 什么会推翻这个结果
+		"实测",   // 哪些数字是实测的
+		"假设",   // 哪些是假设的
+		"ddof", // 统计约定被明确写出来
 		"RuleExpectation",
 	} {
 		if !strings.Contains(body, must) {
@@ -173,7 +173,7 @@ func TestRenderMarkdownHonestLimitsSectionIsSubstantive(t *testing.T) {
 
 func TestRenderMarkdownReportsBothDirections(t *testing.T) {
 	md := RenderMarkdown(sampleReport(), sampleRules(), "rules.md")
-	// §2 must carry the term table with both directions spelled out
+	// §2 必须带上分数项表格，两个方向都要写清楚
 	for _, must := range []string{"field", "mirror", "volume", "ripple", "cost", "↑ 好", "↓ 好", "谁更好"} {
 		if !strings.Contains(md, must) {
 			t.Errorf("report is missing %q (a report that only shows wins is not finished)", must)
@@ -182,7 +182,7 @@ func TestRenderMarkdownReportsBothDirections(t *testing.T) {
 	if !strings.Contains(md, "结论一句话") {
 		t.Error("headline verdict is missing")
 	}
-	// the machine won here (machine -0.24 beats the human -0.2906)
+	// 这里机器赢了（机器 -0.24 优于人工 -0.2906）
 	if !strings.Contains(md, "机器**超过**人工基线") {
 		t.Error("headline does not state the win")
 	}
@@ -190,7 +190,7 @@ func TestRenderMarkdownReportsBothDirections(t *testing.T) {
 
 func TestRenderMarkdownStatesLossWhenMachineLoses(t *testing.T) {
 	rep := sampleReport()
-	rep.Best.Score = -0.42 // worse than the baseline
+	rep.Best.Score = -0.42 // 比基线更差
 	md := RenderMarkdown(rep, nil, "")
 	if !strings.Contains(md, "机器**没有超过**人工基线") {
 		t.Error("a losing batch is not reported as a loss")
@@ -198,7 +198,7 @@ func TestRenderMarkdownStatesLossWhenMachineLoses(t *testing.T) {
 	if !strings.Contains(md, "输就是输") {
 		t.Error("a losing batch is not stated plainly")
 	}
-	// and the per-term table must show the human winning somewhere
+	// 而逐分数项表格里必须体现出人工在某个地方赢了
 	if !strings.Contains(md, "| 人 |") && !strings.Contains(md, "| 机器 |") {
 		t.Error("the term table does not compare the two sides")
 	}
@@ -220,8 +220,8 @@ func TestRenderMarkdownWithoutRunsOrBestOrRules(t *testing.T) {
 			t.Errorf("empty report does not state %q explicitly", must)
 		}
 	}
-	// a nil rules slice and a nil best must not panic, and the metrics table
-	// must render with dashes rather than zeros
+	// 规则切片为 nil、最优设计为 nil 时不得 panic，并且指标表必须用
+	// 破折号渲染，而不是用零
 	if strings.Contains(md, "| B_mid_T (midplane 体平均场) | 0 | 0 |") {
 		t.Error("missing machine metrics rendered as zeros instead of dashes")
 	}
@@ -259,7 +259,7 @@ func TestWrite(t *testing.T) {
 	}
 }
 
-// --- helpers ----------------------------------------------------------------
+// --- 辅助函数 ---------------------------------------------------------------
 
 func between(s, start, end string) (string, bool) {
 	i := strings.Index(s, start)

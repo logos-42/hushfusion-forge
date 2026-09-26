@@ -1,6 +1,6 @@
-"""Rule-mining reconciliation: scipy.spearmanr must agree with what Go reports.
+"""规则挖掘的对齐核对：scipy.spearmanr 必须与 Go 上报的结果一致。
 
-The hand-computed anchors come straight from the task/contract:
+手算的锚点直接来自任务 / 契约：
     x=[1,2,3,4,5] vs y=[2,4,6,8,10]  ->  1.0
     x=[1,2,3,4,5] vs y=[5,3,4,1,2]   -> -0.8
     x=[1,1,2,2]   vs y=[1,2,3,4]     ->  0.8944271909999159
@@ -23,10 +23,10 @@ def test_spearman_hand_computed_anchors():
 
 
 def test_spearman_is_rank_based_and_tie_aware():
-    # a monotone rescaling cannot change the rank correlation
+    # 单调缩放不可能改变秩相关
     assert spearman_rho([1, 2, 3], [10, 20, 30]) == pytest.approx(1.0)
     assert spearman_rho([1, 2, 3], [0.0, 0.5, 1e6]) == pytest.approx(1.0)
-    # all-tied input has no rank correlation to report
+    # 全部并列的输入没有可上报的秩相关
     assert spearman_rho([1, 1, 1], [1, 2, 3]) == 0.0
 
 
@@ -71,8 +71,8 @@ def test_load_rules_rejects_a_file_without_a_json_block(tmp_path):
 
 def test_run_filters_drop_small_and_infeasible_runs():
     records = [{"algorithm": "a", "seed": 1, "feasible": True}] * 25
-    records += [{"algorithm": "b", "seed": 1, "feasible": True}] * 5      # too small
-    records += [{"algorithm": "a", "seed": 2, "feasible": False}] * 30    # infeasible
+    records += [{"algorithm": "b", "seed": 1, "feasible": True}] * 5      # 太小
+    records += [{"algorithm": "a", "seed": 2, "feasible": False}] * 30    # 不可行 (infeasible)
     runs = rules_check.feasible_runs(records, min_n=150)
     assert set(runs) == {("a", 1)}
     assert len(runs[("a", 1)]) == 25
@@ -85,7 +85,7 @@ def test_reconcile_passes_on_synthetic_data_and_goes_red_when_falsified(capsys):
                          [rules_check.term_series(r, "volume") for r in recs])
             for recs in runs.values()]
     mean = sum(rhos) / len(rhos)
-    assert mean == pytest.approx(1.0)                     # volume = r_0 by construction
+    assert mean == pytest.approx(1.0)                     # 按构造 volume = r_0
     good = [{"rule_id": "R001", "parameter": "r_0", "term": "volume", "rho": mean,
              "sign_agreement": 1.0, "n_designs": sum(len(v) for v in runs.values()),
              "n_runs": len(runs)}]
@@ -94,36 +94,36 @@ def test_reconcile_passes_on_synthetic_data_and_goes_red_when_falsified(capsys):
     assert rows[0]["delta"] < 1e-12
     capsys.readouterr()
 
-    bad = [dict(good[0], rho=-mean)]                      # sign flipped
+    bad = [dict(good[0], rho=-mean)]                      # 符号被翻转
     code, rows = rules_check.reconcile(bad, records, verbose=False)
     assert code == 1 and rows[0]["status"] == "FAIL"
 
-    drifted = [dict(good[0], rho=mean - 0.05)]            # beyond the 0.02 tolerance
+    drifted = [dict(good[0], rho=mean - 0.05)]            # 超出 0.02 的容差
     code, _ = rules_check.reconcile(drifted, records, verbose=False)
     assert code == 1
 
 
 def test_reconcile_reports_aggregation_ambiguity_honestly(capsys):
-    """Per-run rhos that differ must still reconcile against the closest aggregation."""
+    """逐运行 rho 不同时，仍必须能与最接近的那种聚合方式对齐。"""
     import math
 
     records = rules_check._synth_records()
     for i, rec in enumerate(records):
         r0 = rec["params"]["radius_m"][0]
-        # a strongly but not perfectly rank-correlated term, differing run to run
+        # 一个秩相关很强但不完全的分数项，且逐运行不同
         rec["terms"]["cost"] = r0 + 0.03 * math.sin(i)
     runs = rules_check.feasible_runs(records)
     rhos = [spearman_rho([rules_check.parameter_series(r, "r_0") for r in recs],
                          [rules_check.term_series(r, "cost") for r in recs])
             for recs in runs.values()]
     assert len(rhos) >= 2 and all(v > 0.5 for v in rhos)
-    assert len(set(rhos)) > 1                             # the runs really do differ
+    assert len(set(rhos)) > 1                             # 各轮运行确实不同
     rule = [{"rule_id": "R001", "parameter": "r_0", "term": "cost",
              "rho": sum(rhos) / len(rhos),
              "sign_agreement": 1.0, "n_designs": 1, "n_runs": len(rhos)}]
     code, rows = rules_check.reconcile(rule, records, verbose=False)
     assert rows[0]["best_agg"] == "mean"
-    assert rows[0]["delta"] < 1e-12                        # the reported rho was the mean
+    assert rows[0]["delta"] < 1e-12                        # 上报的 rho 是均值
     assert code == 0
     capsys.readouterr()
 
@@ -155,7 +155,7 @@ def test_cli_end_to_end_on_a_written_corpus(tmp_path, capsys):
     md.write_text("# Rules\n\n```json\n" + json.dumps({"rules": rules}, indent=2) + "\n```\n")
     assert rules_check.main(["--rules", str(md), "--registry", str(reg)]) == 0
     capsys.readouterr()
-    # tamper with the published coefficient: the gate must go red
+    # 篡改已公布的系数：这道门必须变红
     rules[0]["rho"] = -1.0
     md.write_text("# Rules\n\n```json\n" + json.dumps({"rules": rules}) + "\n```\n")
     assert rules_check.main(["--rules", str(md), "--registry", str(reg)]) == 1

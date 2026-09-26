@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""Plots + tables for one benchmark run (the human-vs-machine figure set).
+"""某一次 benchmark 运行的图与表（人 vs 机器的那组图表）。
 
-Reads ``runs/<tag>/results.json`` (experiment.Report, schema frozen in
-internal/experiment/api.go) and, optionally, ``runs/<tag>/registry.jsonl``, and
-produces into ``runs/<tag>/figures/``:
+读取 ``runs/<tag>/results.json``（experiment.Report，schema 冻结在
+internal/experiment/api.go）以及可选的 ``runs/<tag>/registry.jsonl``，并产出
+到 ``runs/<tag>/figures/``：
 
-    best_so_far.png     best-so-far vs evaluations, mean over seeds with a
-                        min-max band per method, human baseline as a flat line
-    axis_profile.png    on-axis |B|(z) of the human baseline vs the machine best,
-                        recomputed with the independent scipy oracle
-    benchmark_table.md  equal-budget benchmark table (markdown fragment)
+    best_so_far.png     best-so-far 对评估次数，跨 seed 取均值，
+                        每个方法带一条 min-max 带，人工基线画成一条水平线
+    axis_profile.png    人工基线与机器最优的轴上 |B|(z)，
+                        用独立的 scipy oracle 重新计算
+    benchmark_table.md  等预算 benchmark 表（markdown 片段）
 
-The aggregate block written by Go is independently re-computed from ``runs`` and
-any disagreement is printed, because "the number in the report" and "the numbers
-the report was summarised from" are two different claims.
+Go 写下的 aggregate 块会由 ``runs`` 独立重算，任何不一致都会被打印出来，
+因为「报告里的那个数字」和「报告是由哪些数字汇总出来的」是两个不同的
+主张。
 
-Every axis label is ASCII/English on purpose: macOS font fallback for CJK inside
-matplotlib is a known time sink and adds nothing to a physics figure.
+所有轴标签故意用 ASCII/英文：macOS 在 matplotlib 里对 CJK 的字体回退是
+众所周知的时间黑洞，而且对一张物理图没有任何增益。
 
-If matplotlib is unavailable the script still writes the markdown table and says
-so out loud -- a missing plotting stack must not take the analysis down.
+如果 matplotlib 不可用，脚本仍会写出 markdown 表并明说这件事 —— 缺一套
+绘图栈不应该把整个分析拖垮。
 
-Usage:
+用法：
     python3 python/aux/analyze.py runs/phase0
 """
 
@@ -52,11 +52,11 @@ except Exception as exc:                                   # pragma: no cover
 
 
 # --------------------------------------------------------------------------- #
-# loading
+# 加载
 # --------------------------------------------------------------------------- #
 
 def load_report(target):
-    """Accept runs/<tag>, runs/<tag>/results.json or a path to any report json."""
+    """接受 runs/<tag>、runs/<tag>/results.json，或任意报告 json 的路径。"""
     p = Path(target)
     if p.is_dir():
         p = p / "results.json"
@@ -86,11 +86,11 @@ def load_registry(target):
 
 
 # --------------------------------------------------------------------------- #
-# curves
+# 曲线
 # --------------------------------------------------------------------------- #
 
 def history_from_registry(records, algorithm, seed, budget):
-    """Best-so-far trajectory rebuilt from the registry when the report omits it."""
+    """报告省略 best-so-far 轨迹时，从 registry 重新构建它。"""
     rows = [r for r in records if r.get("algorithm") == algorithm and r.get("seed") == seed]
     if not rows:
         return []
@@ -103,7 +103,7 @@ def history_from_registry(records, algorithm, seed, budget):
 
 
 def best_so_far_curves(report, records=None):
-    """{method: {"x", "mean", "lo", "hi", "n_seeds", "note"}} for the score-vs-evals plot."""
+    """用于 score-vs-evals 图的 {method: {"x", "mean", "lo", "hi", "n_seeds", "note"}}。"""
     budget = int(report.get("meta", {}).get("budget") or 0)
     per_method = {}
     for run in report.get("runs") or []:
@@ -145,11 +145,11 @@ def best_so_far_curves(report, records=None):
 
 
 # --------------------------------------------------------------------------- #
-# aggregate cross-check
+# aggregate 交叉校验
 # --------------------------------------------------------------------------- #
 
 def recompute_aggregate(report):
-    """Independently re-derive the per-method aggregation from report['runs']."""
+    """从 report['runs'] 独立重新推导按方法的聚合结果。"""
     budget = int(report.get("meta", {}).get("budget") or 0)
     base = float((report.get("baseline") or {}).get("score", float("nan")))
     per = {}
@@ -178,7 +178,7 @@ def recompute_aggregate(report):
 
 
 def compare_aggregate(report, verbose=True):
-    """Compare the report's aggregate block with the re-derived one. Returns bool."""
+    """把报告的 aggregate 块与重新推导出的结果比较。返回 bool。"""
     mine = recompute_aggregate(report)
     theirs = report.get("aggregate") or {}
     ok = True
@@ -208,11 +208,11 @@ def compare_aggregate(report, verbose=True):
 
 
 # --------------------------------------------------------------------------- #
-# axis profile
+# 轴向剖面
 # --------------------------------------------------------------------------- #
 
 def axis_profile(spec_map, design, n_points=None):
-    """Independent on-axis |B|(z) of one design, from the scipy oracle."""
+    """由 scipy oracle 独立算出某个设计的轴上 |B|(z)。"""
     spec = oracle.Spec.from_map(spec_map)
     coils = oracle.vector_to_coils(design, spec)
     n = n_points or (4 * spec.n_axis - 3)
@@ -222,18 +222,25 @@ def axis_profile(spec_map, design, n_points=None):
 
 
 # --------------------------------------------------------------------------- #
-# markdown table
+# markdown 表格
 # --------------------------------------------------------------------------- #
 
-def rescore_report(report, rel_tol=1e-6, verbose=True):
-    """Re-score the recorded baseline and best design with the independent oracle.
+def rescore_report(report, rel_tol=1e-6, verbose=True, proximity_floor=None):
+    """用独立 oracle 重新给记录在案的基线和最优设计打分。
 
-    This is the strongest cheap check in the set: the report *claims* what the
-    baseline scored and what the machine's best scored, and both claims are
-    re-derived here from the design vectors by numpy/scipy. A disagreement means
-    the two implementations no longer share a definition of the score, which would
-    invalidate every "the machine beat the human" statement built on top of it.
+    这是这组检查里最强的一个便宜检查：报告 *声称* 基线得了多少分、
+    机器的那个最优又得了多少分。这两个声称在这里都由 numpy/scipy 从
+    设计向量重新推导出来。一旦不一致，就意味着两个实现不再共享同一个
+    分数定义，而这会让所有建立在它之上的「机器赢了人」的说法全部失效。
+
+    proximity_floor 镜像 Go 求解器的 alpha2 夹取：Go 侧对每一个距离导线
+    小于该下限的样本点都做夹取。一个把线圈停在离中平面样本点只有几毫米
+    处的赢家，正是靠这个夹取拿到成绩的，所以不夹取就重打分，会制造出
+    一处根本不算 bug 的不一致。被夹取的样本点数量之所以会被打印出来，
+    原因正在于此。
     """
+    if proximity_floor is None:
+        proximity_floor = oracle.COIL_PROXIMITY_FLOOR
     spec_map = report.get("spec")
     cost_ref = report.get("cost_ref")
     ok = True
@@ -249,7 +256,12 @@ def rescore_report(report, rel_tol=1e-6, verbose=True):
             if verbose:
                 print(f"  [WARN] no design for the {label}: re-scoring skipped")
             continue
-        got = oracle.evaluate(design, spec, cost_ref, grids)
+        got = oracle.evaluate(design, spec, cost_ref, grids,
+                              proximity_floor=proximity_floor)
+        coils = oracle.vector_to_coils(design, spec)
+        near = sum(1 for r, z in zip(grids.stack_r, grids.stack_z)
+                   if oracle.nearest_wire_distance(coils, float(r), float(z))
+                   < proximity_floor)
         claimed = rec.get("score")
         if claimed is None:
             if verbose:
@@ -270,7 +282,9 @@ def rescore_report(report, rel_tol=1e-6, verbose=True):
             print(f"  [{'OK  ' if good else 'FAIL'}] oracle re-score of the {label}: "
                   f"report={claimed!r} oracle={got['score']!r} abs_diff={delta:.3e} | "
                   f"worst metric rel={worst:.2e}"
-                  + (f" ({worst_key})" if worst_key else ""))
+                  + (f" ({worst_key})" if worst_key else "")
+                  + f" | {near}/{grids.stack_r.size} grid point(s) inside the "
+                    f"{proximity_floor:g} m wire floor")
     return ok
 
 
@@ -301,7 +315,7 @@ def benchmark_table(report, mine=None):
 
 
 # --------------------------------------------------------------------------- #
-# figures
+# 图形
 # --------------------------------------------------------------------------- #
 
 def plot_best_so_far(curves, baseline_score, out_path, title="best-so-far vs evaluations"):
@@ -310,7 +324,7 @@ def plot_best_so_far(curves, baseline_score, out_path, title="best-so-far vs eva
         c = curves[algo]
         ax.plot(c["x"], c["mean"], linewidth=1.8, label=f"{algo} (mean of {c['n_seeds']} seeds)")
         ax.fill_between(c["x"], c["lo"], c["hi"], alpha=0.18, linewidth=0)
-    if baseline_score == baseline_score:                    # not NaN
+    if baseline_score == baseline_score:                    # 不是 NaN
         ax.axhline(baseline_score, linestyle="--", color="0.35", linewidth=1.4,
                    label="human baseline (textbook_mirror)")
     ax.set_xlabel("evaluations (equal budget per method and seed)")
@@ -340,10 +354,10 @@ def plot_axis_profiles(profiles, out_path, title="on-axis |B|(z)"):
 
 
 # --------------------------------------------------------------------------- #
-# driver
+# 入口
 # --------------------------------------------------------------------------- #
 
-def analyze(target, registry_path=None, make_figures=True, verbose=True):
+def analyze(target, registry_path=None, make_figures=True, verbose=True, proximity_floor=None):
     report = load_report(target)
     tag = (report.get("meta") or {}).get("tag") or Path(target).name or "run"
     out_dir = Path(target)
@@ -360,7 +374,7 @@ def analyze(target, registry_path=None, make_figures=True, verbose=True):
         print(f"  registry records: {len(reg)}")
 
     ok, mine = compare_aggregate(report, verbose=verbose)
-    ok &= rescore_report(report, verbose=verbose)
+    ok &= rescore_report(report, verbose=verbose, proximity_floor=proximity_floor)
     table = benchmark_table(report, mine=mine)
     (out_dir / "benchmark_table.md").write_text(table)
     if verbose:
@@ -415,12 +429,17 @@ def main(argv=None) -> int:
                     help="runs/<tag> directory or a results.json path")
     ap.add_argument("--registry", default=None, help="registry.jsonl (default: <run>/registry.jsonl)")
     ap.add_argument("--no-figures", action="store_true")
+    ap.add_argument("--proximity-floor", type=float, default=oracle.COIL_PROXIMITY_FLOOR,
+                    help=("alpha2 clamp radius in metres, matching the Go solver "
+                          "(default: %.3f = forge's frozen floor; 0 disables the clamp)"
+                          % oracle.COIL_PROXIMITY_FLOOR))
     args = ap.parse_args(argv)
     if not args.target:
         root = Path(__file__).resolve().parents[2]
         args.target = root / "runs" / "phase0"
     try:
-        return analyze(args.target, args.registry, make_figures=not args.no_figures)
+        return analyze(args.target, args.registry, make_figures=not args.no_figures,
+                       proximity_floor=args.proximity_floor)
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

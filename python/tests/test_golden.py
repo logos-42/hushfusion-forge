@@ -1,8 +1,7 @@
-"""Golden reproduction: the oracle must reproduce testdata/golden_*.json.
+"""golden 复现：oracle 必须能让 testdata/golden_*.json 重现。
 
-These values were produced by the (now deleted) Python reference implementation and
-are the cross-language truth for both the Go engine and this oracle. Nothing here
-touches testdata/ -- the files are read-only inputs.
+这些数值由（现已删除的）Python 参考实现产出，对 Go 引擎和本 oracle 而言
+都是跨语言的真相。这里不修改 testdata/ —— 那些文件是只读输入。
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ from conftest import TESTDATA
 
 
 # --------------------------------------------------------------------------- #
-# spec
+# spec（设备规格）
 # --------------------------------------------------------------------------- #
 
 def test_spec_is_read_from_the_golden_file_not_copied(spec):
@@ -28,13 +27,13 @@ def test_spec_is_read_from_the_golden_file_not_copied(spec):
     assert spec.b_ref == raw["b_ref"]
     assert spec.self_field == raw["self_field_T"]
     assert spec.weights == dict(raw["weights"])
-    # the derived self-field anchor matches mu0*j*t/2
+    # 推导出的自场锚点与 mu0*j*t/2 相符
     assert spec.self_field_anchor() == pytest.approx(spec.self_field, rel=1e-15)
     assert spec.lower().size == spec.upper().size == 12
 
 
 # --------------------------------------------------------------------------- #
-# baseline metrics / score
+# 基线指标 / 分数
 # --------------------------------------------------------------------------- #
 
 def test_golden_baseline_metrics_reproduce(spec, grids, baseline, golden_baseline):
@@ -61,23 +60,23 @@ def test_golden_baseline_terms_weighted_penalties_reproduce(spec, grids, baselin
 def test_golden_baseline_score_within_1e_6(spec, grids, baseline, golden_baseline):
     got = oracle.evaluate(baseline["design"], spec, baseline["cost_proxy"], grids)
     assert abs(got["score"] - golden_baseline["score"]) < 1e-6
-    # and it is much tighter than the gate -- the gate is a floor, not the target
+    # 而且它比门限紧得多 —— 门限是下限，不是目标
     assert abs(got["score"] - golden_baseline["score"]) < 1e-12
 
 
 def test_baseline_cell_current_is_solved_not_guessed(spec, baseline, golden_baseline):
-    """brentq must land on the same cell current as the golden file."""
+    """brentq 必须落在与 golden 文件相同的单元电流上。"""
     golden_cell = min(c["current_A"] for c in golden_baseline["coils"])
     assert baseline["cell_current_A"] == pytest.approx(golden_cell, rel=1e-12)
     assert baseline["throat_current_A"] == pytest.approx(3.5 * golden_cell, rel=1e-12)
 
 
 def test_baseline_design_is_inside_the_search_box(spec, baseline):
-    """Gate G6's premise, checked from the python side too: no clipping."""
+    """门 G6 的前提，也从 python 侧检查一遍：没有夹断。"""
     x = np.asarray(baseline["design"])
     lo, hi = spec.lower(), spec.upper()
     assert np.all(x >= lo) and np.all(x <= hi)
-    assert oracle.vector_to_coils(x, spec) == oracle.vector_to_coils(x, spec)  # canonical
+    assert oracle.vector_to_coils(x, spec) == oracle.vector_to_coils(x, spec)  # 规范形式
 
 
 def test_baseline_cost_proxy_equals_sum_i2r(baseline, golden_baseline):
@@ -87,7 +86,7 @@ def test_baseline_cost_proxy_equals_sum_i2r(baseline, golden_baseline):
 
 
 # --------------------------------------------------------------------------- #
-# field samples
+# 场样本
 # --------------------------------------------------------------------------- #
 
 def test_golden_field_samples_within_1e_9(golden_samples):
@@ -115,7 +114,7 @@ def test_axis_samples_have_zero_radial_field(golden_samples):
 
 
 # --------------------------------------------------------------------------- #
-# the CLI gate itself
+# CLI 门本身
 # --------------------------------------------------------------------------- #
 
 def test_check_golden_cli_passes(capsys):
@@ -126,7 +125,7 @@ def test_check_golden_cli_passes(capsys):
 
 
 def test_check_golden_cli_goes_red_on_a_tampered_golden(tmp_path, capsys):
-    """The gate must be able to fail: a shifted score has to trip it."""
+    """这道门必须能失败：一个被挪动的分数必须触发它。"""
     for name in ("golden_spec.json", "golden_field_samples.json"):
         (tmp_path / name).write_text((TESTDATA / name).read_text())
     doc = json.loads((TESTDATA / "golden_baseline.json").read_text())
@@ -142,7 +141,7 @@ def test_check_golden_cli_reports_missing_files(tmp_path, capsys):
 
 
 def test_compare_go_accepts_the_golden_sample_layout(tmp_path, capsys):
-    """A Go export shaped like golden_field_samples.json must pass at 1e-9."""
+    """形状与 golden_field_samples.json 相同的 Go 导出必须能在 1e-9 上通过。"""
     code = oracle.main(["--compare-go", str(TESTDATA / "golden_field_samples.json")])
     out = capsys.readouterr().out
     assert code == 0, out
@@ -161,20 +160,20 @@ def test_compare_go_goes_red_on_a_perturbed_field(tmp_path, capsys):
 def test_nearest_wire_distance_is_measured_to_the_wire():
     coils = [(0.3, -1.0, 1.0)]
     d = oracle.nearest_wire_distance(coils, np.array([0.3, 0.0, 0.5]), np.array([-0.996, 0.0, -1.0]))
-    assert d[0] == pytest.approx(4e-3, rel=1e-9)          # 4 mm below the loop plane
-    # on the axis the nearest wire point is sqrt(a^2 + dz^2) away, not a
+    assert d[0] == pytest.approx(4e-3, rel=1e-9)          # 在环平面下方 4 mm
+    # 在轴上，最近导线点的距离是 sqrt(a^2 + dz^2)，而不是
     assert d[1] == pytest.approx(math.sqrt(0.3 ** 2 + 1.0 ** 2), rel=1e-12)
-    assert d[2] == pytest.approx(0.2, rel=1e-9)           # in the loop plane, 0.2 m outside
+    assert d[2] == pytest.approx(0.2, rel=1e-9)           # 在环平面内，向外 0.2 m
 
 
 def test_compare_go_near_wire_floor_flag(tmp_path, capsys):
-    """Plumbing check for the like-for-like mode (the Go side is simulated here)."""
+    """同口径模式的接线检查（这里模拟 Go 侧）。"""
     spec = oracle.Spec.load(TESTDATA / "golden_spec.json")
     design = oracle.textbook_mirror(spec)["design"]
     n = spec.n_coils
     coils = [(design[i], design[n + i], design[2 * n + i]) for i in range(n)]
     r = np.array([0.3, 0.05, 0.6])
-    z = np.array([-0.996, 0.0, 0.4])                      # first point is 4 mm from a wire
+    z = np.array([-0.996, 0.0, 0.4])                      # 第一个点距离导线 4 mm
     br, bz = oracle.coilset_field(coils, r, z, proximity_floor=5e-3)
     case = {"design": design, "design_name": "near_wire_probe",
             "points_r": list(r), "points_z": list(z),
@@ -182,7 +181,7 @@ def test_compare_go_near_wire_floor_flag(tmp_path, capsys):
     p = tmp_path / "near_wire.json"
     p.write_text(json.dumps({"samples": [case]}))
 
-    assert oracle.main(["--compare-go", str(p)]) == 1     # exact form vs the clamped one
+    assert oracle.main(["--compare-go", str(p)]) == 1     # 精确形式 vs 被夹取的形式
     out = capsys.readouterr().out
     assert "closer than 0.005 m to a wire" in out and "NOT clamped" in out
 
@@ -204,13 +203,13 @@ def test_emit_golden_round_trips(tmp_path, capsys):
     emitted = json.loads((tmp_path / "golden_baseline.json").read_text())
     frozen = json.loads((TESTDATA / "golden_baseline.json").read_text())
     assert abs(emitted["score"] - frozen["score"]) < 1e-6
-    # re-checking the emitted set must be green as well
+    # 重新校验生成的集合也必须是绿的
     assert oracle.main(["--check-golden", str(tmp_path)]) == 0
     capsys.readouterr()
 
 
 # --------------------------------------------------------------------------- #
-# objective semantics
+# 目标函数语义
 # --------------------------------------------------------------------------- #
 
 def test_score_is_the_weighted_sum_and_penalties_subtract(spec, grids, baseline, golden_baseline):
@@ -229,26 +228,26 @@ def test_ripple_is_zero_for_a_single_peaked_profile():
 
 
 def test_ripple_counts_non_monotonic_structure_above_prominence():
-    # one interior (max, min) pair of depth 0.6 -> 0.6 / b_mid
+    # 一对内部 (max, min)，深度 0.6 -> 0.6 / b_mid
     b = [0.0, 0.5, 1.0, 0.5, 0.4, 0.5]
     assert oracle.axis_ripple(b, 1.0, 0.05) == pytest.approx(0.6, rel=1e-12)
-    # and the depth is measured peak-to-valley, not peak-to-last-sample
+    # 而且深度是量到峰到谷，而不是峰到最后一个样本
     b_deep = [0.0, 0.5, 1.0, 0.5, 0.2, 0.6]
     assert oracle.axis_ripple(b_deep, 1.0, 0.05) == pytest.approx(0.8, rel=1e-12)
-    # two alternating structures sum: (max,min)=0.4 and (min,max)=0.2
+    # 两个交替结构相加：(max,min)=0.4 和 (min,max)=0.2
     b2 = [0.0, 0.5, 1.0, 0.6, 0.7, 0.8, 0.7]
     assert oracle.axis_ripple(b2, 1.0, 0.05) == pytest.approx(0.6, rel=1e-12)
-    # structures shallower than prominence * b_mid are filtered out
-    b_shallow = [0.0, 0.5, 1.0, 0.97, 1.0, 0.5]      # two structures of depth 0.03
+    # 比 prominence * b_mid 更浅的结构会被过滤掉
+    b_shallow = [0.0, 0.5, 1.0, 0.97, 1.0, 0.5]      # 两个深度为 0.03 的结构
     assert oracle.axis_ripple(b_shallow, 1.0, 0.05) == 0.0
     assert oracle.axis_ripple(b_shallow, 1.0, 0.02) == pytest.approx(0.06, rel=1e-12)
-    # a flat top has no strict interior extremum -> no structure reported
+    # 平顶没有严格的内部极值 -> 不上报任何结构
     b_flat = [0.0, 1.0, 1.0, 0.0]
     assert oracle.axis_ripple(b_flat, 1.0, 0.05) == 0.0
 
 
 def test_metrics_are_finite_on_a_degenerate_design(spec, grids):
-    """Coincident coils are singular physics; the oracle must still return numbers."""
+    """重合的线圈是奇异物理；oracle 仍然必须返回数字。"""
     x = [0.5] * 4 + [0.0] * 4 + [1.0e5, 1.0e5, 1.0e5, 1.0e5]
     got = oracle.evaluate(x, spec, 1.0e12, grids)
     for key in oracle.METRIC_KEYS:
@@ -258,7 +257,7 @@ def test_metrics_are_finite_on_a_degenerate_design(spec, grids):
 
 
 def test_design_vector_is_clipped_and_canonicalised(spec):
-    x = [0.0] * 4 + [0.0, 0.0, 0.0, 0.0] + [1.0e9] * 4       # all out of bounds
+    x = [0.0] * 4 + [0.0, 0.0, 0.0, 0.0] + [1.0e9] * 4       # 全部越界
     coils = oracle.vector_to_coils(x, spec)
     for a, z, i in coils:
         assert spec.radius_bounds[0] <= a <= spec.radius_bounds[1]

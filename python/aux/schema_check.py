@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""Gate G9 (schema parity): validate the Go-written registry JSONL.
+"""门 G9（schema 一致性）：校验 Go 写出的 registry JSONL。
 
-The registry schema is frozen in ``internal/registry/api.go`` (Record/Params) and
-``internal/physics/api.go`` (Metrics). This checker re-states that schema from the
-outside and verifies every record against it, so a Go-side rename or a dropped
-metric is caught by something that shares no code with Go.
+registry schema 冻结在 ``internal/registry/api.go`` (Record/Params) 和
+``internal/physics/api.go`` (Metrics)。本检查器从外部把这份 schema 重新
+陈述一遍，并逐条记录校验，因此 Go 侧的改名或漏掉一个指标，会被一个
+与 Go 不共享任何代码的东西抓到。
 
-Checks (all hard errors unless noted):
-  * one JSON object per line; a truncated FINAL line is tolerated (the Go reader
-    tolerates it too) and reported as a warning;
-  * every required key present, no unknown keys (frozen schema), no null values;
-  * ``metrics`` carries every frozen metric key with a numeric value;
-  * ``params`` carries radius_m / z_m / current_A as equal-length numeric lists;
-  * terms / weighted / penalties carry their frozen key sets with numeric values;
-  * ``experiment_id`` contiguous from 1; ``design_id`` matches ``D%04d`` and the
-    same running counter (Append assigns both from one counter);
-  * warning only: parent_design referencing an unknown design_id.
+检查项（除注明外都是硬错误）：
+  * 每行一个 JSON 对象；被截断的 *最后* 一行被容忍（Go 的读取器也容忍它），
+    并作为警告上报；
+  * 每个必需的键都在、没有未知键（冻结 schema）、没有 null 值；
+  * ``metrics`` 携带每一个冻结的指标键，且值为数值；
+  * ``params`` 携带 radius_m / z_m / current_A，为等长的数值列表；
+  * terms / weighted / penalties 携带各自的冻结键集合，值为数值；
+  * ``experiment_id`` 从 1 开始连续；``design_id`` 匹配 ``D%04d``（至少
+    四位数字，因此 D10000 是合法的），并且
+    与同一个递增计数器一致（Append 从同一个计数器分配两者）；
+  * 仅警告：parent_design 指向了一个未知的 design_id。
 
-Usage:
+用法：
     python3 python/aux/schema_check.py runs/phase0/registry.jsonl
 """
 
@@ -30,7 +31,7 @@ import re
 import sys
 from pathlib import Path
 
-# Frozen key sets, transcribed from the Go JSON tags (not imported from Go).
+# 冻结的键集合，从 Go 的 JSON tag 抄录而来（不是从 Go 导入的）。
 REQUIRED_FIELDS = ["experiment_id", "design_id", "algorithm", "seed", "score",
                    "params", "terms", "metrics"]
 OPTIONAL_FIELDS = ["parent_design", "note"]
@@ -50,7 +51,12 @@ TERM_FIELDS = {"terms": ["field", "mirror", "volume", "ripple", "cost"],
                "penalties": ["conductor_field", "coil_separation", "not_a_mirror"]}
 PARAM_FIELDS = ["radius_m", "z_m", "current_A"]
 
-DESIGN_ID_RE = re.compile(r"^D(\d{4})$")
+DESIGN_ID_RE = re.compile(r"^D(\d{4,})$")
+# NB: `%04d` 是 *最小* 宽度，因此一份 10 000+ 条记录的 registry 里出现
+# D10000 是合法的。这里用恰好 {4} 位的模式，会让这道门在规模上悄悄变红
+#（12 001 条记录时报了 2002 个错误），而每一个小 fixture 都能通过。
+# 正则只是形状检查；真正的规则是 _check_record 内部那个精确的规范形式
+# 比较 (did == "D%04d" % experiment_id)。
 
 
 def _is_number(v):
@@ -137,6 +143,11 @@ def _check_record(rec, lineno, errors, warnings, seen_design_ids, expect_id):
         else:
             if eid is not None and int(m.group(1)) != eid:
                 err(f"design_id {did} is not the id of experiment_id {eid}")
+            if eid is not None:
+                canonical = "D%04d" % eid
+                if did != canonical:
+                    err(f"design_id {did!r} is not the canonical form of "
+                        f"experiment_id {eid} (expected {canonical!r})")
             if did in seen_design_ids:
                 err(f"duplicate design_id {did}")
         seen_design_ids.add(did)
@@ -148,7 +159,7 @@ def _check_record(rec, lineno, errors, warnings, seen_design_ids, expect_id):
 
 
 def check_registry(path, verbose=True):
-    """Validate one registry JSONL file. Returns (exit_code, errors, warnings, n_records)."""
+    """校验一个 registry JSONL 文件。返回 (exit_code, errors, warnings, n_records)。"""
     path = Path(path)
     errors, warnings = [], []
     if not path.is_file():

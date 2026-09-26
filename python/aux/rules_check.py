@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""Independent re-computation of the mined design rules (knowledge layer).
+"""对挖掘出的设计规则做独立重算（知识层）。
 
-``internal/knowledge`` mines, per (design parameter, score term) pair, a Spearman
-rank correlation computed per run (algorithm x seed), keeps only pairs whose sign
-replicates in every surviving run, and writes the survivors into
-``knowledge/design_rules.md`` -- table, scope note, and a machine-readable ```json
-block. This script re-derives the same statistics with ``scipy.stats.spearmanr``
-from the registry itself and reconciles them rule by rule. Go and scipy must agree
-to < 1e-9 on the coefficient; the gate is set at 0.02 so that a *reported* rule is
-either the same rule or a failure, never a rounding wobble.
+``internal/knowledge`` 会为每个 (设计参数, 分数项) 对计算一个按运行
+(算法 x seed) 分别计算的 Spearman 秩相关，只保留符号在每一轮存活运行中都
+复现的那些对，并把幸存者写进 ``knowledge/design_rules.md`` —— 表格、
+适用范围说明，以及一个机器可读的 ```json 块。本脚本用
+``scipy.stats.spearmanr`` 从 registry 本身重新推导同样的统计量，并逐条
+规则做对齐核对。Go 与 scipy 在系数上必须一致到 < 1e-9；门限设在 0.02，
+这样一条 *被公布* 的规则要么是同一条规则，要么是失败，
+而绝不会是一次舍入抖动。
 
-Two things are deliberately NOT assumed, because the frozen docs do not pin them:
-  * the aggregation of the per-run rhos into the single reported ``rho`` (mean,
-    median and worst-case magnitude are all plausible). All three are computed and
-    the reported value must match the closest of them;
-  * the run filters -- the docs say "feasible records only, fewer than
-    max(20, MinN/8) records dropped, at least two runs"; those thresholds are
-    implemented here and any run-count disagreement is reported as a warning.
+有两件事是被刻意 *不* 假设的，因为冻结文档并没有把它们钉死：
+  * 把逐运行的 rho 聚合成那一个被上报的 ``rho`` 的方式（均值、中位数和
+    最坏情况幅值都说得通）。三种都会算出来，而上报值必须与其中最接近
+    的那个相符；
+  * 运行过滤器 —— 文档说的是「只用 feasible 记录，记录数少于
+    max(20, MinN/8) 的丢掉，至少两轮运行」；这些阈值在这里被实现出来，
+    任何运行数量上的不一致都会作为警告上报。
 
-Usage:
+用法：
     python3 python/aux/rules_check.py --rules knowledge/design_rules.md \\
                                       --registry runs/phase0/registry.jsonl
-    python3 python/aux/rules_check.py --selftest     # exercises the gate itself
+    python3 python/aux/rules_check.py --selftest     # 把这道门本身跑一遍
 """
 
 from __future__ import annotations
@@ -51,11 +51,11 @@ PARAM_RE = re.compile(r"^([rzI])_(\d+)$")
 
 
 # --------------------------------------------------------------------------- #
-# loading
+# 加载
 # --------------------------------------------------------------------------- #
 
 def spearman_rho(x, y):
-    """Spearman rank correlation with tie handling (average ranks), via scipy."""
+    """带并列名次处理的 Spearman 秩相关（平均名次），由 scipy 计算。"""
     if spearmanr is None:                                  # pragma: no cover
         raise RuntimeError("scipy is required for the independent reconciliation")
     x = [float(v) for v in x]
@@ -65,18 +65,18 @@ def spearman_rho(x, y):
     if len(x) < 2:
         return 0.0
     with warnings.catch_warnings():
-        # a constant input has no defined rank correlation: scipy says NaN, we say 0
+        # 常量输入没有定义的秩相关：scipy 说 NaN，我们说 0
         warnings.simplefilter("ignore")
         r = spearmanr(x, y)
     stat = getattr(r, "statistic", None)
-    if stat is None:                                       # scipy < 1.9 tuple API
+    if stat is None:                                       # scipy < 1.9 的 tuple API
         stat = r[0]                                        # pragma: no cover
     stat = float(stat)
-    return 0.0 if stat != stat else stat                   # NaN -> 0
+    return 0.0 if stat != stat else stat                   # NaN 记作 0
 
 
 def load_registry(path):
-    """Read a registry JSONL, tolerating a truncated final line."""
+    """读取 registry JSONL，容忍最后一行被截断。"""
     lines = Path(path).read_text().splitlines()
     recs = []
     for i, raw in enumerate(lines):
@@ -92,7 +92,7 @@ def load_registry(path):
 
 
 def load_rules(path):
-    """Pull the machine-readable rules out of the ```json block of the md file."""
+    """从 md 文件的 ```json 块里取出机器可读的规则。"""
     text = Path(path).read_text()
     blocks = JSON_BLOCK_RE.findall(text)
     if not blocks:
@@ -110,11 +110,11 @@ def load_rules(path):
 
 
 # --------------------------------------------------------------------------- #
-# series extraction
+# 序列抽取
 # --------------------------------------------------------------------------- #
 
 def parameter_series(rec, name):
-    """One design parameter as a scalar series: r_i -> params.radius_m[i], etc."""
+    """把一个设计参数取成标量序列：r_i -> params.radius_m[i]，等等。"""
     m = PARAM_RE.match(name)
     if not m:
         raise ValueError(f"unrecognised parameter name {name!r}")
@@ -140,7 +140,7 @@ def term_series(rec, term):
 
 
 def feasible_runs(records, min_n=DEFAULT_MIN_N, min_per_run=None):
-    """Group feasible records into runs (algorithm x seed), applying the filters."""
+    """把 feasible 记录按运行 (算法 x seed) 分组，并应用过滤器。"""
     floor = min_per_run if min_per_run is not None else max(20, min_n // 8)
     runs = defaultdict(list)
     for rec in records:
@@ -151,12 +151,12 @@ def feasible_runs(records, min_n=DEFAULT_MIN_N, min_per_run=None):
 
 
 # --------------------------------------------------------------------------- #
-# reconciliation
+# 对齐核对
 # --------------------------------------------------------------------------- #
 
 def reconcile(rules, records, rho_tol=RHO_TOL, agree_tol=AGREE_TOL, min_n=DEFAULT_MIN_N,
               verbose=True):
-    """Recompute every rule and compare. Returns (exit_code, rows)."""
+    """重新计算每一条规则并比较。返回 (exit_code, rows)。"""
     runs = feasible_runs(records, min_n=min_n)
     ok = True
     rows = []
@@ -198,7 +198,7 @@ def reconcile(rules, records, rho_tol=RHO_TOL, agree_tol=AGREE_TOL, min_n=DEFAUL
             if d < best_delta:
                 best_name, best_delta = name, d
         n_designs = sum(len(v) for v in runs.values())
-        # sign agreement: fraction of runs sharing the sign of the reported rho
+        # 符号一致度：与上报 rho 同号的运行所占比例
         pos = sum(1 for v in vals if v > 0)
         neg = sum(1 for v in vals if v < 0)
         majority = (pos > neg) - (pos < neg)
@@ -230,11 +230,11 @@ def reconcile(rules, records, rho_tol=RHO_TOL, agree_tol=AGREE_TOL, min_n=DEFAUL
 
 
 # --------------------------------------------------------------------------- #
-# selftest
+# 自检
 # --------------------------------------------------------------------------- #
 
 def _synth_records(n_runs=3, n_per_run=40, seed=11):
-    """Synthetic feasible registry records with a known, clean correlation."""
+    """合成的 feasible registry 记录，带有已知且干净的相关系数。"""
     import random
     rng = random.Random(seed)
     recs, eid = [], 0
@@ -267,7 +267,7 @@ def _synth_records(n_runs=3, n_per_run=40, seed=11):
 
 
 def selftest(verbose=True):
-    """Prove the gate fires: clean rules pass, a falsified rho goes red."""
+    """证明这道门会触发：干净的规则通过，被改过的 rho 变红。"""
     records = _synth_records()
     runs = feasible_runs(records)
     pair = ("r_0", "volume")
@@ -291,7 +291,7 @@ def selftest(verbose=True):
 
 
 # --------------------------------------------------------------------------- #
-# cli
+# cli（命令行入口）
 # --------------------------------------------------------------------------- #
 
 def main(argv=None) -> int:

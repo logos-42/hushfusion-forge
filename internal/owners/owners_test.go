@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// repoRoot walks up from the test's working directory until go.mod is found.
+// repoRoot 从测试的工作目录向上查找，直到找到 go.mod。
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -26,7 +26,7 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// walkTracked lists every non-generated file in the repository, repo-relative.
+// walkTracked 列出仓库里每一个非生成文件，路径为仓库相对路径。
 func walkTracked(t *testing.T, root string) []string {
 	t.Helper()
 	var files []string
@@ -59,16 +59,16 @@ func walkTracked(t *testing.T, root string) []string {
 	return files
 }
 
-// TestRosterHasNoOverlaps is the freeze gate: two stages may never claim the same
-// path or overlapping prefixes.
+// TestRosterHasNoOverlaps 是冻结门：两个阶段绝不能认领同一条路径或
+// 互相重叠的前缀。
 func TestRosterHasNoOverlaps(t *testing.T) {
 	if got := Overlaps(Stages); len(got) != 0 {
 		t.Fatalf("ownership roster has %d overlap(s): %v", len(got), got)
 	}
 }
 
-// TestRosterCoversEveryTrackedFile is the exhaustiveness half of the gate: no
-// file in the repository may belong to nobody.
+// TestRosterCoversEveryTrackedFile 是这道门的完整性那一半：仓库里
+// 不允许有任何文件不属于任何人。
 func TestRosterCoversEveryTrackedFile(t *testing.T) {
 	root := repoRoot(t)
 	files := walkTracked(t, root)
@@ -81,9 +81,9 @@ func TestRosterCoversEveryTrackedFile(t *testing.T) {
 	t.Logf("roster covers %d files across %d stages", len(files), len(Stages))
 }
 
-// TestOverlapGateCanGoRed proves the overlap check is not vacuously green: a
-// mutated roster that points two stages at the same package must be rejected.
-// (A gate that cannot fail is not a gate.)
+// TestOverlapGateCanGoRed 证明重叠检查不是空转的绿：一份被改动过、把
+// 两个阶段指向同一个包的名册，必须被拒绝。
+// （一道不可能失败的门根本不算门。）
 func TestOverlapGateCanGoRed(t *testing.T) {
 	mutated := []Stage{
 		{ID: "A", Paths: []string{"internal/physics/"}},
@@ -93,7 +93,7 @@ func TestOverlapGateCanGoRed(t *testing.T) {
 		t.Fatal("mutated roster with a duplicated package was NOT reported as overlapping")
 	}
 
-	// same file claimed twice
+	// 同一个文件被认领两次
 	mutated = []Stage{
 		{ID: "A", Paths: []string{"internal/physics/magnet.go"}},
 		{ID: "B", Paths: []string{"internal/physics/magnet.go"}},
@@ -102,7 +102,7 @@ func TestOverlapGateCanGoRed(t *testing.T) {
 		t.Fatal("mutated roster claiming the same file twice was NOT reported")
 	}
 
-	// nested prefixes: one stage owning a parent of another's path
+	// 嵌套前缀：一个阶段拥有另一个阶段路径的父目录
 	mutated = []Stage{
 		{ID: "A", Paths: []string{"internal/"}},
 		{ID: "B", Paths: []string{"internal/physics/"}},
@@ -112,7 +112,7 @@ func TestOverlapGateCanGoRed(t *testing.T) {
 	}
 }
 
-// TestOwnerResolvesExactAndPrefix checks the resolver's precedence rule.
+// TestOwnerResolvesExactAndPrefix 检查解析器的优先级规则。
 func TestOwnerResolvesExactAndPrefix(t *testing.T) {
 	stages := []Stage{
 		{ID: "root", Paths: []string{"go.mod", "internal/config/"}},

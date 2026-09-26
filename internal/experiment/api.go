@@ -1,21 +1,21 @@
-// Package experiment: equal-budget benchmark harness + the Phase-0 pipeline.
+// Package experiment：等预算 benchmark 工具 + Phase-0 流水线。
 //
-// FROZEN INTERFACE (v0.1) — owner: stage E.
+// 冻结接口 (v0.1) — 负责人：阶段 E。
 //
-// Three things are measured, and they answer different questions:
+// 一共测三件事，它们回答的是不同的问题：
 //
-//	最优性能 (best-of-budget)  how good the best design gets at a fixed cost
-//	收敛速度 (evals to beat)   how much design effort the machine needs before it
-//	                          is already better than a competent engineer — the
-//	                          *rate* of the learning loop, not its endpoint
-//	泛化 (robustness probe)   each method's best design re-scored under perturbed
-//	                          requirements, against the human baseline re-solved
-//	                          for the same perturbation. A design that only wins
-//	                          inside the exact box it was searched in has not
-//	                          generalised, and saying so is part of the result.
+//	最优性能 (best-of-budget)  在固定成本下，最好的设计能有多好
+//	收敛速度 (evals to beat)   机器需要多少设计尝试，才已经优于一名合格的
+//	                          工程师 —— 衡量的是学习回路的*速率*，而不是它
+//	                          的终点
+//	泛化 (robustness probe)   每种方法的最优设计都在扰动后的要求下重新打分，
+//	                          并与针对同一扰动重新求解过的人工基线对比。
+//	                          一个只在它被搜索的那个精确盒子里获胜的设计
+//	                          并没有泛化，而把这一点明说出来本身就是结果
+//	                          的一部分。
 //
-// The Report JSON schema is consumed by the Python auxiliary layer
-// (python/aux/analyze.py); keys are FROZEN.
+// Report 的 JSON schema 由 Python 辅助层消费
+// (python/aux/analyze.py)；键名是冻结的 (FROZEN)。
 package experiment
 
 import (
@@ -39,13 +39,13 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/search"
 )
 
-// Variant is a requirement perturbation: a name plus spec overrides.
+// Variant 是一次要求扰动：一个名字加上若干 spec 覆盖项。
 type Variant struct {
 	Name     string             `json:"name"`
 	Override map[string]float64 `json:"override"`
 }
 
-// SpecVariants are the six perturbations used by the generalisation probe.
+// SpecVariants 是泛化探针使用的六次扰动。
 var SpecVariants = []Variant{
 	{Name: "b_ref=0.8T", Override: map[string]float64{"b_ref": 0.8}},
 	{Name: "b_ref=1.2T", Override: map[string]float64{"b_ref": 1.2}},
@@ -55,23 +55,23 @@ var SpecVariants = []Variant{
 	{Name: "r_plasma=0.18m", Override: map[string]float64{"r_plasma": 0.18}},
 }
 
-// variantKeys are the spec keys a Variant may override. Adding one is a contract
-// change (the Python auxiliary layer mirrors the list).
+// variantKeys 是 Variant 允许覆盖的 spec 键。新增一个键属于契约变更
+// （Python 辅助层会镜像这份列表）。
 var variantKeys = []string{"b_ref", "z_cell", "r_plasma"}
 
-// ApplyVariant returns the spec with the variant's overrides applied.
-// Supported keys: b_ref, z_cell, r_plasma. Unknown keys must be reported as an
-// error rather than silently ignored.
+// ApplyVariant 返回应用了该 variant 覆盖项之后的 spec。
+// 支持的键：b_ref、z_cell、r_plasma。未知键必须报错，
+// 而不是被静默忽略。
 //
-// The override set is validated as a whole BEFORE anything is written, so an
-// error guarantees the returned spec is byte-for-byte the input spec: a caller
-// that ignores the error still cannot get a half-perturbed device.
+// 整个覆盖集合会在写入任何东西之前先整体校验，因此一旦报错，返回的 spec
+// 保证与输入 spec 逐字节相同：即使调用方忽略了这个错误，也拿不到一个
+// 被改了一半的设备。
 func ApplyVariant(spec config.Spec, v Variant) (config.Spec, error) {
 	keys := make([]string, 0, len(v.Override))
 	for k := range v.Override {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys) // deterministic error text
+	sort.Strings(keys) // 错误文本保持确定性
 	for _, k := range keys {
 		if !isVariantKey(k) {
 			return spec, fmt.Errorf("experiment: variant %q overrides unknown spec key %q (supported: %s)",
@@ -101,7 +101,7 @@ func isVariantKey(k string) bool {
 	return false
 }
 
-// Meta is the run provenance written into the report.
+// Meta 是写入报告中的运行溯源信息。
 type Meta struct {
 	Tag       string   `json:"tag"`
 	Timestamp string   `json:"timestamp"`
@@ -114,7 +114,7 @@ type Meta struct {
 	Workers   int      `json:"workers"`
 }
 
-// Agg is per-method statistics across seeds. Never a single-seed claim.
+// Agg 是按方法、跨 seed 的统计量。绝不据此做单 seed 的结论。
 type Agg struct {
 	NSeeds              int     `json:"n_seeds"`
 	Budget              int     `json:"budget"`
@@ -124,12 +124,12 @@ type Agg struct {
 	BestMax             float64 `json:"best_max"`
 	NBeatingBaseline    int     `json:"n_beating_baseline"`
 	FracBeatingBaseline float64 `json:"frac_beating_baseline"`
-	EvalsToBeatMean     float64 `json:"evals_to_beat_mean"`   // -1 when no seed beat it
-	EvalsToBeatMedian   float64 `json:"evals_to_beat_median"` // -1 when no seed beat it
+	EvalsToBeatMean     float64 `json:"evals_to_beat_mean"`   // 没有任何 seed 超过基线时为 -1
+	EvalsToBeatMedian   float64 `json:"evals_to_beat_median"` // 没有任何 seed 超过基线时为 -1
 	BaselineScore       float64 `json:"baseline_score"`
 }
 
-// BaseRec is the human baseline as recorded.
+// BaseRec 是记录在案的人工基线。
 type BaseRec struct {
 	Name      string             `json:"name"`
 	Note      string             `json:"note"`
@@ -144,7 +144,7 @@ type BaseRec struct {
 	DesignID  string             `json:"design_id"`
 }
 
-// BestRec is the single best design found by the machine.
+// BestRec 是机器找到的单个最优设计。
 type BestRec struct {
 	DesignID  string             `json:"design_id"`
 	Algorithm string             `json:"algorithm"`
@@ -156,7 +156,7 @@ type BestRec struct {
 	Feasible  bool               `json:"feasible"`
 }
 
-// Robustness is the generalisation probe result.
+// Robustness 是泛化探针的结果。
 type Robustness struct {
 	Variants           []string                      `json:"variants"`
 	BaselinePerVariant map[string]float64            `json:"baseline_score_per_variant"`
@@ -164,7 +164,7 @@ type Robustness struct {
 	Summary            map[string]RobustSummary      `json:"summary"`
 }
 
-// RobustSummary is the per-design roll-up of the probe.
+// RobustSummary 是探针按设计汇总后的结果。
 type RobustSummary struct {
 	MeanDeltaVsBaseline  float64 `json:"mean_delta_vs_baseline"`
 	WorstDeltaVsBaseline float64 `json:"worst_delta_vs_baseline"`
@@ -172,7 +172,7 @@ type RobustSummary struct {
 	NVariants            int     `json:"n_variants"`
 }
 
-// Report is the full artifact written to runs/<tag>/results.json.
+// Report 是写入 runs/<tag>/results.json 的完整产物。
 type Report struct {
 	Meta            Meta                 `json:"meta"`
 	Spec            map[string]any       `json:"spec"`
@@ -188,7 +188,7 @@ type Report struct {
 	RLEnvReference  map[string]any       `json:"rl_env_reference,omitempty"`
 }
 
-// Opts configures a benchmark run.
+// Opts 配置一次 benchmark 运行。
 type Opts struct {
 	Budget   int
 	Seeds    []int
@@ -200,43 +200,41 @@ type Opts struct {
 }
 
 const (
-	// defaultBudget matches search.DefaultOptions and the report's stated
-	// setting (budget 1000 evaluations per run).
+	// defaultBudget 与 search.DefaultOptions 以及报告中标明的设置一致
+	//（每次运行 1000 次评估）。
 	defaultBudget = 1000
-	// humanBaselineAlgorithm is the algorithm name the human baseline is
-	// recorded under, so "which branch improved on the human?" is answerable.
+	// humanBaselineAlgorithm 是人工基线记录时所用的算法名，
+	// 这样「哪条分支改进了人工基线？」才是可回答的。
 	humanBaselineAlgorithm = "human_baseline"
-	// warmStartMethod is the one method that consumes Opts.WarmStart; the
-	// benchmark hands it the human design vector (knowledge reuse).
+	// warmStartMethod 是唯一消费 Opts.WarmStart 的方法；benchmark
+	// 会把人工设计向量交给它（知识复用）。
 	warmStartMethod = "evolution_warm"
 )
 
-// defaultMethods / defaultSeeds are used when Opts leaves them empty. Three
-// seeds is the minimum that makes a spread meaningful; the report refuses
-// single-seed claims.
+// 当 Opts 把它们留空时，会使用 defaultMethods / defaultSeeds。
+// 三个 seed 是让离散度变得有意义的最小值；报告拒绝单 seed 的结论。
 var (
 	defaultMethods = []string{"random", "lhs", "evolution", "evolution_warm"}
 	defaultSeeds   = []int{0, 1, 2}
 )
 
-// RunBenchmark records the human baseline, then runs every method at every seed
-// with an identical budget, then aggregates and probes generalisation.
+// RunBenchmark 先记录人工基线，再以完全相同的预算在每一个 seed 上运行每种
+// 方法，然后做聚合并探测泛化能力。
 //
-// The baseline is recorded as its own algorithm ("human_baseline") and becomes
-// design D0001 — the root of the lineage tree, so "which branch improved on the
-// human?" is answerable.
+// 基线以它自己的算法名 ("human_baseline") 记录，并成为设计 D0001 —— 谱系树
+// 的根，所以「哪条分支改进了人工基线？」是可以回答的；这正是把基线记成
+// 独立算法的原因。
 //
-// Implementation notes (stage E):
+// 实现说明（阶段 E）：
 //
-//   - the registry must be empty: the D0001-root claim is an assertion about the
-//     artifact, and it is only true when the baseline is the first record
-//     appended. A non-empty registry is refused loudly instead of producing a
-//     report whose lineage claims are false;
-//   - the baseline is scored through the SAME Evaluator as every machine design
-//     (cost_ref = baseline ohmic cost), so the comparison is apples-to-apples;
-//   - runs are executed sequentially (opt.Workers only parallelises inside one
-//     run) — the wall-clock is dominated by the physics either way, and a
-//     deterministic order keeps runs/ comparable across invocations.
+//   - registry 必须为空：D0001 作为根这一主张，是对产物本身的断言，
+//     只有当基线是第一条被追加的记录时才成立。非空 registry 会被响亮
+//     地拒绝，而不是产出一份谱系主张为假的报告；
+//   - 基线与每一个机器设计都走同一个 Evaluator 打分
+//     (cost_ref = 基线的欧姆成本)，因此这个比较是同口径的；
+//   - 各次运行按顺序执行（opt.Workers 只在一个运行内部并行）—— 无论如何，
+//     墙上时间都由物理计算主导，而确定性的顺序让 runs/ 在不同次调用之间
+//     保持可比。
 func RunBenchmark(reg *registry.Registry, spec config.Spec, opt Opts) (*Report, error) {
 	if reg == nil {
 		return nil, errors.New("experiment: RunBenchmark needs an open registry")
@@ -358,9 +356,9 @@ func RunBenchmark(reg *registry.Registry, spec config.Spec, opt Opts) (*Report, 
 	rep.Runs = runs
 	rep.Aggregate = Aggregate(runs, baseRec.Score)
 
-	// Each method's best design across its seeds, re-scored under the perturbed
-	// requirements; the recorded human design rides along as the zero-ish
-	// reference (it is re-scored by the variant objective, NOT re-solved).
+	// 每种方法跨其各 seed 的最优设计，都在扰动后的要求下重新打分；记录在案的
+	// 人工设计一同参与，充当那个近乎零点的参照（它由 variant 目标函数重新
+	// 打分，而不是重新求解）。
 	designs := map[string][]float64{humanBaselineAlgorithm: baseDesign}
 	bestRun := map[string]search.Result{}
 	for _, r := range runs {
@@ -402,8 +400,8 @@ func RunBenchmark(reg *registry.Registry, spec config.Spec, opt Opts) (*Report, 
 	return rep, nil
 }
 
-// designVectorOf returns the canonical design vector of a human baseline: its
-// recorded Design when it has one, otherwise the encoding of its coils.
+// designVectorOf 返回人工基线的规范设计向量：它记录了 Design 时就用它，
+// 否则用其线圈的编码。
 func designVectorOf(b baseline.Baseline, spec config.Spec) ([]float64, error) {
 	if len(b.Design) == spec.NParams() {
 		return append([]float64(nil), b.Design...), nil
@@ -417,26 +415,24 @@ func designVectorOf(b baseline.Baseline, spec config.Spec) ([]float64, error) {
 		b.Name, len(b.Design), spec.NParams())
 }
 
-// defaultSolver is the analytic (exact circular-filament) solver: the same
-// solver the CLI's `forge verify` anchors against testdata/golden_field_samples.json,
-// and the one the score is defined with. DiscreteSolver exists as the
-// independent cross-check, not as the benchmark solver.
+// defaultSolver 是解析（精确圆电流丝）求解器：也就是 CLI 的 `forge verify`
+// 拿 testdata/golden_field_samples.json 做锚定的那个求解器，也是分数定义
+// 所用的那一个。DiscreteSolver 只是独立交叉校验，不是 benchmark 的求解器。
 func defaultSolver() physics.Solver { return physics.AnalyticSolver{} }
 
-// Aggregate computes per-method statistics across seeds.
+// Aggregate 计算按方法、跨 seed 的统计量。
 //
-// Statistics are taken over distinct seeds, sorted by seed for reproducibility;
-// a repeated seed is counted once (the last result for that seed wins) so a
-// double-run cannot inflate n_seeds. Conventions, stated because the Python
-// auxiliary layer recomputes them:
+// 统计基于去重后的 seed，并按 seed 排序以保证可复现；重复出现的 seed 只
+// 计一次（该 seed 的最后一条结果生效），因此重复运行不会把 n_seeds 灌大。
+// 下面这些约定之所以写明，是因为 Python 辅助层会重新计算它们：
 //
-//	best_std                 sample standard deviation (ddof = 1); 0 for n < 2
-//	best_min / best_max      over seeds
-//	n_beating_baseline       seeds with best_score > baseline_score (strict)
-//	evals_to_beat_*          mean/median over the seeds that DID beat the
-//	                         baseline (best_score > baseline_score AND
-//	                         evals_to_beat >= 0); -1 when none did
-//	median                   mean of the two central values for even counts
+//	best_std                 样本标准差 (ddof = 1)；n < 2 时为 0
+//	best_min / best_max      在 seed 之间取
+//	n_beating_baseline       满足 best_score > baseline_score 的 seed 数（严格）
+//	evals_to_beat_*          只对确实超过基线的那些 seed 取均值/中位数
+//	                         (best_score > baseline_score 且 evals_to_beat >= 0)；
+//	                         没有任何 seed 超过时为 -1
+//	median                   偶数个时取中间两个值的均值
 func Aggregate(runs []search.Result, baselineScore float64) map[string]Agg {
 	byMethod := map[string][]search.Result{}
 	for _, r := range runs {
@@ -463,11 +459,9 @@ func Aggregate(runs []search.Result, baselineScore float64) map[string]Agg {
 			if r.Budget > agg.Budget {
 				agg.Budget = r.Budget
 			}
-			// The "did it beat the baseline" test is made ONCE, from the score:
-			// a run that reports an evals_to_beat while scoring below the
-			// baseline is inconsistent input, and letting it into the
-			// convergence statistics would inflate the one number that says how
-			// fast the loop learns.
+			// 「是否超过基线」这个判定只做一次，且只看 score：一次运行如果分数低于
+			// 基线却上报了 evals_to_beat，那就是自相矛盾的输入，而把它放进收敛统计
+			// 会灌大那个唯一说明回路学得多快的数字。
 			beats := r.BestScore > baselineScore
 			if beats {
 				agg.NBeatingBaseline++
@@ -492,22 +486,21 @@ func Aggregate(runs []search.Result, baselineScore float64) map[string]Agg {
 	return out
 }
 
-// RobustnessProbe re-scores designs under perturbed requirements, relative to
-// the human baseline re-solved for each variant (so the zero line is always
-// "a human re-designing for the new requirement").
+// RobustnessProbe 在扰动后的要求下给设计重新打分，参照物是针对每个 variant
+// 重新求解过的人工基线（因此零点始终是「一个为新要求重新设计的人」）。
 //
-// Per design and variant the reported number is
+// 对每个设计和 variant，上报的数值是
 //
 //	per_design[design][variant] = score(design, variant) - score(human_variant)
 //
-// with score(human_variant) the human design RE-SOLVED for the perturbed spec
-// (baseline.TextbookMirror under the variant, scored by the variant objective
-// and the variant's own cost reference). A positive delta therefore means
-// "still better than a human who redesigned for the new requirement".
+// 其中 score(human_variant) 是人工设计针对扰动后 spec 重新求解的结果
+// （即 variant 下的 baseline.TextbookMirror，由 variant 目标函数和 variant
+// 自己的成本参考打分）。因此正的 delta 意味着「仍然优于一个为新要求重新
+// 设计过的人」。
 //
-// The recorded baseline design itself is scored under each variant too (pass it
-// in under the "human_baseline" key); it was not redesigned for the perturbation,
-// so its delta is normally negative and that contrast is the point.
+// 记录在案的那份基线设计本身也会在每个 variant 下被打分（用 "human_baseline"
+// 这个键传进来）；它并没有为扰动重新设计过，所以它的 delta 通常是负的，
+// 而这种反差正是要看的点。
 func RobustnessProbe(spec config.Spec, designs map[string][]float64, variants []Variant) (Robustness, error) {
 	out := Robustness{
 		Variants:           []string{},
@@ -521,8 +514,8 @@ func RobustnessProbe(spec config.Spec, designs map[string][]float64, variants []
 	}
 	sort.Strings(names)
 
-	// Input validation first, and it is pure: a bad variant key or a
-	// wrong-length design vector must fail before any physics is touched.
+	// 先做输入校验，而且它是纯的：一个坏的 variant 键，或者长度不对的
+	// 设计向量，必须在碰到任何物理计算之前就失败。
 	vspecs := make([]config.Spec, len(variants))
 	for i, v := range variants {
 		s, err := ApplyVariant(spec, v)
@@ -582,8 +575,8 @@ func RobustnessProbe(spec config.Spec, designs map[string][]float64, variants []
 	return out, nil
 }
 
-// WriteJSON writes the report as indented JSON. Parent directories are created
-// so runs/<tag>/results.json can be written directly.
+// WriteJSON 以带缩进的 JSON 写出报告。父目录会被创建，
+// 因此可以直接写 runs/<tag>/results.json。
 func WriteJSON(rep *Report, path string) error {
 	data, err := json.MarshalIndent(rep, "", "  ")
 	if err != nil {
@@ -601,7 +594,7 @@ func WriteJSON(rep *Report, path string) error {
 	return nil
 }
 
-// LoadReport reads a report back.
+// LoadReport 把报告读回来。
 func LoadReport(path string) (*Report, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -614,7 +607,7 @@ func LoadReport(path string) (*Report, error) {
 	return &rep, nil
 }
 
-// --- statistics helpers -----------------------------------------------------
+// --- 统计辅助函数 -----------------------------------------------------------
 
 func mean(xs []float64) float64 {
 	if len(xs) == 0 {
@@ -627,7 +620,7 @@ func mean(xs []float64) float64 {
 	return s / float64(len(xs))
 }
 
-// stdSample is the unbiased sample standard deviation (ddof = 1).
+// stdSample 是无偏样本标准差 (ddof = 1)。
 func stdSample(xs []float64) float64 {
 	if len(xs) < 2 {
 		return 0
@@ -641,7 +634,7 @@ func stdSample(xs []float64) float64 {
 	return math.Sqrt(ss / float64(len(xs)-1))
 }
 
-// median sorts a copy; even counts average the two central values.
+// median 先复制再排序；偶数个时取中间两个值的均值。
 func median(xs []float64) float64 {
 	if len(xs) == 0 {
 		return 0
@@ -671,14 +664,13 @@ func minMax(xs []float64) (lo, hi float64) {
 	return lo, hi
 }
 
-// --- provenance helpers -----------------------------------------------------
+// --- 溯源辅助函数 -----------------------------------------------------------
 
-// gitCommit is a best-effort HEAD sha of the checkout this run happens in: it
-// walks up from the working directory and resolves .git/HEAD (both a .git
-// directory and the "gitdir: ..." file a worktree uses). It never shells out,
-// and it returns "" rather than inventing a value when the run is not inside a
-// git checkout — a fabricated commit hash in the provenance block would be
-// worse than an empty one.
+// gitCommit 尽力而为地取本次运行所在检出目录的 HEAD sha：它从工作目录
+// 向上查找并解析 .git/HEAD（既支持 .git 目录，也支持 worktree 使用的
+// "gitdir: ..." 文件）。它从不调用外部命令，并且在运行不在 git 检出目录
+// 内时返回 ""，而不是编造一个值 —— 溯源块里一个伪造的 commit hash 比
+// 空值更糟。
 func gitCommit() string {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -720,7 +712,7 @@ func gitCommit() string {
 func resolveGitHead(gitDir, head string) string {
 	ref, ok := strings.CutPrefix(head, "ref:")
 	if !ok {
-		return head // detached HEAD: HEAD is already the sha
+		return head // detached HEAD: HEAD 本身就已经是 sha
 	}
 	ref = strings.TrimSpace(ref)
 	if body, err := os.ReadFile(filepath.Join(gitDir, filepath.FromSlash(ref))); err == nil {

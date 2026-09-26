@@ -1,6 +1,6 @@
-"""Shared fixtures/helpers for the stage-G auxiliary tests.
+"""阶段 G 辅助测试共用的 fixture / 辅助函数。
 
-Run from the repository root:
+从仓库根目录运行：
     python3 -m pytest python/tests -q
 """
 
@@ -15,7 +15,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 PY = HERE.parent                          # <repo>/python
 AUX = PY / "aux"
-ROOT = PY.parent                          # repository root
+ROOT = PY.parent                          # 仓库根目录
 TESTDATA = ROOT / "testdata"
 
 for p in (str(AUX), str(HERE)):
@@ -29,7 +29,7 @@ import schema_check  # noqa: E402
 
 @pytest.fixture(scope="session")
 def spec():
-    """The spec under test -- read from testdata/golden_spec.json, never copied."""
+    """被测的 spec —— 从 testdata/golden_spec.json 读入，绝不复制。"""
     return oracle.Spec.load(TESTDATA / "golden_spec.json")
 
 
@@ -54,7 +54,7 @@ def baseline(spec, grids):
 
 
 def good_record(eid=1, **over):
-    """A registry record that satisfies the frozen schema."""
+    """一条满足冻结 schema 的 registry 记录。"""
     rec = {
         "experiment_id": eid,
         "design_id": f"D{eid:04d}",

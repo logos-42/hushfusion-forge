@@ -1,4 +1,4 @@
-"""Gate G9 tests: the schema checker must be green on good records and RED on bad ones."""
+"""门 G9 的测试：schema 检查器在好记录上必须是绿的，在坏记录上必须是红的。"""
 
 from __future__ import annotations
 
@@ -58,6 +58,33 @@ def test_bad_design_id_is_red(tmp_path):
     code, errors, _, _ = schema_check.check_registry(path, verbose=False)
     assert code == 1
     assert any("does not match D%04d" in e for e in errors)
+
+
+def test_ids_past_9999_are_green(tmp_path):
+    """experiment_id 10000 -> design_id D10000 必须通过。
+
+    回归：恰好 {4} 位的模式让这道门在真实的 12 001 条 phase0 registry 上报了
+    2002 个错误（第一个犯错的：第 10000 行）。`%04d` 是 *最小* 宽度，所以
+    规范形式是 D10000，而不是只允许 4 位数字的字符串。
+    """
+    path = write_jsonl(tmp_path / "registry.jsonl",
+                       [good_record(i) for i in range(1, 10002)])
+    code, errors, warnings, n = schema_check.check_registry(path, verbose=False)
+    assert (code, errors, warnings, n) == (0, [], [], 10001)
+
+
+def test_design_id_shape_accepts_more_than_four_digits():
+    assert schema_check.DESIGN_ID_RE.match("D10000")
+    assert not schema_check.DESIGN_ID_RE.match("D1000x")
+    assert not schema_check.DESIGN_ID_RE.match("D100")
+
+
+def test_non_canonical_zero_padding_is_red(tmp_path):
+    """experiment_id 1 对应的 'D00001' 仅靠整数比较是会被接受的。"""
+    path = write_jsonl(tmp_path / "registry.jsonl", [good_record(1, design_id="D00001")])
+    code, errors, _, _ = schema_check.check_registry(path, verbose=False)
+    assert code == 1
+    assert any("is not the canonical form" in e for e in errors)
 
 
 def test_design_id_not_matching_experiment_id_is_red(tmp_path):

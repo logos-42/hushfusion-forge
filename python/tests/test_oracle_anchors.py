@@ -1,11 +1,11 @@
-"""Analytic anchors of the oracle -- claims that hold without any golden file.
+"""oracle 的解析锚点 —— 不依赖任何 golden 文件就能成立的主张。
 
-CONTRACT.md §5 lists them:
-  * single loop on axis: B_z(0,z) = mu0 I a^2 / (2 (a^2+z^2)^1.5), B_r(0,z) = 0 (exact)
-  * Helmholtz pair (radius a, spacing a): centre B = (4/5)^1.5 mu0 I / a,
-    and non-uniformity < 1.2e-4 for |z| <= 0.1 a
-  * closed form vs independent segment summation: < 1e-9 relative at nSeg = 512
-  * vacuum identities: div B ~ 0 and curl B ~ 0
+CONTRACT.md §5 列出了它们：
+  * 轴上的单个环：B_z(0,z) = mu0 I a^2 / (2 (a^2+z^2)^1.5), B_r(0,z) = 0（精确）
+  * Helmholtz 对（半径 a，间距 a）：中心 B = (4/5)^1.5 mu0 I / a，
+    且 |z| <= 0.1 a 时非均匀性 < 1.2e-4
+  * 闭式解 vs 独立的分段求和：nSeg = 512 时相对误差 < 1e-9
+  * 真空恒等式：div B ~ 0 且 curl B ~ 0
 """
 
 from __future__ import annotations
@@ -25,13 +25,13 @@ def test_on_axis_single_loop_matches_closed_form_exactly():
     zs = np.linspace(-2.0, 2.0, 41)
     br, bz = oracle.loop_field(a, i, np.zeros_like(zs), zs)
     expect = MU0 * i * a * a / (2.0 * (a * a + zs * zs) ** 1.5)
-    assert np.all(br == 0.0)                                   # exactly zero, no 1e-18 dust
-    assert np.allclose(bz, expect, rtol=0.0, atol=0.0)         # bit-identical expression
+    assert np.all(br == 0.0)                                   # 恰好为零，不留 1e-18 的碎屑
+    assert np.allclose(bz, expect, rtol=0.0, atol=0.0)         # 逐位相同的表达式
     assert np.max(np.abs(bz - expect)) == 0.0
 
 
 def test_on_axis_is_the_r_to_zero_limit():
-    """The axis branch must be the limit of the general closed form."""
+    """轴分支必须是通用闭式解的极限。"""
     a, i = 0.5, 3.0e5
     br0, bz0 = oracle.loop_field(a, i, np.array([0.0]), np.array([0.4]))
     br1, bz1 = oracle.loop_field(a, i, np.array([1e-9]), np.array([0.4]))
@@ -49,18 +49,18 @@ def test_helmholtz_centre_field_and_uniformity():
     zs = np.linspace(-0.1 * a, 0.1 * a, 201)
     b = oracle.on_axis_field(coils, zs)
     non_uniformity = float(np.max(np.abs(b - centre)) / centre)
-    assert non_uniformity < 1.2e-4                     # the contract's bound
-    # and it is the expected magnitude, not an accident of a coarse grid: the
-    # deviation grows as z^4 for a Helmholtz pair and hits ~1.14e-4 at z = 0.1a
+    assert non_uniformity < 1.2e-4                     # 契约给出的界
+    # 而且它就是预期的量级，不是粗网格带来的偶然：对 Helmholtz 对来说，偏差
+    # 按 z^4 增长，在 z = 0.1a 处达到 ~1.14e-4
     assert 1e-5 < non_uniformity < 1.2e-4
     assert np.argmax(np.abs(b - centre)) in (0, len(zs) - 1)
-    # flatten the grid and the bound gets tighter, never looser
+    # 网格加密后这个界只会更紧，绝不会更松
     zs_tight = np.linspace(-0.05 * a, 0.05 * a, 201)
     assert float(np.max(np.abs(oracle.on_axis_field(coils, zs_tight) - centre)) / centre) < non_uniformity
 
 
 def test_closed_form_matches_direct_biot_savart_quadrature():
-    """A third, integration-based path: the closed form is not self-referential."""
+    """第三条基于积分的路径：闭式解不是自指的。"""
     from scipy.integrate import quad
 
     a, i = 0.3, 1.6213e6
@@ -100,7 +100,7 @@ def test_superposition_of_coincident_loops_scales_linearly():
 
 
 def test_vacuum_identities_div_and_curl_free():
-    """div B = 0 and curl B = 0 in the source-free region (central differences)."""
+    """在无源区域 div B = 0 且 curl B = 0（中心差分）。"""
     coils = [(0.3, -1.0, 1.62e6), (0.5, -0.25, 4.63e5), (0.5, 0.25, 4.63e5), (0.3, 1.0, 1.62e6)]
     h = 1e-5
 
@@ -125,7 +125,7 @@ def test_vacuum_identities_div_and_curl_free():
 
 
 def test_discrete_solver_is_a_genuinely_separate_path():
-    """The two implementations must not be bit-identical, and must converge."""
+    """两个实现不能逐位相同，而且必须收敛。"""
     a, i = 0.42, 8.0e5
     r, z = 0.21, 0.15
     br_e, bz_e = oracle.loop_field(a, i, np.array([r]), np.array([z]))
@@ -134,6 +134,6 @@ def test_discrete_solver_is_a_genuinely_separate_path():
         br, bz = oracle.loop_field_discrete(a, i, [r], [z], n_seg=n_seg)
         return math.hypot(br[0] - br_e[0], bz[0] - bz_e[0]) / math.hypot(br_e[0], bz_e[0])
 
-    assert err(16) != 0.0                                  # not the same code path
-    assert err(16) > err(512)                              # converges with n_seg
-    assert err(512) < 1e-9                                 # the contract's threshold
+    assert err(16) != 0.0                                  # 不是同一条代码路径
+    assert err(16) > err(512)                              # 随 n_seg 收敛
+    assert err(512) < 1e-9                                 # 契约给出的阈值

@@ -1,12 +1,11 @@
-// Package report: render the run artifacts a human (and the next design round)
-// actually reads.
+// Package report：渲染人类（以及下一轮设计）真正会去读的运行产物。
 //
-// FROZEN INTERFACE (v0.1) — owner: stage E.
+// 冻结接口 (v0.1) — 负责人：阶段 E。
 //
-// The report is written in Chinese with English technical terms preserved, and
-// it must contain a dedicated 诚实边界 (honest-limits) section: what the model
-// does not represent, what would falsify the result, and which claims are
-// measured vs assumed. A report that only reports wins is not finished.
+// 报告用中文书写、保留英文技术术语，并且必须包含一个专门的 诚实边界
+// (honest-limits) 小节：模型没有表示什么、什么会推翻这个结果，以及
+// 哪些主张是实测的、哪些是假设的。一份只报告胜利的报告
+// 不算完成。
 package report
 
 import (
@@ -22,15 +21,15 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 )
 
-// termHigherIsBetter states, per score term, which direction means "better".
-// It follows the frozen score formula in internal/objective:
+// termHigherIsBetter 说明每个分数项在哪个方向上意味着「更好」。
+// 它遵循 internal/objective 里冻结的分数公式：
 //
 //	score = + w_field*field + w_mirror*mirror + w_volume*volume
 //	        - w_ripple*ripple - w_cost*cost - w_penalty*penalty
 //
-// so field / mirror / volume are "higher is better" and ripple / cost are
-// "lower is better". Unknown term names default to "higher is better" and are
-// listed as such in the report rather than being silently dropped.
+// 因此 field / mirror / volume 是「越高越好」，ripple / cost 是
+// 「越低越好」。未知的分数项名默认按「越高越好」处理，并在报告中
+// 如实列出，而不是被静默丢弃。
 var termHigherIsBetter = map[string]bool{
 	"field":  true,
 	"mirror": true,
@@ -58,7 +57,7 @@ func (d direction) label() string {
 	}
 }
 
-// metricRow is one row of the §2 metric table.
+// metricRow 是 §2 指标表中的一行。
 type metricRow struct {
 	Label string
 	Dir   direction
@@ -77,26 +76,26 @@ var metricRows = []metricRow{
 	{"cost_proxy", dirLower, func(m physics.Metrics) float64 { return m.CostProxy }},
 }
 
-// RenderMarkdown renders the full report.
+// RenderMarkdown 渲染完整报告。
 //
-// Required sections, in order:
+// 必需的小节，按顺序：
 //
-//	# Forge <tag> 运行报告            (headline: machine vs human baseline, and
-//	                                  on which terms it won/lost)
-//	## 1. 设置                        (spec, solver, budget, seeds, methods, commit)
-//	## 2. 人工基线 vs 机器最优          (term-by-term table, both directions)
+//	# Forge <tag> 运行报告            (标题行：机器 vs 人工基线，以及它在哪些
+//	                                  分数项上赢了 / 输了)
+//	## 1. 设置                        (spec、solver、预算、seeds、方法、commit)
+//	## 2. 人工基线 vs 机器最优          (逐分数项的表格，两个方向都有)
 //	## 3. 方法对比 (等预算)             (设计次数 / 最优性能 / 收敛速度 / 泛化)
-//	## 4. 设计谱系                    (top branch improvements, if any)
-//	## 5. 知识库 rules                (top rules + path)
-//	## 6. 诚实边界                    (what v0.1 does NOT model; what would
-//	                                  falsify; which numbers are measured)
-//	## 7. 下一步 (Phase 1)            (interfaces already in place)
+//	## 4. 设计谱系                    (若有，列出改进最大的几条分支)
+//	## 5. 知识库 rules                (前几条规则 + 路径)
+//	## 6. 诚实边界                    (v0.1 没有建模的东西；什么会推翻结论；
+//	                                  哪些数字是实测的)
+//	## 7. 下一步 (Phase 1)            (已经就位的接口)
 //
-// rulePath is the path of the rules markdown file, referenced from §5.
+// rulePath 是规则 markdown 文件的路径，§5 会引用它。
 //
-// Rendering is total: a report with no best design, no runs, no rules or no
-// robustness probe still renders every section — with the missing thing named
-// explicitly. A silently shortened report is how a gap becomes invisible.
+// 渲染是全量的：一份没有最优设计、没有运行、没有规则或没有鲁棒性探针的
+// 报告，仍然会渲染每一个小节 —— 并把缺失的东西明确点出来。
+// 一份被静默缩短的报告，就是缺口变得看不见的方式。
 func RenderMarkdown(rep *experiment.Report, rules []knowledge.Rule, rulePath string) string {
 	if rep == nil {
 		return "# Forge 运行报告\n\n_report 为空(nil):没有可渲染的内容。这不是一次成功的运行。_\n"
@@ -118,7 +117,7 @@ func RenderMarkdown(rep *experiment.Report, rules []knowledge.Rule, rulePath str
 	return b.String()
 }
 
-// Write writes the rendered markdown to path.
+// Write 把渲染好的 markdown 写到 path。
 func Write(path, md string) error {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -131,7 +130,7 @@ func Write(path, md string) error {
 	return nil
 }
 
-// --- headline ---------------------------------------------------------------
+// --- 标题行 -----------------------------------------------------------------
 
 func headline(rep *experiment.Report) string {
 	var b strings.Builder
@@ -175,8 +174,7 @@ func headline(rep *experiment.Report) string {
 	return b.String()
 }
 
-// compareTerms splits the term keys into won / lost / tied, using the frozen
-// score directions.
+// compareTerms 依据冻结的分数方向，把分数项键分成 won / lost / tied。
 func compareTerms(base, best map[string]float64) (won, lost, tied, unknown []string) {
 	seen := map[string]bool{}
 	keys := make([]string, 0, len(base)+len(best))
@@ -556,10 +554,10 @@ func sectionNext(b *strings.Builder, rep *experiment.Report) {
 	}
 }
 
-// --- formatting helpers ------------------------------------------------------
+// --- 格式化辅助函数 ----------------------------------------------------------
 
-// num renders a float at 10 significant digits: enough to see the score delta,
-// short enough to keep the tables readable.
+// num 以 10 位有效数字渲染一个浮点数：足以看出分数差值，
+// 又短到能让表格保持可读。
 func num(v float64) string {
 	return strconv.FormatFloat(v, 'g', 10, 64)
 }
@@ -672,8 +670,8 @@ func whoWinsScore(rep *experiment.Report) string {
 	}
 }
 
-// specLines renders the spec map as markdown table rows with sorted keys, so
-// two reports can be diffed.
+// specLines 把 spec map 渲染成 markdown 表格行，键是排好序的，
+// 这样两份报告就可以做 diff。
 func specLines(spec map[string]any) []string {
 	if len(spec) == 0 {
 		return []string{"| _未提供 spec_ | |\n"}

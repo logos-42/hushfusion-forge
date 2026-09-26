@@ -1,23 +1,22 @@
-// Package knowledge: turn a registry into design rules, with their evidence.
+// Package knowledge：把 registry 变成带证据的设计规则。
 //
-// FROZEN INTERFACE (v0.1) — owner: stage E.
+// 冻结接口 (v0.1) — 负责人：阶段 E。
 //
-// A rule is a *replicated, direction-bearing, quantified* statement about the
-// design space — not a hunch and not a fitted model. The mining procedure is
-// deliberately conservative because the whole point of the knowledge base is
-// that the next design round should be able to trust it:
+// 一条规则是关于设计空间的 *可复现、带方向、可量化* 的陈述 —— 不是直觉，
+// 也不是一个拟合出来的模型。挖掘流程刻意保守，因为知识库的全部意义就在于
+// 下一轮设计应当能够信任它：
 //
-//  1. every (parameter, score-term) pair gets a Spearman rank correlation
-//     computed PER RUN (algorithm x seed), i.e. on independent samples;
-//  2. a candidate rule must have the SAME SIGN in every run — that is the
-//     replication test, and the reported confidence is the fraction of runs that
-//     agree;
-//  3. direction is restated with a decile contrast: median of the term for
-//     designs in the top decile of the parameter vs the bottom decile, so the
-//     rule carries a magnitude and not just a sign;
-//  4. the scope is written down (how many designs, which search box, which
-//     physics model) because a rule mined in a vacuum-field box is a hypothesis
-//     about that box, not a law of nature.
+//  1. 每一个 (参数, 分数项) 对都会得到一个 Spearman 秩相关，且是按运行
+//     (算法 x seed) 分别计算的，也就是建立在独立样本之上；
+//  2. 候选规则必须在每一轮运行中的符号都相同 —— 这就是复现
+//     检验，而上报的 confidence 就是这些运行中符号一致的
+//     比例；
+//  3. 方向用一个十分位对比来复述：参数处于最高十分位的那些设计，该分数项
+//     的中位数对比最低十分位，这样规则携带的是量级，
+//     而不只是一个符号；
+//  4. 适用范围会被写下来（多少条设计、哪个搜索盒、哪个物理模型），
+//     因为在真空场盒子里挖出来的规则是关于那个盒子的假设，
+//     而不是自然定律。
 package knowledge
 
 import (
@@ -35,26 +34,26 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/registry"
 )
 
-// MineOpts are the mining thresholds (defaults: 150, 0.20, 12).
+// MineOpts 是挖掘阈值（默认值：150、0.20、12）。
 type MineOpts struct {
 	MinN      int
 	MinAbsRho float64
 	TopK      int
 }
 
-// Default thresholds, applied when a field of MineOpts is left zero.
+// 默认阈值，在 MineOpts 的某个字段留成零值时生效。
 const (
 	defaultMinN      = 150
 	defaultMinAbsRho = 0.20
 	defaultTopK      = 12
-	// minRecordsPerRun is the hard floor on the per-run sample: below this the
-	// rank correlation of one run is noise, and a rule built on noise that
-	// happens to agree is exactly the failure mode this package exists to avoid.
+	// minRecordsPerRun 是每轮运行样本的硬下限：低于它，单轮运行的秩相关
+	// 就只是噪声，而建立在「噪声恰好一致」之上的规则，正是这个包存在
+	// 的意义所在要避免的那种失败模式。
 	minRecordsPerRun = 20
 )
 
-// Rule is one mined design rule. JSON keys are FROZEN (shared with the Python
-// auxiliary layer, python/aux/analyze.py).
+// Rule 是一条挖掘出来的设计规则。JSON 键是冻结的（与 Python 辅助层
+// python/aux/analyze.py 共享）。
 type Rule struct {
 	RuleID        string  `json:"rule_id"`
 	Parameter     string  `json:"parameter"`
@@ -70,11 +69,11 @@ type Rule struct {
 	Scope         string  `json:"scope"`
 }
 
-// ParameterNames are the design-vector names: r_0..r_{K-1}, z_0.., I_0...
+// ParameterNames 是设计向量的名字：r_0..r_{K-1}、z_0..、I_0...
 //
-// The order is the design-vector order used by config.Spec.Lower/Upper and by
-// registry.Record.Params (radius, then z, then current), because the mined
-// parameter name must address the same slot the search layer optimises.
+// 顺序就是 config.Spec.Lower/Upper 与 registry.Record.Params 使用的设计
+// 向量顺序（先是 radius，然后 z，最后 current），因为挖出来的参数名必须
+// 指向搜索层所优化的同一个槽位。
 func ParameterNames(spec config.Spec) []string {
 	k := spec.NCoils
 	if k <= 0 {
@@ -93,15 +92,14 @@ func ParameterNames(spec config.Spec) []string {
 	return out
 }
 
-// Spearman is the rank correlation coefficient with tie handling (average
-// ranks). Must reproduce scipy.stats.spearmanr to < 1e-9 on the golden vectors
-// used by the tests — implement rank transform + Pearson on ranks.
+// Spearman 是带并列名次处理（平均名次）的秩相关系数。在测试所用的 golden
+// 向量上必须复现 scipy.stats.spearmanr 到 < 1e-9 —— 实现方式：名次变换 +
+// 对名次做 Pearson。
 //
-// Degenerate input returns 0 rather than NaN: fewer than 2 paired samples, or a
-// constant vector (zero rank variance, where the coefficient is undefined).
-// A rule that can only be stated as 0/0 will be dropped by the MinAbsRho filter
-// either way, and 0 keeps every downstream JSON free of NaN — which would
-// otherwise poison the whole report.
+// 退化输入返回 0 而不是 NaN：配对样本少于 2 个，或者向量为常量（名次方差
+// 为零，此时系数没有定义）。只能写成 0/0 的规则，无论如何都会被 MinAbsRho
+// 过滤器丢掉，而返回 0 能让下游所有 JSON 都不含 NaN —— 否则 NaN 会毒化
+// 整份报告。
 func Spearman(x, y []float64) float64 {
 	if len(x) != len(y) || len(x) < 2 {
 		return 0
@@ -114,8 +112,8 @@ func Spearman(x, y []float64) float64 {
 	return pearson(ranks(x), ranks(y))
 }
 
-// ranks returns 1-based average ranks: tied values share the mean of the ranks
-// they would have occupied.
+// ranks 返回以 1 为起点的平均名次：并列的值共享它们本应占据的那些
+// 名次的均值。
 func ranks(v []float64) []float64 {
 	n := len(v)
 	idx := make([]int, n)
@@ -129,7 +127,7 @@ func ranks(v []float64) []float64 {
 		for j+1 < n && v[idx[j+1]] == v[idx[i]] {
 			j++
 		}
-		avg := float64(i+j+2) / 2.0 // ranks i+1 .. j+1 share their mean
+		avg := float64(i+j+2) / 2.0 // 第 i+1 .. j+1 名共享它们的均值
 		for k := i; k <= j; k++ {
 			out[idx[k]] = avg
 		}
@@ -138,8 +136,8 @@ func ranks(v []float64) []float64 {
 	return out
 }
 
-// pearson is the plain product-moment correlation, clamped to [-1, 1] against
-// floating-point overshoot.
+// pearson 是普通的积矩相关系数，
+// 为防浮点溢出会夹到 [-1, 1]。
 func pearson(a, b []float64) float64 {
 	n := len(a)
 	if n < 2 || len(b) != n {
@@ -172,35 +170,35 @@ func pearson(a, b []float64) float64 {
 	return r
 }
 
-// runKey identifies one independent sample: one (algorithm, seed) run.
+// runKey 标识一个独立样本：一轮 (algorithm, seed) 运行。
 type runKey struct {
 	Algorithm string
 	Seed      int
 }
 
-// MineRules mines replicated rules from registry records.
+// MineRules 从 registry 记录中挖掘可复现的规则。
 //
-// Only feasible records count; runs with fewer than max(20, MinN/8) records are
-// dropped; at least 2 runs must survive. A candidate keeps its rule only if the
-// Spearman sign is identical in every surviving run and the worst-case |rho| is
-// at least MinAbsRho; rules are ranked by |rho| and the top TopK are returned.
+// 只有 feasible 的记录计入；记录数少于 max(20, MinN/8) 的运行会被丢弃；
+// 至少要活下来 2 轮运行。候选规则只有在每一轮存活的运行中 Spearman 符号
+// 都相同、且最坏情况 |rho| 至少为 MinAbsRho 时才被保留；规则按 |rho|
+// 排序，返回前 TopK 条。
 //
-// Conventions, stated because the Python auxiliary layer re-derives them:
+// 下面这些约定之所以写明，是因为 Python 辅助层会重新推导它们：
 //
-//   - MinN enters through the per-run floor max(20, MinN/8), integer division;
-//   - rho is the WORST-CASE |rho| across surviving runs (same sign as every
-//     run), so the reported number is the weakest evidence, not the best;
-//   - sign_agreement is the fraction of runs carrying the majority sign. Because
-//     unanimity is a hard admission filter here, every returned rule has
-//     sign_agreement == 1.0 — the field is carried in the JSON as explicit
-//     replication evidence, not as a varying quality score;
-//   - a run whose |rho| is exactly 0 (constant parameter or constant term) has
-//     no sign and therefore kills the candidate;
-//   - decile_low / decile_high are the median term of the designs in the
-//     lowest / highest decile of the parameter, pooled over the surviving runs
-//     (decile size = max(1, n/10));
-//   - rules are sorted by |rho| descending, then parameter, then term, so the
-//     output is deterministic.
+//   - MinN 通过每轮下限 max(20, MinN/8) 进入，整数除法；
+//   - rho 是各存活运行之间最坏情况的 |rho|（与每一轮运行的符号一致），
+//     所以上报的数字是最弱的证据，而不是最好的；
+//   - sign_agreement 是携带多数符号的运行所占比例。因为这里把「一致」
+//     当作硬性准入条件，每一条返回的规则都有 sign_agreement == 1.0 ——
+//     该字段在 JSON 里是作为明确的复现证据存在的，
+//     而不是一个会变化的质量分；
+//   - 一轮运行如果 |rho| 恰好为 0（参数或分数项为常量），就没有符号，
+//     因此会杀掉这个候选规则；
+//   - decile_low / decile_high 是参数处于最低 / 最高十分位的那些设计的
+//     分数项中位数，在存活的运行之间合并计算
+//     （十分位大小 = max(1, n/10)）；
+//   - 规则按 |rho| 降序、然后参数、然后分数项排序，
+//     因此输出是确定性的。
 func MineRules(recs []registry.Record, spec config.Spec, opt MineOpts) []Rule {
 	if opt.MinN <= 0 {
 		opt.MinN = defaultMinN
@@ -279,7 +277,7 @@ func MineRules(recs []registry.Record, spec config.Spec, opt MineOpts) []Rule {
 			}
 			majority, agree := majoritySign(rhos)
 			if majority == 0 || agree != len(rhos) {
-				continue // not replicated with one sign in every run
+				continue // 未在每一轮运行中以同一符号复现
 			}
 			minAbs := math.Abs(rhos[0])
 			for _, r := range rhos[1:] {
@@ -328,9 +326,9 @@ func MineRules(recs []registry.Record, spec config.Spec, opt MineOpts) []Rule {
 	return kept
 }
 
-// collectPair pulls one parameter's values and one term's values out of a set of
-// records. Records missing the term are skipped (a term that a run never
-// recorded cannot support a rule about that run).
+// collectPair 从一组记录里取出某一个参数的值和某一个分数项的值。缺少该
+// 分数项的记录会被跳过（一轮运行从未记录的分数项，无法支撑关于那一轮
+// 运行的规则）。
 func collectPair(recs []registry.Record, paramIndex int, term string) ([]float64, []float64) {
 	xs := make([]float64, 0, len(recs))
 	ys := make([]float64, 0, len(recs))
@@ -349,7 +347,7 @@ func collectPair(recs []registry.Record, paramIndex int, term string) ([]float64
 	return xs, ys
 }
 
-// paramValue reads design-vector slot i out of a record's named parameter arrays.
+// paramValue 从记录的具名参数数组中读取设计向量的第 i 个槽位。
 func paramValue(r registry.Record, i int) (float64, bool) {
 	k := len(r.Params.RadiusM)
 	switch {
@@ -363,7 +361,7 @@ func paramValue(r registry.Record, i int) (float64, bool) {
 	return 0, false
 }
 
-// termNames is the sorted union of the term keys the records carry.
+// termNames 是这些记录所携带的分数项键去重排序后的并集。
 func termNames(recs []registry.Record) []string {
 	seen := map[string]bool{}
 	for _, r := range recs {
@@ -379,9 +377,9 @@ func termNames(recs []registry.Record) []string {
 	return out
 }
 
-// majoritySign returns the common sign (+1 / -1) and how many entries carry it.
-// A zero entry (|rho| == 0, i.e. no sign) makes unanimity impossible and yields
-// majority 0.
+// majoritySign 返回共同的符号 (+1 / -1) 以及携带它的条目数。
+// 只要有一个零条目（|rho| == 0，即没有符号），一致就不可能成立，
+// 于是返回 majority 0。
 func majoritySign(rhos []float64) (int, int) {
 	pos, neg := 0, 0
 	for _, r := range rhos {
@@ -401,8 +399,7 @@ func majoritySign(rhos []float64) (int, int) {
 	return 0, 0
 }
 
-// decileContrast returns the median term of the lowest and of the highest decile
-// of the parameter.
+// decileContrast 返回参数最低十分位与最高十分位的分数项中位数。
 func decileContrast(xs, ys []float64) (low, high float64) {
 	n := len(xs)
 	if n == 0 || n != len(ys) {
@@ -439,9 +436,9 @@ func median(xs []float64) float64 {
 	return 0.5 * (cp[n/2-1] + cp[n/2])
 }
 
-// boxScope describes the part of the scope that follows from the spec alone:
-// the search box, the evaluation window and the physics model. A rule without a
-// scope is not knowledge, it is a rumour.
+// boxScope 描述仅由 spec 就能确定的那部分适用范围：搜索盒、评估窗口和
+// 物理模型。一条没有适用范围的规则不是知识，
+// 只是传闻。
 func boxScope(spec config.Spec) string {
 	return fmt.Sprintf(
 		"search box: %d coils, radius [%.3g,%.3g] m, z [%.3g,%.3g] m, current [%.3g,%.3g] A; b_ref=%.3g T, mirror_ref=%.3g; "+
@@ -450,8 +447,8 @@ func boxScope(spec config.Spec) string {
 		spec.Bounds.Current[0], spec.Bounds.Current[1], spec.BRef, spec.MirrorRef)
 }
 
-// runScope adds the mining sample to boxScope. Only the miner knows these
-// numbers, which is why the written rules carry them per rule.
+// runScope 把挖掘样本的信息补进 boxScope。只有挖掘器知道这些数字，
+// 这也是写下来的规则要逐条携带它们的原因。
 func runScope(spec config.Spec, nDesigns, nRuns int, algorithms []string) string {
 	algos := strings.Join(algorithms, ",")
 	if algos == "" {
@@ -481,12 +478,12 @@ func statementEN(param, term string, rho, low, high float64, nDesigns, nRuns int
 		term, dir, param, term, low, param, high, rho, nDesigns, nRuns)
 }
 
-// WriteRulesMD writes the human-readable knowledge base with the rules table,
-// the scope note and a machine-readable JSON block.
+// WriteRulesMD 写出人类可读的知识库：规则表、适用范围说明和一个机器
+// 可读的 JSON 块。
 //
-// Layout: header (tag, timestamp, input size) → 判定口径 → Scope → Rules table →
-// 机器可读块 with exactly one ```json fence holding the rules array. LoadRules
-// reads that block; a missing fence is an error, never an empty rule list.
+// 版式：表头 (tag、timestamp、输入规模) → 判定口径 → Scope → 规则表 →
+// 机器可读块，其中恰好有一个 ```json 围栏承载 rules 数组。LoadRules 读取
+// 那个块；围栏缺失是错误，绝不返回空规则列表。
 func WriteRulesMD(rules []Rule, path string, spec config.Spec, nRecords int, tag string) error {
 	var b strings.Builder
 	if tag == "" {
@@ -548,7 +545,7 @@ func WriteRulesMD(rules []Rule, path string, spec config.Spec, nRecords int, tag
 	return nil
 }
 
-// LoadRules reads rules back out of the embedded ```json block.
+// LoadRules 从内嵌的 ```json 块中把规则读回来。
 func LoadRules(path string) ([]Rule, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -565,7 +562,7 @@ func LoadRules(path string) ([]Rule, error) {
 	return rules, nil
 }
 
-// extractJSONBlock returns the body of the first ```json fence.
+// extractJSONBlock 返回第一个 ```json 围栏的主体。
 func extractJSONBlock(md string) (string, error) {
 	const fence = "```json"
 	i := strings.Index(md, fence)
@@ -580,22 +577,21 @@ func extractJSONBlock(md string) (string, error) {
 	return strings.TrimSpace(rest[:j]), nil
 }
 
-// RuleExpectation is a crude linear prior from the rules: for each rule, its
-// rho times the parameter's normalised position away from the box centre,
-// averaged over rules. Phase 1 uses it to bias proposals; it is intentionally
-// simple so its contribution is measurable (and removable) in an ablation.
+// RuleExpectation 是从规则里粗略推出的线性先验：对每条规则，取其 rho
+// 乘以该参数相对盒子中心归一化后的位置，再对所有规则取平均。Phase 1 用它
+// 来给候选设计加偏置；它被刻意做得简单，这样它的贡献可以在消融实验里
+// 被度量（以及被移除）。
 //
-// Concretely: u = (x[i] - lower[i]) / (upper[i] - lower[i]) clamped to [0,1],
-// contribution = rho * (u - 0.5), and the result is the mean over the rules
-// whose parameter actually resolves to a slot of x. Returns 0 when there is
-// nothing to apply.
+// 具体地：u = (x[i] - lower[i]) / (upper[i] - lower[i]) 夹到 [0,1]，
+// contribution = rho * (u - 0.5)，结果是所有「其参数确实能映射到 x 的某个
+// 槽位」的规则取均值。
+// 没有任何可应用的规则时返回 0。
 //
-// KNOWN SIMPLIFICATION (flagged for Phase 1, not fixed here because the frozen
-// signature defines the formula): the term's sign in the objective is ignored.
-// For the positively weighted terms (field/mirror/volume) a positive rho really
-// does mean "more parameter, better score", but for ripple/cost a positive rho
-// means the opposite. Until the hook takes the weights, this prior is only
-// directionally sound for the positive-weight terms.
+// 已知的简化（为 Phase 1 标注，此处不修，因为冻结签名已经定义了公式）：
+// 目标函数里该分数项的符号被忽略了。对于正权重的分数项
+// (field/mirror/volume)，正的 rho 确实意味着「参数越大分数越好」，但
+// 对 ripple/cost，正的 rho 意味着相反。在这个 hook 接收权重之前，
+// 这个先验只在正权重分数项上方向上成立。
 func RuleExpectation(rules []Rule, x []float64, spec config.Spec) float64 {
 	if len(rules) == 0 || len(x) == 0 {
 		return 0

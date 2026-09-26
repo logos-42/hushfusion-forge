@@ -1,4 +1,4 @@
-"""analyze.py: figures + tables from a report, plus the aggregate cross-check."""
+"""analyze.py：从报告生成图与表，外加 aggregate 交叉校验。"""
 
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ def make_report(spec, baseline, budget=40, tamper_aggregate=False, tamper_best=F
     grids = oracle.Grids(spec)
     cost_ref = baseline["cost_proxy"]
     base_eval = oracle.evaluate(baseline["design"], spec, cost_ref, grids)
-    # the winning design of a real stage-E/F benchmark run (runs/scratch/bench), copied
-    # as plain numbers so this fixture has no file dependency -- it beats the baseline
+    # 一次真实 stage-E/F benchmark 运行 (runs/scratch/bench) 的获胜设计，抄成
+    # 纯数字，这样这个 fixture 不依赖任何文件 —— 它是能赢过基线的那个
     best_design = [0.34074440599674666, 1.0, 0.1, 0.3157946290596812,
                    -0.20688985165708562, 0.012635023002828594,
                    0.04049787940226826, 0.07602128113826669,
@@ -123,7 +123,7 @@ def test_rescore_agrees_with_the_report(spec, baseline, capsys):
     out = capsys.readouterr().out
     assert "oracle re-score of the baseline" in out and "oracle re-score of the best" in out
     assert "[OK  ]" in out
-    # the re-scored best really is the machine's winning design
+    # 重新打分后的最优确实就是机器的获胜设计
     assert report["best"]["score"] > report["baseline"]["score"]
 
 
@@ -173,7 +173,7 @@ def test_axis_profile_is_the_oracle_on_axis_field(spec, baseline):
     assert len(z) == len(mag) == 4 * spec.n_axis - 3
     direct = oracle.on_axis_field(coils, np.array(z))
     assert np.allclose(mag, direct, rtol=0, atol=0)
-    # the profile's maximum is the reported throat field of the baseline
+    # 剖面的最大值就是上报的基线喉部场
     golden = json.loads((TESTDATA / "golden_baseline.json").read_text())
     assert max(mag) == pytest.approx(golden["metrics"]["B_throat_T"], rel=1e-6)
     assert z[int(np.argmax(mag))] == pytest.approx(golden["metrics"]["z_throat_m"], abs=1e-3)
@@ -206,5 +206,5 @@ def test_table_format_is_markdown(spec, baseline):
     assert lines[header + 1].startswith("|---")
     rows = [ln for ln in lines if ln.startswith("| ")
             and not ln.startswith("|---") and not ln.startswith("| method |")]
-    assert len(rows) == 1 + 3                              # human baseline + 3 methods
+    assert len(rows) == 1 + 3                              # 人工基线 + 3 个方法
     assert all(ln.count("|") == 9 for ln in rows)

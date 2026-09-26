@@ -1,10 +1,9 @@
-// Package owners is the machine-verifiable file-ownership roster for the
-// parallel build.
+// Package owners 是并行构建所用的、可被机器校验的文件归属名册。
 //
-// Per the delegation protocol: parallel lines are only safe when the roster is
-// (a) non-overlapping and (b) exhaustive, and when that fact is checked by a
-// test rather than by a human comparing two lists. owners_test.go is that check;
-// it also mutates the roster to prove the check can actually go red.
+// 按委派协议：只有当名册 (a) 互不重叠且 (b) 覆盖完整，并且这一事实是由
+// 测试而不是由人对着两个列表核对出来的时候，并行线才是安全的。
+// owners_test.go 就是那道检查；它还会改动名册，以证明这道检查确实
+// 能变红。
 package owners
 
 import (
@@ -12,11 +11,11 @@ import (
 	"strings"
 )
 
-// Stage assigns a set of paths to exactly one owner.
+// Stage 把一组路径分配给唯一的负责人。
 //
-// Paths may be exact files or directory prefixes (trailing "/") — the parent
-// keeps the root, config and testdata; each parallel stage owns whole packages,
-// so no two stages can collide even when they add new files.
+// 路径可以是精确文件，也可以是目录前缀（结尾带 "/"）—— 父线保留根目录、
+// config 和 testdata；每条并行线拥有整个包，因此即使它们新增文件，
+// 两条线也不会碰撞。
 type Stage struct {
 	ID    string
 	Name  string
@@ -24,12 +23,12 @@ type Stage struct {
 	Paths []string
 }
 
-// Stages is the frozen roster. Adding a stage or moving a path is a contract
-// change: it must be reflected in CONTRACT.md in the same commit.
+// Stages 是冻结的名册。新增一个阶段或移动一条路径属于契约变更：
+// 必须在同一个 commit 里同步反映到 CONTRACT.md。
 var Stages = []Stage{
 	{
 		ID:    "root",
-		Name:  "frozen shared skeleton (go.mod, config, roster, contracts, golden data, verify script, docs)",
+		Name:  "frozen shared skeleton (go.mod, config, roster, contracts, golden data, acceptance gates)",
 		Owner: "parent",
 		Paths: []string{
 			"go.mod",
@@ -44,6 +43,21 @@ var Stages = []Stage{
 			"testdata/",
 			"scripts/",
 			"knowledge/",
+		},
+	},
+	{
+		ID:    "wiki",
+		Name:  "wiki-first knowledge system (docs/wiki, manifests, platform config, wiki-lint CI)",
+		Owner: "parent",
+		Paths: []string{
+			"docs/",
+			"manifests/",
+			"AGENTS.md",
+			"CLAUDE.md",
+			".cursorrules",
+			".windsurfrules",
+			".claude/",
+			".github/",
 		},
 	},
 	{
@@ -90,8 +104,8 @@ var Stages = []Stage{
 	},
 }
 
-// Overlaps returns conflicting pairs: identical paths, duplicate prefixes, or
-// one stage's prefix containing another's. Empty means the roster is valid.
+// Overlaps 返回冲突的配对：完全相同的路径、重复的前缀，或一条线的前缀
+// 包含另一条线的。返回空表示名册有效。
 func Overlaps(stages []Stage) [][2]string {
 	var out [][2]string
 	seen := map[string]string{}
@@ -124,8 +138,8 @@ func Overlaps(stages []Stage) [][2]string {
 	return out
 }
 
-// Owner returns the stage owning a repo-relative path, or "" when uncovered.
-// Exact file matches win over directory prefixes.
+// Owner 返回拥有某个仓库相对路径的阶段，无人认领时返回 ""。
+// 精确文件匹配优先于目录前缀。
 func Owner(rel string, stages []Stage) string {
 	best := ""
 	bestLen := -1
@@ -146,7 +160,7 @@ func Owner(rel string, stages []Stage) string {
 	return best
 }
 
-// Covered returns the subset of files owned by some stage.
+// Covered 返回被某个阶段认领的那些文件的子集。
 func Covered(files []string, stages []Stage) []string {
 	var out []string
 	for _, f := range files {
@@ -157,7 +171,7 @@ func Covered(files []string, stages []Stage) []string {
 	return out
 }
 
-// Uncovered returns the files no stage claims.
+// Uncovered 返回没有任何阶段认领的文件。
 func Uncovered(files []string, stages []Stage) []string {
 	var out []string
 	for _, f := range files {
@@ -168,8 +182,8 @@ func Uncovered(files []string, stages []Stage) []string {
 	return out
 }
 
-// IsTracked reports whether a repo-relative path should participate in the
-// coverage check at all (generated output and VCS/caches are ignored).
+// IsTracked 报告某个仓库相对路径是否应当参与覆盖检查
+// （生成产物以及 VCS / 缓存会被忽略）。
 func IsTracked(rel string) bool {
 	rel = filepath.ToSlash(rel)
 	if rel == "" || strings.HasPrefix(rel, ".git/") {

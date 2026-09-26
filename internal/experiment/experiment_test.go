@@ -61,7 +61,7 @@ func TestApplyVariantUnknownKeyIsAnError(t *testing.T) {
 	spec := config.DefaultSpec()
 	cases := []map[string]float64{
 		{"n_coils": 6},
-		{"b_ref": 0.8, "nope": 1}, // a valid key must not smuggle an invalid one through
+		{"b_ref": 0.8, "nope": 1}, // 合法的键不得夹带非法的键蒙混过关
 		{"BRef": 0.8},
 	}
 	for _, override := range cases {
@@ -189,8 +189,8 @@ func TestAggregatePerMethodAcrossSeeds(t *testing.T) {
 	if evo.BestMin != -0.30 || evo.BestMax != -0.10 {
 		t.Errorf("BestMin/Max = %v/%v, want -0.30/-0.10", evo.BestMin, evo.BestMax)
 	}
-	// seed 0 (-0.30) does NOT beat the baseline (-0.2905708161): the comparison
-	// is strict, and a near miss is still a miss
+	// seed 0 (-0.30) 并没有超过基线 (-0.2905708161)：比较是严格的，
+	// 差一点点也仍然算没超过
 	if evo.NBeatingBaseline != 2 || math.Abs(evo.FracBeatingBaseline-2.0/3.0) > 1e-12 {
 		t.Errorf("evolution NBeating/Frac = %d/%v, want 2/0.666..., (-0.30 < -0.2905708161)", evo.NBeatingBaseline, evo.FracBeatingBaseline)
 	}
@@ -202,13 +202,13 @@ func TestAggregatePerMethodAcrossSeeds(t *testing.T) {
 		t.Errorf("BaselineScore = %v, want %v", evo.BaselineScore, baseline)
 	}
 
-	// even seed count: median averages the two central values
+	// seed 个数为偶数：中位数取中间两个值的均值
 	warm := agg["evolution_warm"]
 	if math.Abs(warm.EvalsToBeatMean-150) > 1e-12 || math.Abs(warm.EvalsToBeatMedian-150) > 1e-12 {
 		t.Errorf("evolution_warm EvalsToBeat mean/median = %v/%v, want 150/150", warm.EvalsToBeatMean, warm.EvalsToBeatMedian)
 	}
 
-	// one seed of two beats the baseline: the mean is over the seeds that beat it
+	// 两个 seed 中有一个超过基线：均值只对超过基线的那些 seed 取
 	rand := agg["random"]
 	if rand.NSeeds != 2 || rand.NBeatingBaseline != 1 || rand.FracBeatingBaseline != 0.5 {
 		t.Errorf("random NSeeds/NBeating/Frac = %d/%d/%v, want 2/1/0.5", rand.NSeeds, rand.NBeatingBaseline, rand.FracBeatingBaseline)
@@ -217,7 +217,7 @@ func TestAggregatePerMethodAcrossSeeds(t *testing.T) {
 		t.Errorf("random EvalsToBeat mean/median = %v/%v, want 260/260", rand.EvalsToBeatMean, rand.EvalsToBeatMedian)
 	}
 
-	// never beat the baseline: -1, not 0 and not a fabricated number
+	// 从未超过基线：-1，而不是 0，也不是编造出来的数字
 	lhs := agg["lhs"]
 	if lhs.NBeatingBaseline != 0 || lhs.FracBeatingBaseline != 0 {
 		t.Errorf("lhs NBeating/Frac = %d/%v, want 0/0", lhs.NBeatingBaseline, lhs.FracBeatingBaseline)
@@ -228,9 +228,9 @@ func TestAggregatePerMethodAcrossSeeds(t *testing.T) {
 }
 
 func TestAggregateIgnoresInconsistentEvalsToBeat(t *testing.T) {
-	// a run whose best score is BELOW the baseline but which claims it crossed
-	// the baseline is inconsistent input: it must not enter the convergence
-	// statistic (which is the number that says how fast the loop learns)
+	// 一次运行如果最优分数低于基线、却声称自己越过了基线，那就是自相矛盾的
+	// 输入：它不能进入收敛统计（而收敛统计正是那个说明回路学得有多快的
+	// 数字）
 	runs := []search.Result{
 		{Algorithm: "evolution", Seed: 0, Budget: 1000, BestScore: -0.40, EvalsToBeat: 210},
 		{Algorithm: "evolution", Seed: 1, Budget: 1000, BestScore: -0.20, EvalsToBeat: 100},
@@ -248,7 +248,7 @@ func TestAggregateIgnoresInconsistentEvalsToBeat(t *testing.T) {
 func TestAggregateCountsEachSeedOnce(t *testing.T) {
 	runs := []search.Result{
 		{Algorithm: "evolution", Seed: 0, Budget: 1000, BestScore: -0.30},
-		{Algorithm: "evolution", Seed: 0, Budget: 1000, BestScore: -0.20}, // repeat of seed 0
+		{Algorithm: "evolution", Seed: 0, Budget: 1000, BestScore: -0.20}, // seed 0 的重复项
 		{Algorithm: "evolution", Seed: 1, Budget: 1000, BestScore: -0.10},
 	}
 	agg := Aggregate(runs, -0.5)["evolution"]
@@ -289,7 +289,7 @@ func TestAggregateSingleSeedHasZeroStd(t *testing.T) {
 
 // --- Report JSON ------------------------------------------------------------
 
-// sampleReport builds a populated Report literal covering every frozen key.
+// sampleReport 构造一个填充完整的 Report 字面量，覆盖每一个冻结键。
 func sampleReport() *Report {
 	return &Report{
 		Meta: Meta{
@@ -394,9 +394,9 @@ func TestWriteLoadReportRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadReport: %v", err)
 	}
-	// Compare at the JSON level: a nil-vs-empty slice and a []float64 nested in
-	// a map[string]any both survive a round trip, but reflect.DeepEqual would
-	// flag them, and the artifact contract here IS the JSON bytes.
+	// 在 JSON 层面比较：nil 与空切片、以及嵌套在 map[string]any 里的
+	// []float64，在全量往返后都能存活，但 reflect.DeepEqual 会把它们标成
+	// 不同，而这里的产物契约就是 JSON 字节本身。
 	orig, err := json.Marshal(rep)
 	if err != nil {
 		t.Fatalf("marshal original: %v", err)
@@ -438,9 +438,9 @@ func TestLoadReportMalformedJSON(t *testing.T) {
 	}
 }
 
-// TestReportJSONSchemaKeysFrozen locks the keys the Python auxiliary layer
-// (python/aux/analyze.py) reads. A rename here is a schema migration and must
-// be red.
+// TestReportJSONSchemaKeysFrozen 锁定 Python 辅助层
+// (python/aux/analyze.py) 所读取的键。在这里改名就是一次 schema 迁移，
+// 必须变红 (red)。
 func TestReportJSONSchemaKeysFrozen(t *testing.T) {
 	data, err := json.Marshal(sampleReport())
 	if err != nil {
@@ -477,7 +477,7 @@ func TestReportJSONSchemaKeysFrozen(t *testing.T) {
 	assertKeysExact(t, "registry_summary", sub(top["registry_summary"]), []string{
 		"n_records", "n_feasible", "per_algorithm", "best_score", "best_design_id", "best_algorithm",
 	})
-	// metrics carry stage A's frozen JSON tags
+	// metrics 携带阶段 A 冻结的 JSON tag
 	var metrics map[string]json.RawMessage
 	if err := json.Unmarshal(sub(top["baseline"])["metrics"], &metrics); err != nil {
 		t.Fatal(err)
@@ -506,8 +506,8 @@ func TestReportJSONSchemaKeysFrozen(t *testing.T) {
 		"mean_delta_vs_baseline", "worst_delta_vs_baseline", "n_variants_winning", "n_variants",
 	})
 
-	// runs[] is search.Result, frozen by stage D: assert containment, not
-	// equality, so an additive change over there does not redden this gate.
+	// runs[] 是 search.Result，由阶段 D 冻结：这里断言的是包含关系而不是
+	// 相等，这样那边做增量改动时不会把这道门变红。
 	var runs []map[string]json.RawMessage
 	if err := json.Unmarshal(top["runs"], &runs); err != nil {
 		t.Fatal(err)
@@ -552,7 +552,7 @@ func sortedKeys(m map[string]json.RawMessage) string {
 	return strings.Join(keys, ", ")
 }
 
-// --- preconditions of the end-to-end entry points ---------------------------
+// --- 端到端入口点的前置条件 -------------------------------------------------
 
 func TestRunBenchmarkRejectsNilRegistry(t *testing.T) {
 	if _, err := RunBenchmark(nil, config.DefaultSpec(), Opts{}); err == nil {
@@ -601,8 +601,8 @@ func TestRobustnessProbeRejectsWrongLengthDesign(t *testing.T) {
 	}
 }
 
-// TestGitCommitFormatOnly documents that provenance is best-effort: inside this
-// checkout it must be a full sha, and it must never be a fabricated value.
+// TestGitCommitFormatOnly 说明溯源信息是尽力而为的：在本检出目录内它必须是
+// 完整的 sha，而且绝不能是编造的值。
 func TestGitCommitIsAShaOrEmpty(t *testing.T) {
 	got := gitCommit()
 	if got == "" {

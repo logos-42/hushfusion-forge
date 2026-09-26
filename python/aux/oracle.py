@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Independent numerical oracle for the HUSHFUSION Forge design pipeline.
+"""HUSHFUSION Forge 设计流水线的独立数值 oracle。
 
-This module is a *re-implementation* of the Forge physics + objective
-definitions in numpy/scipy. It imports nothing from ``internal/`` (Go) and never
-shells out to a Go binary: the entire point of a cross-language oracle is that it
-shares no code path with the thing it is checking.
+本模块是 Forge 的物理 + 目标函数定义在 numpy/scipy 上的 *重新实现*。
+它不从 ``internal/`` (Go) 导入任何东西，也从不调用 Go 二进制：
+跨语言 oracle 的全部意义就在于，它与被它检验的那个东西
+不共享任何代码路径。
 
-Single source of truth for the device parameters is ``testdata/golden_spec.json``
-(``config.Spec.AsMap()``). Nothing here carries a private copy of a default
-constant -- every number comes from the spec file that is passed in, so the Go
-and Python sides cannot drift apart silently.
+设备参数的唯一真实来源是 ``testdata/golden_spec.json``
+(``config.Spec.AsMap()``)。这里不携带任何默认常量的私有副本 ——
+每一个数字都来自传进来的 spec 文件，因此 Go 侧和 Python 侧
+不可能悄悄漂移开。
 
-Model (v0.1): exact vacuum magnetostatics of circular filament currents.
-There is no plasma, no pressure, no finite-beta correction, no eddy current and
-no conductor sharing. See CONTRACT.md §5 for the anchors this file must hit.
+模型 (v0.1)：圆电流丝的精确真空静磁学。没有等离子体、没有压强、
+没有有限 beta 修正、没有涡流，也没有导体共享。
+本文件必须命中的锚点见 CONTRACT.md §5。
 
 CLI
-    python3 python/aux/oracle.py --check-golden testdata/     # acceptance gate G5
+    python3 python/aux/oracle.py --check-golden testdata/     # 验收门 G5
     python3 python/aux/oracle.py --compare-go <go_xcheck.json>
-    python3 python/aux/oracle.py --emit-golden <dir>          # for human review
+    python3 python/aux/oracle.py --emit-golden <dir>          # 供人工复核
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from scipy.special import ellipe, ellipk
 
 MU0 = 4.0e-7 * math.pi
 
-# Frozen objective constants (internal/objective/api.go).
+# 冻结的目标函数常量 (internal/objective/api.go)。
 MIRROR_FLOOR = 0.2
 MIRROR_MIN = 1.1
 TERM_FIELD, TERM_MIRROR, TERM_VOLUME, TERM_RIPPLE, TERM_COST = (
@@ -45,24 +45,24 @@ PEN_CONDUCTOR, PEN_SEPARATION, PEN_NOT_MIRROR = (
 TERM_KEYS = (TERM_FIELD, TERM_MIRROR, TERM_VOLUME, TERM_RIPPLE, TERM_COST)
 PENALTY_KEYS = (PEN_CONDUCTOR, PEN_SEPARATION, PEN_NOT_MIRROR)
 
-# Metrics keys that must match golden_baseline.json (physics.Metrics JSON tags).
+# 必须与 golden_baseline.json 匹配的指标键 (physics.Metrics 的 JSON tag)。
 METRIC_KEYS = ("B_mid_T", "B_throat_T", "z_throat_m", "mirror_ratio", "volume_good",
                "ripple", "B_coil_max_T", "min_coil_gap_m", "cost_proxy", "mu0")
 
-# Ripple structure prominence is passed by the metrics layer (internal/physics/api.go).
+# ripple 结构显著性由指标层传入 (internal/physics/api.go)。
 RIPPLE_PROMINENCE = 0.05
-# Singular closed form is floored at this centre separation (m) -- same rule as Go.
+# 奇异闭式解在这个中心间距 (m) 处取下限 —— 与 Go 侧同一规则。
 COIL_PROXIMITY_FLOOR = 5.0e-3
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 # --------------------------------------------------------------------------- #
-# spec
+# spec（设备规格）
 # --------------------------------------------------------------------------- #
 
 class Spec:
-    """The device under design + evaluation window, read from AsMap-style JSON."""
+    """被设计的设备 + 评估窗口，从 AsMap 风格的 JSON 读入。"""
 
     def __init__(self, raw: dict):
         s = dict(raw)
@@ -89,7 +89,7 @@ class Spec:
         self.weights = {k: float(v) for k, v in s["weights"].items()}
         self.self_field = float(s["self_field_T"]) if "self_field_T" in s else self.self_field_anchor()
 
-    # -- constructors ------------------------------------------------------- #
+    # -- 构造函数 ----------------------------------------------------------- #
     @classmethod
     def load(cls, path) -> "Spec":
         return cls(json.loads(Path(path).read_text())["spec"])
@@ -103,7 +103,7 @@ class Spec:
         return 3 * self.n_coils
 
     def self_field_anchor(self) -> float:
-        """mu0 * j_eng * t_pack / 2 -- the winding-pack conductor-field anchor."""
+        """mu0 * j_eng * t_pack / 2 -- 绕组包导体场的锚点。"""
         return MU0 * self.j_eng * self.t_pack / 2.0
 
     def lower(self):
@@ -118,23 +118,23 @@ class Spec:
 
 
 # --------------------------------------------------------------------------- #
-# field
+# 场计算
 # --------------------------------------------------------------------------- #
 
 def elliptic_ke(m):
-    """Complete elliptic integrals K(m), E(m) for parameter m = k^2.
+    """参数为 m = k^2 的完全椭圆积分 K(m)、E(m)。
 
-    scipy.special.ellipk/ellipe take m (= k^2), matching the convention frozen in
-    internal/physics/api.go. This is an *independent* implementation from the AGM
-    scheme the Go side is told to use -- different algorithm, same function.
+    scipy.special.ellipk/ellipe 接受 m (= k^2)，与 internal/physics/api.go 中
+    冻结的约定一致。这里是一份 *独立* 实现，与 Go 侧被要求使用的 AGM
+    方案不同 —— 算法不同，函数相同。
     """
     return ellipk(m), ellipe(m)
 
 
 def loop_field(radius, current, r, z, proximity_floor=0.0):
-    """(Br, Bz) of one circular filament loop centred at z = 0, axis on z.
+    """一个圆心在 z = 0、轴沿 z 的圆电流环的 (Br, Bz)。
 
-    Closed form (Simpson et al., NASA/TM-2001-211135) with
+    闭式解 (Simpson et al., NASA/TM-2001-211135)，其中
         s      = a^2 + r^2 + z^2
         alpha2 = s - 2 a r ,  beta2 = s + 2 a r ,  m = 1 - alpha2/beta2
         C      = mu0 I / pi
@@ -142,29 +142,27 @@ def loop_field(radius, current, r, z, proximity_floor=0.0):
         Br = C z / (2 alpha2 beta r) [ s E(m) - alpha2 K(m) ]
         Bz = C   / (2 alpha2 beta)   [ (a^2 - r^2 - z^2) E(m) + alpha2 K(m) ]
 
-    NOTE ON A DOC BUG: internal/physics/api.go prints the Br bracket *without* the
-    1/r factor ("B_r = C*z/(2*alpha2*beta) * [...]"). That form disagrees with the
-    golden field samples by a factor of exactly r (e.g. at the near-throat probe
-    point of golden_field_samples.json it returns -1.2185 T where the golden file,
-    and a direct Biot-Savart quadrature, both give -4.05 T). The golden values win:
-    the physically correct 1/r is implemented here, and the omission is reported as
-    a contract defect rather than reproduced. (Stage A's magnet.go reached the same
-    conclusion independently and restores the 1/r as well.)
+    关于一处文档 bug 的说明：internal/physics/api.go 打印的 Br 括号式 *没有*
+    1/r 因子 ("B_r = C*z/(2*alpha2*beta) * [...]")。这一形式与 golden 场样本
+    相差恰好 r 倍（例如在 golden_field_samples.json 的近喉部探针点上，它
+    返回 -1.2185 T，而 golden 文件以及直接做 Biot-Savart 求积都给出
+    -4.05 T）。golden 值胜出：这里实现的是物理上正确的 1/r，而这个遗漏
+    被当作契约缺陷上报，而不是被复现。
+    （阶段 A 的 magnet.go 独立得出了同样的结论，并同样恢复了 1/r。）
 
-    proximity_floor: when > 0, samples whose squared distance to the nearest wire
-    point (alpha2) is below floor^2 are evaluated with alpha2 clamped to floor^2,
-    which is what Go's AnalyticSolver does near the wire (the closed form is
-    singular there). Default 0.0 = the exact closed form -- that is what the golden
-    anchors were generated with, and it is the stricter comparison. Pass 5e-3 to
-    compare like-for-like against a Go field export that contains near-wire probes.
+    proximity_floor：当 > 0 时，到最近导线点的平方距离 (alpha2) 低于 floor^2
+    的样本点，会在 alpha2 被夹到 floor^2 的情况下求值，这正是 Go 的
+    AnalyticSolver 在导线附近的做法（闭式解在那里是奇异的）。默认 0.0 =
+    精确闭式解 —— golden 锚点正是用它生成的，而且它也是更严格的比较。
+    要跟包含近导线探针的 Go 场导出做同口径对比，就传 5e-3。
 
-    On the axis (r -> 0) the exact limit is used: Br = 0, Bz = mu0 I a^2 /
-    (2 (a^2 + z^2)^1.5).
+    在轴上 (r -> 0) 使用精确极限：Br = 0, Bz = mu0 I a^2 /
+    (2 (a^2 + z^2)^1.5)。
     """
     r = np.asarray(r, dtype=float)
     z = np.asarray(z, dtype=float)
     on_axis = r == 0.0
-    rs = np.where(on_axis, 1.0, r)          # placeholder, never used on axis
+    rs = np.where(on_axis, 1.0, r)          # 占位值，在轴上永远不会被用到
     s = radius * radius + r * r + z * z
     alpha2 = s - 2.0 * radius * r
     beta2 = s + 2.0 * radius * r
@@ -181,11 +179,10 @@ def loop_field(radius, current, r, z, proximity_floor=0.0):
 
 
 def loop_field_discrete(radius, current, r, z, n_seg=512):
-    """Independent Biot-Savart sum over n_seg straight segments per loop.
+    """对每个环的 n_seg 段直导线做独立的 Biot-Savart 求和。
 
-    Midpoint rule on the exact Biot-Savart integral, evaluated in Cartesian
-    coordinates -- no elliptic integrals anywhere, which is what makes it an
-    independent check on loop_field.
+    在精确的 Biot-Savart 积分上用中点法则，在笛卡尔坐标下求值 ——
+    全程不出现椭圆积分，这正是它构成对 loop_field 的独立校验的原因。
     """
     phi = (np.arange(n_seg) + 0.5) * (2.0 * math.pi / n_seg)
     sx, sy = radius * np.cos(phi), radius * np.sin(phi)
@@ -205,7 +202,7 @@ def loop_field_discrete(radius, current, r, z, n_seg=512):
 
 
 def coilset_field(coils, r, z, proximity_floor=0.0):
-    """Vector-summed (Br, Bz) of a coil set; coils are (radius, z, current)."""
+    """一个线圈组的矢量和 (Br, Bz)；线圈是 (radius, z, current)。"""
     r = np.asarray(r, dtype=float)
     z = np.asarray(z, dtype=float)
     br = np.zeros_like(r)
@@ -227,11 +224,11 @@ def on_axis_field(coils, z):
 
 
 # --------------------------------------------------------------------------- #
-# design-vector codec
+# 设计向量编解码
 # --------------------------------------------------------------------------- #
 
 def vector_to_coils(x, spec: Spec):
-    """Decode a design vector: clip to the box, canonicalise by z (ascending)."""
+    """解码设计向量：夹到盒内，按 z 升序做规范化。"""
     x = np.asarray(x, dtype=float)
     if x.size != spec.n_params:
         raise ValueError(f"design vector has {x.size} entries, spec wants {spec.n_params}")
@@ -249,11 +246,11 @@ def coils_to_vector(coils):
 
 
 # --------------------------------------------------------------------------- #
-# grids + metrics
+# 网格 + 指标
 # --------------------------------------------------------------------------- #
 
 class Grids:
-    """Stacked sample points: [axis (r=0) | midplane volume | cell volume]."""
+    """堆叠的样本点：[轴 (r=0) | 中平面体积 | 单元体积]。"""
 
     def __init__(self, spec: Spec):
         self.axis_z = np.linspace(-spec.z_axis_max, spec.z_axis_max, spec.n_axis)
@@ -278,12 +275,11 @@ class Grids:
 
 
 def axis_ripple(b_axis_cell, b_mid, prominence=RIPPLE_PROMINENCE):
-    """Normalised amplitude of NON-monotonic structure on the axis.
+    """轴上非单调结构的归一化幅度。
 
-    Interior extrema are found by 3-point comparison; consecutive extrema that
-    alternate (max, min) contribute |peak - valley| when the structure is deeper
-    than prominence * b_mid. Divided by b_mid, so a monotonic or single-peaked
-    profile returns exactly 0.
+    内部极值由三点比较找出；相邻且交替出现的 (max, min) 极值，在结构深度
+    超过 prominence * b_mid 时贡献 |peak - valley|。结果再除以 b_mid，
+    因此单调或只有一个峰的剖面会恰好返回 0。
     """
     b = np.asarray(b_axis_cell, dtype=float)
     if b.size < 3 or not np.isfinite(b_mid) or b_mid <= 0.0:
@@ -315,7 +311,7 @@ def min_coil_gap(coils):
 
 
 def _displace_to_floor(coils, k, floor=COIL_PROXIMITY_FLOOR):
-    """If coil k sits closer than `floor` to another centre, return a proxy point."""
+    """如果线圈 k 与另一个中心的距离小于 `floor`，就返回一个代理点。"""
     a, zc, _ = coils[k]
     for j, (aj, zj, _) in enumerate(coils):
         if j == k:
@@ -329,9 +325,17 @@ def _displace_to_floor(coils, k, floor=COIL_PROXIMITY_FLOOR):
     return a, zc
 
 
-def metrics_for(coils, spec: Spec, grids: Grids):
-    """Every objective-relevant metric of one coil set (physics.Metrics parity)."""
-    mag = coilset_magnitude(coils, grids.stack_r, grids.stack_z)
+def metrics_for(coils, spec: Spec, grids: Grids, proximity_floor=0.0):
+    """一个线圈组所有与目标函数相关的指标（与 physics.Metrics 对齐）。
+
+    `proximity_floor` 镜像 Go 求解器的 alpha2 夹取。Go 侧对 *每一个* 距离
+    导线小于该下限的样本点都做夹取，因此任何「网格触到导体」的设计做
+    同口径跨语言比较时都必须传同一个下限；不传的话，精确闭式解会返回
+    未夹取的（奇异的）值，两边就按构造「不一致」了。默认 0.0 使得冻结
+    的 golden（由精确形式生成）继续有效。
+    """
+    mag = coilset_magnitude(coils, grids.stack_r, grids.stack_z,
+                            proximity_floor=proximity_floor)
     axis, mid, cell = grids.split_magnitude(mag)
     b_mid = float(mid.mean())
     i_throat = int(np.argmax(axis))
@@ -352,7 +356,7 @@ def metrics_for(coils, spec: Spec, grids: Grids):
                 continue
             aj, zj, ij = coils[j]
             br, bz = loop_field(aj, ij, np.array([pt_r]), np.array([pt_z - zj]))
-            total += float(math.hypot(br[0], bz[0]))   # sum of magnitudes, not |sum|
+            total += float(math.hypot(br[0], bz[0]))   # 幅值之和，不是 |向量和|
         b_coil_max = max(b_coil_max, total + self_field)
 
     cost = float(sum(i * i * a for a, _, i in coils))
@@ -373,13 +377,13 @@ def metrics_for(coils, spec: Spec, grids: Grids):
 
 
 # --------------------------------------------------------------------------- #
-# objective
+# 目标函数
 # --------------------------------------------------------------------------- #
 
-def evaluate(x, spec: Spec, cost_ref: float, grids: Grids):
-    """score / terms / weighted / penalties / feasible / metrics for one design."""
+def evaluate(x, spec: Spec, cost_ref: float, grids: Grids, proximity_floor=0.0):
+    """一个设计的 score / terms / weighted / penalties / feasible / metrics。"""
     coils = vector_to_coils(x, spec)
-    m = metrics_for(coils, spec, grids)
+    m = metrics_for(coils, spec, grids, proximity_floor=proximity_floor)
     w = spec.weights
     terms = {
         TERM_FIELD: math.log10(max(m["B_mid_T"], 1e-9) / spec.b_ref),
@@ -414,7 +418,7 @@ def evaluate(x, spec: Spec, cost_ref: float, grids: Grids):
 
 
 # --------------------------------------------------------------------------- #
-# human baseline
+# 人工基线
 # --------------------------------------------------------------------------- #
 
 DEFAULT_GEOM = {"r_cell": 0.50, "half_gap_cell": 0.25, "r_throat": 0.30,
@@ -422,12 +426,12 @@ DEFAULT_GEOM = {"r_cell": 0.50, "half_gap_cell": 0.25, "r_throat": 0.30,
 
 
 def textbook_mirror(spec: Spec, geom=None, grids=None):
-    """Helmholtz-like central cell + two mirror throats, cell current SOLVED.
+    """类 Helmholtz 的中心单元 + 两个镜像喉部，单元电流是 *求解* 出来的。
 
-    The cell current is not guessed: brentq drives the midplane volume-averaged
-    |B| to spec.b_ref exactly (bracket [current_min, current_max/ratio] keeps the
-    throat current inside the search box, so the design is not clipped when it is
-    re-encoded -- gate G6). The throat current is `ratio` x the cell current.
+    单元电流不是猜的：brentq 把中平面体积平均 |B| 精确驱动到 spec.b_ref
+    （区间 [current_min, current_max/ratio] 让喉部电流留在搜索盒内，因此
+    设计在被重新编码时不会被夹断 —— 门 G6）。喉部电流是单元电流的
+    `ratio` 倍。
     """
     g = dict(DEFAULT_GEOM)
     if geom:
@@ -464,15 +468,15 @@ def textbook_mirror(spec: Spec, geom=None, grids=None):
 
 
 # --------------------------------------------------------------------------- #
-# comparison helpers
+# 比较辅助函数
 # --------------------------------------------------------------------------- #
 
 def compare_series(mine, ref, rel_tol, abs_tol, rel_floor=1e-12):
-    """Compare two equal-length series.
+    """比较两个等长序列。
 
-    Relative error is used where |ref| >= rel_floor; below that a relative error
-    is meaningless (denormal / exact-zero references), so the absolute tolerance
-    applies instead. Returns (max_rel, argmax_rel, n_bad, max_abs_over_floor).
+    在 |ref| >= rel_floor 的地方使用相对误差；低于它时相对误差没有意义
+    （次正规数 / 恰好为零的参照），因此改用绝对容差。
+    返回 (max_rel, argmax_rel, n_bad, max_abs_over_floor)。
     """
     mine = np.asarray(mine, dtype=float)
     ref = np.asarray(ref, dtype=float)
@@ -508,11 +512,11 @@ def _cmp_line(label, mine, ref, rel_tol, abs_tol):
 
 
 # --------------------------------------------------------------------------- #
-# gates
+# 门禁
 # --------------------------------------------------------------------------- #
 
 def check_golden(data_dir, verbose=True):
-    """Gate G5: recompute the golden numbers and compare. Returns exit code."""
+    """门 G5：重新计算 golden 数值并比较。返回退出码。"""
     data_dir = Path(data_dir)
     spec_path = data_dir / "golden_spec.json"
     base_path = data_dir / "golden_baseline.json"
@@ -546,7 +550,7 @@ def check_golden(data_dir, verbose=True):
     ok &= _cmp_line("design(max|dI|)", base["design"][2 * spec.n_coils], golden["design"][2 * spec.n_coils], 1e-6, 1e-12)
     ok &= _cmp_line("score", got["score"], golden["score"], 1e-6, 1e-6)
 
-    # ---- field samples: 3 designs x 32 points, relative < 1e-9 ------------- #
+    # ---- field samples: 3 个设计 x 32 个点，相对误差 < 1e-9 ---------------- #
     samples = json.loads(samp_path.read_text())["samples"]
     if verbose:
         print("  field samples (analytic closed form vs golden):")
@@ -575,13 +579,12 @@ def check_golden(data_dir, verbose=True):
 
 
 def _iter_go_cases(doc):
-    """Tolerant reader for a Go field cross-check export.
+    """Go 场交叉校验导出的宽容读取器。
 
-    Accepts a top-level list, or a dict with one of the keys
-    samples/points/records/cases/comparisons/designs holding the list. Each case
-    needs a 12-entry `design` plus per-point r/z and the Go-side field values.
-    r/z may be nested under `points`/`points_r`/`r` (aliases are accepted);
-    the field may be `b_mag`/`magnitude`, `br`, `bz`.
+    接受一个顶层列表，或者一个 dict，其 samples/points/records/cases/
+    comparisons/designs 之一持有该列表。每个 case 需要一个 12 项的 `design`，
+    加上逐点的 r/z 以及 Go 侧的场值。r/z 可以嵌套在 `points`/`points_r`/`r`
+    之下（接受这些别名）；场值可以是 `b_mag`/`magnitude`、`br`、`bz`。
     """
     if isinstance(doc, list):
         return doc
@@ -601,7 +604,7 @@ def _pick(d, *names, default=None):
 
 
 def nearest_wire_distance(coils, r, z):
-    """Distance from each sample point to the nearest wire point of any coil."""
+    """每个样本点到任意线圈最近导线点的距离。"""
     r = np.asarray(r, dtype=float)
     z = np.asarray(z, dtype=float)
     best = np.full(r.shape, np.inf)
@@ -612,12 +615,11 @@ def nearest_wire_distance(coils, r, z):
 
 
 def compare_go(path, verbose=True, proximity_floor=0.0):
-    """Compare a Go-exported field table against the scipy oracle, point by point.
+    """把 Go 导出的场表与 scipy oracle 逐点比较。
 
-    proximity_floor mirrors Go's near-wire clamp (see loop_field): pass 5e-3 to
-    compare like-for-like when the export contains probes closer than 5 mm to a
-    wire. Points inside the floor are always counted and reported separately, so a
-    like-for-like run cannot hide where the clamp did the work.
+    proximity_floor 镜像 Go 的近导线夹取（见 loop_field）：当导出里含有
+    距离导线小于 5 mm 的探针时，传 5e-3 做同口径比较。落在下限内的点
+    总会被计数并单独上报，因此同口径运行无法隐藏夹取在哪里起了作用。
     """
     path = Path(path)
     if not path.is_file():
@@ -698,7 +700,7 @@ def compare_go(path, verbose=True, proximity_floor=0.0):
 
 
 def emit_golden(out_dir, force=False):
-    """Re-emit the golden files from the oracle, for human review."""
+    """从 oracle 重新生成 golden 文件，供人工复核。"""
     out_dir = Path(out_dir)
     if out_dir.resolve() == (REPO_ROOT / "testdata").resolve() and not force:
         print(f"refusing to overwrite frozen golden values in {out_dir}; pass --force to do it anyway",
@@ -750,7 +752,7 @@ def emit_golden(out_dir, force=False):
 
 
 # --------------------------------------------------------------------------- #
-# cli
+# cli（命令行入口）
 # --------------------------------------------------------------------------- #
 
 def main(argv=None) -> int:
