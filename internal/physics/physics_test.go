@@ -231,6 +231,7 @@ func strconvF(v float64) string {
 // ---------------------------------------------------------------------------
 
 func TestOnAxisAnchor(t *testing.T) {
+	worstAxis := 0.0
 	radii := []float64{0.10, 0.3, 0.5, 1.0}
 	currents := []float64{1.0e4, 4.6322263959687366e5, 2.5e6}
 	zs := []float64{0, 1e-6, 0.25, 0.75, 1.0, 1.4, 3.7, -0.25, -1.0}
@@ -244,6 +245,7 @@ func TestOnAxisAnchor(t *testing.T) {
 				want := config.MU0 * i * a * a / (2 * math.Pow(a*a+z*z, 1.5))
 				checkRel(t, "B_z(axis)", bz, want, tolAxis)
 				mustFinite(t, "B_z(axis)", bz)
+				worstAxis = math.Max(worstAxis, math.Abs(bz-want)/want)
 
 				// OnAxisField must agree with the general evaluator.
 				got := onAxisField([]Coil{{Radius: a, Z: 0, Current: i}}, []float64{z})[0]
@@ -251,6 +253,9 @@ func TestOnAxisAnchor(t *testing.T) {
 			}
 		}
 	}
+	t.Logf("on-axis anchor: worst rel diff over %d (a, I, z) combinations: %.3e (tol %.0e)",
+		len(radii)*len(currents)*len(zs), worstAxis, tolAxis)
+
 	// Superposed on-axis field: two loops at +-0.25 (a Helmholtz-ish pair).
 	coils := []Coil{{Radius: 0.5, Z: -0.25, Current: 4.6322263959687366e5}, {Radius: 0.5, Z: 0.25, Current: 4.6322263959687366e5}}
 	z := []float64{-1, 0, 0.5}
@@ -418,6 +423,7 @@ func TestGoldenFieldSamples(t *testing.T) {
 		t.Fatalf("want 3 designs, got %d", len(g.Samples))
 	}
 	axisPoints, zeroCancels := 0, 0
+	worst := 0.0
 	for _, s := range g.Samples {
 		if len(s.PointsR) != 32 || len(s.Br) != 32 || len(s.Bz) != 32 || len(s.BMag) != 32 {
 			t.Fatalf("%s: want 32 samples, got r=%d br=%d bz=%d |B|=%d", s.DesignName, len(s.PointsR), len(s.Br), len(s.Bz), len(s.BMag))
@@ -451,12 +457,17 @@ func TestGoldenFieldSamples(t *testing.T) {
 				// Golden exactly zero (exact symmetry cancellation): the check
 				// inside checkRelScaled demands a roundoff-level residual.
 				zeroCancels++
+			} else {
+				worst = math.Max(worst, math.Abs(br[0]-s.Br[i])/math.Abs(s.Br[i]))
 			}
+			worst = math.Max(worst, math.Abs(bz[0]-s.Bz[i])/math.Abs(s.Bz[i]))
+			worst = math.Max(worst, math.Abs(mag[i]-s.BMag[i])/s.BMag[i])
 		}
 	}
 	if axisPoints != 12 {
 		t.Errorf("want 12 on-axis golden samples (3 designs x 4), got %d", axisPoints)
 	}
+	t.Logf("golden_field_samples.json: worst rel diff over 96 points x 3 components: %.3e (tol %.0e)", worst, tolGoldenFld)
 	t.Logf("golden components with an exactly-zero reference: %d (checked at %.0e*|B| roundoff level)", zeroCancels, zeroRoundoff)
 }
 
@@ -483,13 +494,25 @@ func TestGoldenBaselineMetrics(t *testing.T) {
 
 	grids := BuildGrids(spec)
 	m := MetricsFor(coils, spec, grids, AnalyticSolver{})
-	checkGoldenMetrics(t, "textbook_mirror", m, gb.Metrics)
+	t.Logf("golden baseline metrics: worst rel diff %.3e (tol %.0e)", checkGoldenMetrics(t, "textbook_mirror", m, gb.Metrics), tolGoldenMet)
 	// cost_proxy of the baseline is the objective's cost reference.
 	checkRel(t, "cost_ref", m.CostProxy, gb.CostRef, tolGoldenMet)
 }
 
-func checkGoldenMetrics(t *testing.T, name string, got Metrics, want goldenMetrics) {
+// checkGoldenMetrics compares every metric and returns the worst relative
+// difference seen (so callers can log the evidence, not just pass/fail).
+func checkGoldenMetrics(t *testing.T, name string, got Metrics, want goldenMetrics) float64 {
 	t.Helper()
+	pairs := [][2]float64{
+		{got.BMidT, want.BMidT}, {got.BThroatT, want.BThroatT}, {got.ZThroatM, want.ZThroatM},
+		{got.MirrorRatio, want.MirrorRatio}, {got.VolumeGood, want.VolumeGood}, {got.Ripple, want.Ripple},
+		{got.BCoilMaxT, want.BCoilMaxT}, {got.MinCoilGapM, want.MinCoilGapM}, {got.CostProxy, want.CostProxy},
+		{got.MU0, want.MU0},
+	}
+	worst := 0.0
+	for _, pr := range pairs {
+		worst = math.Max(worst, relDiff(pr[0], pr[1]))
+	}
 	checkRel(t, name+" B_mid_T", got.BMidT, want.BMidT, tolGoldenMet)
 	checkRel(t, name+" B_throat_T", got.BThroatT, want.BThroatT, tolGoldenMet)
 	checkRel(t, name+" z_throat_m", got.ZThroatM, want.ZThroatM, tolGoldenMet)
@@ -510,6 +533,7 @@ func checkGoldenMetrics(t *testing.T, name string, got Metrics, want goldenMetri
 	if hit != want.CoilProximityFloorHit {
 		t.Errorf("%s coil_proximity_floor_hit: got %v want %v", name, got.CoilProximityFloorHit, want.CoilProximityFloorHit)
 	}
+	return worst
 }
 
 // TestCrossLanguageMetrics three extra designs, whose metrics were produced by
@@ -563,7 +587,7 @@ func TestCrossLanguageMetrics(t *testing.T) {
 			t.Fatalf("%s: decode: %v", r.name, err)
 		}
 		m := MetricsFor(coils, spec, grids, AnalyticSolver{})
-		checkGoldenMetrics(t, r.name, m, r.m)
+		t.Logf("%s: worst rel diff %.3e (ripple=%.6g)", r.name, checkGoldenMetrics(t, r.name, m, r.m), m.Ripple)
 		if r.m.Ripple == 0 {
 			t.Errorf("%s: this reference design was picked because its ripple is non-zero", r.name)
 		}
@@ -817,7 +841,14 @@ func TestSingleStackSamplingPass(t *testing.T) {
 			t.Errorf("conductor-field call over %d points, want %d", n, len(coils)-1)
 		}
 	}
-	checkGoldenMetrics(t, "counting solver", m, gb.Metrics)
+	// The counting wrapper delegates to the same solver, so the metric values
+	// must be bit-identical to a plain run (the wrapper only counts). Compared
+	// against the golden as well, at the frozen 1e-6.
+	plain := MetricsFor(coils, spec, grids, AnalyticSolver{})
+	if m != plain {
+		t.Errorf("counting wrapper changed the metrics:\n got %+v\nwant %+v", m, plain)
+	}
+	t.Logf("counting solver: worst rel diff vs golden %.3e (tol %.0e)", checkGoldenMetrics(t, "counting solver", m, gb.Metrics), tolGoldenMet)
 }
 
 // ---------------------------------------------------------------------------
