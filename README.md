@@ -102,6 +102,7 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 - `docs/wiki/` — **wiki-first 知识系统**：项目概览 / 当前状态 / 数据来源 / 仓库策略 / 变更日志
   + 21 个校验脚本（`wiki_check.py`、`wiki_lint.py --strict=v2`、`raw_manifest_check.py` 等）
 - `manifests/raw_sources.csv` — 本地 raw 原件的登记表（原件本身不进 git，见 `docs/wiki/sources-and-data.md`）
+- 站点：[hushfusion.pages.dev](https://hushfusion.pages.dev) — 品牌站；本项目（FORGE）的介绍与实测数字在**进展页 `#forge`**
 
 ## 版本与 License
 

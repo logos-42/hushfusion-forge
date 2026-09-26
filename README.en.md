@@ -116,6 +116,7 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 - `CONTRACT.md` — the parallel-build contract (file roster, numeric anchors, acceptance gates, mainline rulings)
 - `docs/wiki/` — the **wiki-first knowledge system**: overview / current status / sources / repo strategy / changelog, plus 21 validation scripts
 - `manifests/raw_sources.csv` — registry of local raw originals (the originals themselves stay out of git)
+- Site: [hushfusion.pages.dev](https://hushfusion.pages.dev) — the brand site; this project (FORGE) is introduced, with its measured numbers, on the **Progress page under `#forge`**
 
 ## Version and License
 
