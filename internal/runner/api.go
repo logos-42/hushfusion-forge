@@ -38,7 +38,7 @@ type Runner struct {
 
 // New builds a runner.
 func New(reg *registry.Registry, ev *objective.Evaluator, tag string) *Runner {
-	panic("TODO(stage C): implement runner constructor")
+	return &Runner{Reg: reg, Ev: ev, Tag: tag}
 }
 
 // Score evaluates one design and appends it to the registry, filling
@@ -49,5 +49,5 @@ func New(reg *registry.Registry, ev *objective.Evaluator, tag string) *Runner {
 // Evaluation may be called from several goroutines (parallel search); recording
 // must stay serialised through the registry.
 func (r *Runner) Score(x []float64, meta Meta) objective.EvalResult {
-	panic("TODO(stage C): implement score+record")
+	return r.recordResult(r.evaluate(x), meta)
 }
