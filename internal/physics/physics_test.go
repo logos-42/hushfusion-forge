@@ -162,22 +162,62 @@ func TestEllipticKEAgainstScipy(t *testing.T) {
 		m, k, e float64
 	}{
 		{0.0, 1.5707963267948966, 1.5707963267948966},
+		{0.01, 1.5747455615173558, 1.5668619420216683},
+		{0.05, 1.591003453790792, 1.5509733517804725},
+		{0.1, 1.6124413487202192, 1.5307576368977633},
 		{0.25, 1.685750354812596, 1.4674622093394272},
 		{0.5, 1.8540746773013719, 1.3506438810476755},
+		{0.7, 2.075363135292469, 1.2416705679458229},
+		{0.75, 2.156515647499643, 1.2110560275684594},
 		{0.9, 2.5780921133481733, 1.1047747327040733},
+		{0.95, 2.9083372484445515, 1.0604737277662784},
 		{0.99, 3.6956373629898747, 1.015993545025224},
+		{0.999, 4.841132560550296, 1.0021707908344453},
 		{0.999999, 8.294051463601061, 1.0000038970261722},
+		{0.999999999, 11.747927296421043, 1.0000000056239633},
 		{1 - 1e-12, 15.201815980070121, 1.0000000000073508},
 	}
+	// Tolerances are the measured, understood achievable bounds of the frozen
+	// AGM formula in double precision -- not arbitrary slack. They are far
+	// tighter than anything the field anchors need (1e-9), and they exist to
+	// catch exactly the class of bug this test was written after: an earlier
+	// revision stopped the iteration on an absolute criterion that could never
+	// fire (see keEps in magnet.go) and lost 7.8e-14 on E(0.5), which a loose
+	// 1e-12 gate accepted.
+	//
+	// Regime split: E = K*(1 - sum), and as m -> 1 the sum approaches 1, so the
+	// subtraction loses ~1 digit: the floor is eps/|1-sum| which reaches
+	// ~2e-15 at m = 1-1e-12. Below m = 0.99 there is no such cancellation.
+	worstK, worstE, worstEnear := 0.0, 0.0, 0.0
 	for _, c := range cases {
+		tol := 1e-15
+		if c.m > 0.99 {
+			tol = 5e-15
+		}
 		k, e := ellipticKE(c.m)
-		checkRel(t, "K(m="+strconvF(c.m)+")", k, c.k, 1e-12)
-		checkRel(t, "E(m="+strconvF(c.m)+")", e, c.e, 1e-12)
+		checkRel(t, "K(m="+strconvF(c.m)+")", k, c.k, tol)
+		checkRel(t, "E(m="+strconvF(c.m)+")", e, c.e, tol)
+		worstK = math.Max(worstK, math.Abs(k-c.k)/c.k)
+		if c.m > 0.99 {
+			worstEnear = math.Max(worstEnear, math.Abs(e-c.e)/c.e)
+		} else {
+			worstE = math.Max(worstE, math.Abs(e-c.e)/c.e)
+		}
 	}
+	t.Logf("worst vs scipy over %d m values: K %.2e, E(m<=0.99) %.2e, E(m>0.99) %.2e", len(cases), worstK, worstE, worstEnear)
+
 	// m = 0 is exact: K = E = pi/2.
 	k0, e0 := ellipticKE(0)
 	if k0 != math.Pi/2 || e0 != math.Pi/2 {
 		t.Errorf("K(0)=%.17g E(0)=%.17g, want exactly pi/2=%.17g", k0, e0, math.Pi/2)
+	}
+	// Out of the frozen domain m in [0,1): reported as the limit, never as a
+	// silently finite number pretending to be K(1e-12 away from 1).
+	if k1, e1 := ellipticKE(1.0); !math.IsInf(k1, 1) || e1 != 1 {
+		t.Errorf("K(1)=%v E(1)=%v, want +Inf/1 (K diverges, E(1)=1)", k1, e1)
+	}
+	if k2, _ := ellipticKE(1.5); !math.IsInf(k2, 1) {
+		t.Errorf("K(1.5)=%v, want +Inf (out of domain saturates at m=1)", k2)
 	}
 }
 

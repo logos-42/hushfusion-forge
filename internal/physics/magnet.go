@@ -44,10 +44,13 @@ const (
 	ellipMMax = 1.0 - 1e-12
 
 	// keMaxIter / keEps bound the AGM iteration for the elliptic integrals.
-	// The AGM doubles its precision every step, so 64 iterations cannot be
-	// reached by any finite m; keEps stops it once c_n has vanished.
+	// The AGM doubles its precision every step. keEps is RELATIVE to a_n: the
+	// stopping test must be a relative one, because a_n - b_n cannot resolve a
+	// difference below eps*a_n, so an absolute test can never fire and the
+	// iteration would keep adding 2^(n-1) c_n^2 terms of pure rounding noise
+	// (with 2^(n-1) growing, those terms are amplified, not damped).
 	keMaxIter = 64
-	keEps     = 1e-20
+	keEps     = 1e-16
 
 	// defaultNSeg is used by DiscreteSolver when NSeg <= 0 (the zero value of
 	// the struct). It matches the reference's loop_field_discrete default.
@@ -64,8 +67,11 @@ func ellipticKE(m float64) (k, e float64) {
 	if m < 0 {
 		m = 0
 	}
-	if m > 1 {
-		m = 1
+	if m >= 1 {
+		// Out of the frozen domain [0, 1): K diverges, E -> 1. Reported as the
+		// mathematical limit rather than as a finite fabrication. Callers
+		// (loopField) stay strictly inside [0, 1 - 1e-12).
+		return math.Inf(1), 1
 	}
 	a := 1.0
 	b := math.Sqrt(1 - m)
@@ -73,6 +79,7 @@ func ellipticKE(m float64) (k, e float64) {
 	// n = 0 term of the sum: 2^(-1) c0^2.
 	sum := 0.5 * c * c
 	pw := 1.0 // 2^(n-1) for the next n
+	prev := math.Inf(1)
 
 	for n := 1; n <= keMaxIter; n++ {
 		an := 0.5 * (a + b)
@@ -80,9 +87,14 @@ func ellipticKE(m float64) (k, e float64) {
 		bn := math.Sqrt(a * b)
 		a, b, c = an, bn, cn
 		sum += pw * c * c
-		if c == 0 || math.Abs(c) < keEps || pw > 1e300 {
+		abs := math.Abs(c)
+		// Converged to machine precision: |c_n| is at (or below) the rounding
+		// floor of a_n - b_n, i.e. it is no longer decreasing. Anything added
+		// past this point is noise amplified by 2^(n-1).
+		if c == 0 || abs <= keEps*a || abs >= prev || pw > 1e300 {
 			break
 		}
+		prev = abs
 		pw *= 2
 	}
 	k = math.Pi / (2 * a)
