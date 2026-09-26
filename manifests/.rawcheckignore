@@ -1,0 +1,15 @@
+# manifests/.rawcheckignore
+#
+# 每行一个路径前缀(相对仓库根),这些目录里的文件**不要求**登记进 raw_sources.csv。
+# 用途只有一个:排除本项目自己跑出来的生成物,让 manifest 继续只回答
+# "这份外来原件是从哪来的"。
+#
+# 判据:如果这个文件不可能由"收到 / 提到 / 引用 / 保存一份外部资料"产生,
+# 而是 solver 跑出来的,就写在这里,并在 docs/wiki/ 里说明它怎么来的、
+# 谁是权威副本。
+#
+# 生成物不要写进 raw_sources.csv:那会让 manifest 变成"所有文件清单",
+# 于是再也看不出哪些资料是外部输入。
+
+runs/          # `forge benchmark` 的产物:registry.jsonl / results.json / report.md / figures/*.png
+               # 权威来源说明见 docs/wiki/sources-and-data.md;图可随时由 G15 重新生成

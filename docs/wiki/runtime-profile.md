@@ -1,6 +1,6 @@
 ---
 title: 校验脚本的运行时配置
-source: repo
+source: session
 created: 2026-09-26
 last_confirmed: 2026-09-26
 audience: self

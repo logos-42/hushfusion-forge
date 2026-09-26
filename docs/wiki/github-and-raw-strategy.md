@@ -1,6 +1,6 @@
 ---
 title: GitHub 与 Raw 仓分工策略
-source: repo
+source: session
 created: 2026-09-26
 last_confirmed: 2026-09-26
 audience: self
