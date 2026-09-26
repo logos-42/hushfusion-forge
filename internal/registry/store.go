@@ -1,9 +1,8 @@
-// store.go — file plumbing for the append-only JSONL registry.
+// store.go — 只追加 JSONL registry 的文件管道。
 //
-// Kept out of api.go so that the frozen file shows exactly what is frozen: the
-// types and the documented behaviour. Everything here is an implementation
-// choice; the semantics it implements are the ones in api.go's doc comments (plus
-// the Python reference in the dropped engine, forge/registry.py).
+// 放在 api.go 之外, 是为了让冻结文件只呈现被冻结的东西: 类型与被文档化的行为。
+// 这里的一切都是实现选择; 它实现的语义就是 api.go 文档注释里写的那些 (外加被移除
+// 的引擎中的 Python 参考实现 forge/registry.py)。
 package registry
 
 import (
@@ -16,34 +15,30 @@ import (
 	"time"
 )
 
-// rawLine is one non-empty physical line of the registry file.
+// rawLine 是 registry 文件中的一行非空的物理行。
 type rawLine struct {
-	no   int // 1-based physical line number, for human-readable problems
+	no   int // 从 1 开始的物理行号, 用于人类可读的问题描述
 	text string
 }
 
-// formatDesignID is the design id of the n-th record ("D0001"), matching the
-// Python reference (f"D{n:04d}"). Records and lineage edges are keyed by it.
+// formatDesignID 返回第 n 条 record 的 design id ("D0001"), 与 Python 参考实现
+// (f"D{n:04d}") 一致。record 与 lineage 边都以它为键。
 func formatDesignID(n int) string { return fmt.Sprintf("D%04d", n) }
 
-// nowUTC is the timestamp written into fresh records. The frozen doc requires
-// UTC (the Python reference wrote local time with an offset; a record's
-// timestamp is display metadata, not part of the score or of the parity schema).
+// nowUTC 是写入新 record 的时间戳。冻结文档要求 UTC (Python 参考实现写的是带偏移
+// 量的本地时间; record 的时间戳只是展示用元数据, 既不属于 score, 也不属于 parity
+// schema)。
 func nowUTC() string { return time.Now().UTC().Format(time.RFC3339) }
 
-// openRegistryFile prepares path for appending and returns the number of record
-// lines it holds. The file (and its parent directory) is created when missing.
+// openRegistryFile 为追加做好准备, 并返回它承载的 record 行数。文件 (及其父目录)
+// 不存在时会被创建。
 //
-// Truncation repair: a killed process leaves a half-written JSON object at the
-// end of the file, usually without its trailing newline. That fragment is
-// dropped — the file is rewritten up to the last complete line, via a temp file
-// and a rename so a crash mid-repair cannot destroy good history. Dropping it
-// matters twice over: appending after it would glue a new record onto the
-// fragment (making the new record unreadable), and counting it as a line would
-// leave a permanent hole in experiment_id, turning the integrity gate red for a
-// reason nobody can fix afterwards. Only bytes after the last complete line are
-// ever touched; no complete record is rewritten, so the registry stays
-// append-only where it matters.
+// 截断修复: 进程被杀会在文件末尾留下一个写了一半的 JSON 对象, 通常没有结尾换行。
+// 这段残片会被丢弃 —— 文件通过临时文件加 rename 重写到最后一个完整行为止, 这样
+// 修复中途崩溃也不会毁掉好的历史。丢弃它有两重意义: 在它之后追加会把新 record 粘
+// 到残片上 (使新 record 不可读), 把它当成一行则会在 experiment_id 里留下一个永久
+// 空洞, 让完整性门因为一个事后无法补救的原因变红。只有最后一个完整行之后的字节会
+// 被触碰; 任何完整 record 都不会被重写, 所以 registry 在关键之处仍是只追加的。
 func openRegistryFile(path string) (int, error) {
 	if strings.TrimSpace(path) == "" {
 		return 0, fmt.Errorf("registry: empty path")
@@ -74,7 +69,7 @@ func openRegistryFile(path string) (int, error) {
 			last = i
 		}
 	}
-	kept := lines[:last+1] // last == -1 keeps nothing
+	kept := lines[:last+1] // last == -1 时什么都不保留
 	repaired := ""
 	if last >= 0 {
 		repaired = strings.Join(kept, "\n") + "\n"
@@ -93,7 +88,7 @@ func openRegistryFile(path string) (int, error) {
 	return n, nil
 }
 
-// rewriteFile replaces path's contents through a temp file + rename.
+// rewriteFile 通过临时文件 + rename 替换 path 的内容。
 func rewriteFile(path string, content []byte) error {
 	tmp := path + ".repair.tmp"
 	if err := os.WriteFile(tmp, content, 0o644); err != nil {
@@ -106,9 +101,8 @@ func rewriteFile(path string, content []byte) error {
 	return nil
 }
 
-// readLines returns every non-empty line with its physical line number. The
-// registry mutex is held for the duration so that an in-process Append cannot be
-// observed half-written; a missing file is an empty registry.
+// readLines 返回每一非空行及其物理行号。整个过程持有 registry 的互斥锁, 因此
+// 进程内的 Append 不会被观察到写了一半的状态; 文件缺失即视为空 registry。
 func (r *Registry) readLines() ([]rawLine, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -129,10 +123,9 @@ func (r *Registry) readLines() ([]rawLine, error) {
 	return out, nil
 }
 
-// decodeRecord decodes one line; ok is false when the line is not a decodable
-// record (a truncated tail, or a record whose types do not match the schema).
-// Such a line is skipped rather than allowed to fail the whole read, exactly as
-// the Python reference does on json.JSONDecodeError.
+// decodeRecord 解码一行; 当该行不是可解码的 record 时 ok 为 false (末尾被截断,
+// 或类型与 schema 不符)。这样的行会被跳过, 而不是让整次读取失败, 与 Python 参考
+// 实现在 json.JSONDecodeError 上的做法完全一致。
 func decodeRecord(line string) (Record, bool) {
 	var rec Record
 	if err := json.Unmarshal([]byte(strings.TrimSpace(line)), &rec); err != nil {
@@ -141,8 +134,8 @@ func decodeRecord(line string) (Record, bool) {
 	return rec, true
 }
 
-// decodeObject decodes one line into raw keys, which is how Check() can see a
-// MISSING field (a typed decode would silently yield a zero value instead).
+// decodeObject 把一行解码成原始键, Check() 正是靠它看见 MISSING 的字段 (类型化
+// 解码只会悄悄给出零值)。
 func decodeObject(line string) (map[string]json.RawMessage, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(strings.TrimSpace(line)), &raw); err != nil {
@@ -154,23 +147,22 @@ func decodeObject(line string) (map[string]json.RawMessage, error) {
 	return raw, nil
 }
 
-// encodeRecord renders one record as a single compact JSON line, with the same
-// settings a Python writer would use (no HTML escaping, sorted map keys,
-// trailing newline). Go marshals struct fields in declaration order and maps in
-// key order, so the bytes are deterministic for a given record.
+// encodeRecord 把一条 record 渲染成单行紧凑 JSON, 使用与 Python 写入方相同的设置
+// (不做 HTML 转义、map 键排序、结尾换行)。Go 按声明顺序编组 struct 字段、按键序
+// 编组 map, 因此对给定的 record 字节是确定的。
 func encodeRecord(rec Record) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
-	if err := enc.Encode(rec); err != nil { // Encode appends the '\n'
+	if err := enc.Encode(rec); err != nil { // Encode 会附加 '\n'
 		return nil, fmt.Errorf("registry: encode record: %w", err)
 	}
 	return buf.Bytes(), nil
 }
 
-// missingRequiredKeys reports which of RequiredFields are absent from an encoded
-// record. This is the Go side of the Python reference's append() guard
-// (ValueError("registry record missing fields: ...")).
+// missingRequiredKeys 报告 RequiredFields 中哪些在已编码的 record 中缺失。这是
+// Python 参考实现里 append() 守卫的 Go 侧对应物
+// (ValueError("registry record missing fields: ..."))。
 func missingRequiredKeys(line []byte) []string {
 	var keys map[string]json.RawMessage
 	if err := json.Unmarshal(bytes.TrimRight(line, "\n"), &keys); err != nil {
@@ -185,8 +177,8 @@ func missingRequiredKeys(line []byte) []string {
 	return missing
 }
 
-// appendLine appends one already-terminated line with a single write to a file
-// opened O_APPEND, so a reader never sees a torn record.
+// appendLine 以一次写入, 把一行已带结尾的文本追加到以 O_APPEND 打开的文件, 因此
+// 读者永远不会看到被撕裂的 record。
 func appendLine(path string, line []byte) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -203,17 +195,15 @@ func appendLine(path string, line []byte) error {
 	return nil
 }
 
-// AppendAssign is Append plus the ids it assigned.
+// AppendAssign 是 Append 加上它分配到的 id。
 //
-// WHY THIS EXISTS (addition to the frozen interface, flagged to the parent):
-// runner.Score must return an EvalResult whose ExperimentID/DesignID are those of
-// the record that was actually written — the search layer builds the lineage tree
-// from DesignID (see search/api.go, "children are recorded with their parent's
-// design_id"). The frozen Append(Record) error takes the record by value and so
-// cannot hand the assigned ids back, and the only alternative — ask the counter
-// with NextIDs() and then call Append() — is a data race: two goroutines would be
-// given the same id. Allocating and writing under one lock is the only correct
-// implementation. Append() delegates here, so there is exactly one write path.
+// 为什么需要它 (对冻结接口的补充, 已上报给父线): runner.Score 必须返回一个
+// EvalResult, 其 ExperimentID/DesignID 属于真正被写入的那条 record —— 搜索层是用
+// DesignID 构建 lineage 树的 (见 search/api.go, “子节点以其父节点的 design_id
+// 记录”)。冻结的 Append(Record) error 按值接收 record, 因此无法把分配到的 id 交还
+// 回来, 而唯一的替代做法 —— 先用 NextIDs() 问计数器、再调用 Append() —— 是一个数据
+// 竞争: 两个 goroutine 会拿到同一个 id。在同一把锁内分配并写入是唯一正确的实现。
+// Append() 委托到这里, 所以只有一条写入路径。
 func (r *Registry) AppendAssign(rec Record) (Record, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -237,6 +227,6 @@ func (r *Registry) AppendAssign(rec Record) (Record, error) {
 	if err := appendLine(r.Path, line); err != nil {
 		return Record{}, err
 	}
-	r.n = next // only after a successful write: ids stay gap-free
+	r.n = next // 只在写入成功之后: id 保持无空洞
 	return rec, nil
 }

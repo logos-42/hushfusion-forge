@@ -1,10 +1,9 @@
-// record.go — how one evaluation becomes one registry record.
+// record.go — 一次求值如何变成一条 registry record。
 //
-// Score() is deliberately split in three: evaluate (upstream physics/objective),
-// record (pure, this file), and record+back-fill (the registry's lock). That
-// split is what lets the recording path be tested for real without an evaluator
-// that works yet, and it is also why the lineage edge returned to the search
-// layer is the id of the record that was actually written.
+// Score() 被刻意拆成三块: 求值 (上游 physics/objective)、构造 record (纯函数, 本
+// 文件)、以及记录 + 回填 (registry 的锁)。正是这个拆分让记录路径能在求值器还不可用
+// 时就得到真实验证, 也正是它使交还给搜索层的 lineage 边是真正被写入的那条 record
+// 的 id。
 package runner
 
 import (
@@ -14,9 +13,8 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/registry"
 )
 
-// evaluate runs the upstream evaluation, with a clear failure when the runner was
-// built without its dependencies (a nil dereference three frames deep is much
-// harder to read than this).
+// evaluate 运行上游求值, 并在 runner 缺少依赖就被构建时给出清晰的失败 (三层调用
+// 之外的 nil 解引用比这个难读得多)。
 func (r *Runner) evaluate(x []float64) objective.EvalResult {
 	if r.Reg == nil {
 		panic("runner.Score: nil Registry — build the runner with runner.New(reg, ev, tag)")
@@ -27,10 +25,9 @@ func (r *Runner) evaluate(x []float64) objective.EvalResult {
 	return r.Ev.Evaluate(x)
 }
 
-// record builds the registry record for one evaluation. ExperimentID, DesignID
-// and Timestamp are left unset on purpose: the registry assigns them while it
-// holds its lock, which is the only way ids stay gap-free and unique when
-// searches evaluate from several goroutines.
+// record 为一次求值构造 registry record。ExperimentID、DesignID 与 Timestamp 是
+// 刻意留空的: registry 在持有自己的锁时分配它们, 这是多个 goroutine 并发求值时
+// id 保持无空洞且唯一的唯一办法。
 func (r *Runner) record(res objective.EvalResult, meta Meta) registry.Record {
 	return registry.Record{
 		ParentDesign: meta.Parent,
@@ -50,19 +47,18 @@ func (r *Runner) record(res objective.EvalResult, meta Meta) registry.Record {
 	}
 }
 
-// recordResult appends the record and back-fills the ids it was given into the
-// EvalResult the search layer receives.
+// recordResult 追加 record, 并把这条 record 获得的 id 回填进搜索层收到的
+// EvalResult。
 func (r *Runner) recordResult(res objective.EvalResult, meta Meta) objective.EvalResult {
 	if r.Reg == nil {
 		panic("runner.Score: nil Registry — build the runner with runner.New(reg, ev, tag)")
 	}
 	assigned, err := r.Reg.AppendAssign(r.record(res, meta))
 	if err != nil {
-		// A record that was scored but not stored did not happen: the registry is
-		// the source of truth for every claim the report makes downstream. The
-		// Python reference raised here too (Registry.append -> ValueError/OSError);
-		// the frozen Go signature has no error to return, so it is reported by
-		// panicking rather than by dropping the experiment silently.
+		// 被评分却没有被存储的 record 等于没有发生: registry 是报告在下游所做一切
+		// 论断的真相来源。Python 参考实现也在这里抛错
+		// (Registry.append -> ValueError/OSError); 冻结的 Go 签名没有错误可返回,
+		// 所以用 panic 报告, 而不是悄悄丢掉这次 experiment。
 		panic(fmt.Sprintf("runner.Score: recording the experiment in %s failed: %v", r.Reg.Path, err))
 	}
 	res.DesignID = assigned.DesignID
@@ -70,14 +66,12 @@ func (r *Runner) recordResult(res objective.EvalResult, meta Meta) objective.Eva
 	return res
 }
 
-// designParams splits the canonical design vector [r_0..r_K, z_0..z_K,
-// I_0..I_K] into the named per-coil arrays of a record, exactly as the Python
-// reference does (design[:n], design[n:2n], design[2n:] with n = n_coils).
+// designParams 把规范 design 向量 [r_0..r_K, z_0..z_K, I_0..I_K] 拆成 record 里
+// 按线圈命名的数组, 与 Python 参考实现完全一致 (design[:n]、design[n:2n]、
+// design[2n:], 其中 n = n_coils)。
 //
-// It must not panic on a malformed vector: if the evaluation came back with a
-// length that is not 3*n_coils, the record still has to carry whatever evidence
-// exists (a record with a short params array is diagnosable; a crashed run is
-// not).
+// 它绝不能在一个畸形向量上 panic: 如果求值返回的长度不是 3*n_coils, record 仍然
+// 必须携带现有的全部证据 (params 数组偏短的 record 是可诊断的; 崩掉的 run 不是)。
 func designParams(design []float64, nCoils int) registry.Params {
 	k := nCoils
 	if k <= 0 || 3*k > len(design) {
@@ -98,8 +92,8 @@ func designParams(design []float64, nCoils int) registry.Params {
 	return registry.Params{RadiusM: radius, ZM: z, CurrentA: current}
 }
 
-// orEmpty keeps the JSON type of a record's map fields stable: a nil map would be
-// written as null where the Python reference writes {}.
+// orEmpty 保持 record 的 map 字段 JSON 类型稳定: nil map 会被写成 null, 而
+// Python 参考实现写的是 {}。
 func orEmpty(m map[string]float64) map[string]float64 {
 	if m == nil {
 		return map[string]float64{}

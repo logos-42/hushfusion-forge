@@ -14,14 +14,13 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/registry"
 )
 
-// Scorer is the seam the search layer consumes: if this assertion ever stops
-// compiling, every search algorithm's unit test stops being able to inject a toy
-// scorer, which is what keeps stage D independent of the physics layer.
+// Scorer 是搜索层消费的接缝: 一旦这个断言无法编译, 每个搜索算法的单元测试就再也
+// 无法注入玩具 scorer, 而正是这一点让 stage D 与 physics 层保持独立。
 var _ Scorer = (*Runner)(nil)
 
-// goldenCostRef is the ohmic cost of the human baseline (CONTRACT.md §5,
-// testdata/golden_baseline.json: cost_proxy = 1.791703035e12), i.e. the value the
-// cost term is normalised against.
+// goldenCostRef 是人类 baseline 的欧姆代价 (CONTRACT.md §5,
+// testdata/golden_baseline.json: cost_proxy = 1.791703035e12), 也就是 cost 项据以
+// 归一化的那个值。
 const goldenCostRef = 1.791703035e12
 
 func openRegistry(t *testing.T) *registry.Registry {
@@ -33,9 +32,8 @@ func openRegistry(t *testing.T) *registry.Registry {
 	return reg
 }
 
-// capture runs fn and reports a panic instead of failing the test, so that a
-// dependency which is still a skeleton is reported as "not ready" rather than
-// being papered over with a fake evaluator.
+// capture 运行 fn, 并把 panic 报告出来而不是让测试失败, 这样仍是骨架的依赖会被
+// 报告为“尚未就绪”, 而不是用一个假求值器糊过去。
 func capture(fn func()) (recovered any, completed bool) {
 	completed = true
 	defer func() {
@@ -66,7 +64,7 @@ func evalFixture() objective.EvalResult {
 }
 
 // ---------------------------------------------------------------------------
-// construction and the record shape
+// 构造与 record 形状
 // ---------------------------------------------------------------------------
 
 func TestNewWiresTheRunnerFields(t *testing.T) {
@@ -102,15 +100,14 @@ func TestRecordCarriesProvenanceAndRawTerms(t *testing.T) {
 	if rec.Note != "child of the baseline" {
 		t.Errorf("Note = %q", rec.Note)
 	}
-	// The ids are the registry's job: a runner that allocated them itself would
-	// race with a parallel search.
+	// id 是 registry 的职责: 一个自己分配 id 的 runner 会与并行搜索发生竞争。
 	if rec.ExperimentID != 0 || rec.DesignID != "" || rec.Timestamp != "" {
 		t.Errorf("record must leave ExperimentID/DesignID/Timestamp unset, got %+v", rec)
 	}
 	if rec.Score != res.Score || rec.Feasible != res.Feasible {
 		t.Errorf("score/feasible not carried: %+v", rec)
 	}
-	// Every raw term survives: a record is worthless for re-weighting without them.
+	// 每个原始项都留存下来: 没有它们, record 对重新加权毫无价值。
 	for k, v := range res.Terms {
 		if rec.Terms[k] != v {
 			t.Errorf("terms[%s] = %v, want %v", k, rec.Terms[k], v)
@@ -122,7 +119,7 @@ func TestRecordCarriesProvenanceAndRawTerms(t *testing.T) {
 	if rec.Metrics.CostProxy != goldenCostRef || rec.Metrics.NCoils != 4 {
 		t.Errorf("metrics not carried: %+v", rec.Metrics)
 	}
-	// Params are the evaluation's canonical design split into thirds.
+	// params 是这次求值的规范 design 按三段拆分的结果。
 	if len(rec.Params.RadiusM) != 4 || len(rec.Params.ZM) != 4 || len(rec.Params.CurrentA) != 4 {
 		t.Fatalf("params split into %d/%d/%d, want 4/4/4",
 			len(rec.Params.RadiusM), len(rec.Params.ZM), len(rec.Params.CurrentA))
@@ -153,8 +150,8 @@ func TestDesignParamsSplit(t *testing.T) {
 		wantR, wantZ, wantI []float64
 	}{
 		{"four coils", 4, []float64{1, 2, 3, 4}, []float64{5, 6, 7, 8}, []float64{9, 10, 11, 12}},
-		// A wrong n_coils must not panic or lose data: the tail falls into
-		// current_A and the record stays diagnosable.
+		// 错误的 n_coils 绝不能 panic 或丢数据: 尾部会落进 current_A, record
+		// 保持可诊断。
 		{"absent n_coils", 0, []float64{1, 2, 3, 4}, []float64{5, 6, 7, 8}, []float64{9, 10, 11, 12}},
 		{"too large n_coils", 9, []float64{1, 2, 3, 4}, []float64{5, 6, 7, 8}, []float64{9, 10, 11, 12}},
 		{"short design", 4, []float64{1, 2, 3}, []float64{4, 5, 6}, []float64{7, 8, 9}},
@@ -177,7 +174,7 @@ func TestDesignParamsSplit(t *testing.T) {
 			}
 		})
 	}
-	// Degenerate inputs must not panic either.
+	// 退化输入同样不能 panic。
 	for _, d := range [][]float64{nil, {}, {1, 2}} {
 		got := designParams(d, 4)
 		if got.RadiusM == nil || got.ZM == nil || got.CurrentA == nil {
@@ -187,12 +184,11 @@ func TestDesignParamsSplit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// recording (the part the runner owns: no evaluator needed)
+// 记录 (runner 自己拥有的部分: 不需要求值器)
 // ---------------------------------------------------------------------------
 
-// TestRecordResultBackfillsTheWrittenIDs is the criterion the search layer
-// depends on: the DesignID it gets back is the one in the file, so the lineage
-// tree it builds matches the registry exactly.
+// TestRecordResultBackfillsTheWrittenIDs 是搜索层依赖的标准: 它拿回的 DesignID
+// 就是文件里的那个, 因此它构建的 lineage 树与 registry 完全吻合。
 func TestRecordResultBackfillsTheWrittenIDs(t *testing.T) {
 	reg := openRegistry(t)
 	r := New(reg, nil, "phase0")
@@ -226,7 +222,7 @@ func TestRecordResultBackfillsTheWrittenIDs(t *testing.T) {
 	if recs[1].Generation != 1 {
 		t.Errorf("record 2 generation = %d, want 1", recs[1].Generation)
 	}
-	// The lineage edge the runner handed back is a real edge in the registry.
+	// runner 交还回来的这条 lineage 边, 在 registry 里是一条真实的边。
 	lin := reg.Lineage()
 	if kids := lin[root.DesignID]; len(kids) != 1 || kids[0] != child.DesignID {
 		t.Errorf("Lineage[%s] = %v, want [%s]", root.DesignID, kids, child.DesignID)
@@ -236,10 +232,9 @@ func TestRecordResultBackfillsTheWrittenIDs(t *testing.T) {
 	}
 }
 
-// TestRecordResultIsConcurrencySafe is the parallel-search case: 100 evaluations
-// recorded from 100 goroutines must produce 100 records with unique, contiguous
-// ids, and every returned DesignID must be the id of the record that was written
-// (that is what makes the lineage tree correct under Workers > 1).
+// TestRecordResultIsConcurrencySafe 是并行搜索的情形: 从 100 个 goroutine 记录的
+// 100 次求值必须产出 100 条 id 唯一且连续的 record, 且每个返回的 DesignID 都必须
+// 是真正被写入的那条 record 的 id (这才使 Workers > 1 时 lineage 树正确)。
 func TestRecordResultIsConcurrencySafe(t *testing.T) {
 	reg := openRegistry(t)
 	r := New(reg, nil, "phase0")
@@ -299,7 +294,7 @@ func TestRecordResultIsConcurrencySafe(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// dependency reporting
+// 依赖缺失的报告
 // ---------------------------------------------------------------------------
 
 func TestScorePanicsWhenTheRunnerHasNoDependencies(t *testing.T) {
@@ -315,8 +310,8 @@ func TestScorePanicsWhenTheRunnerHasNoDependencies(t *testing.T) {
 		t.Errorf("panic message %q should name the missing Registry", rec)
 	}
 
-	// A runner that cannot record must fail loudly rather than lose the
-	// experiment: an unwritable registry path panics with the reason.
+	// 无法记录的 runner 必须大声失败而不是丢掉这次 experiment: 不可写的 registry
+	// 路径会带原因 panic。
 	reg := openRegistry(t)
 	r := New(reg, &objective.Evaluator{}, "phase0")
 	reg.Path = filepath.Join(t.TempDir(), "no-such-dir", "registry.jsonl")
@@ -327,16 +322,16 @@ func TestScorePanicsWhenTheRunnerHasNoDependencies(t *testing.T) {
 	}
 }
 
-// TestEmitScoredRegistryFixture writes a registry produced by the REAL scoring
-// path (objective.Evaluator -> runner.Score -> registry) so the independent Python
-// checker (python/aux/schema_check.py, gate G9) can be run on records that were
-// actually evaluated, not on hand-written fixtures:
+// TestEmitScoredRegistryFixture 用真实的评分路径 (objective.Evaluator ->
+// runner.Score -> registry) 产出一个 registry, 这样独立的 Python 检查器
+// (python/aux/schema_check.py, 门 G9) 可以对真正被求值过的 record 运行, 而不是对
+// 手写的夹具运行:
 //
 //	FORGE_FIXTURE_DIR=/tmp/forge-fix go test ./internal/runner/ -run TestEmitScoredRegistryFixture
 //	python3 python/aux/schema_check.py /tmp/forge-fix/registry.jsonl
 //
-// Skipped unless FORGE_FIXTURE_DIR is set, and skipped (with the upstream panic as
-// the reason) while stage A/B are still skeletons — it never fakes an evaluation.
+// 除非设置了 FORGE_FIXTURE_DIR 否则跳过; 在 stage A/B 仍是骨架期间也跳过 (以上游
+// panic 为原因) —— 它从不伪造一次求值。
 func TestEmitScoredRegistryFixture(t *testing.T) {
 	dir := os.Getenv("FORGE_FIXTURE_DIR")
 	if dir == "" {
@@ -385,11 +380,10 @@ func TestEmitScoredRegistryFixture(t *testing.T) {
 	t.Logf("emitted %d scored records to %s", reg.Len(), reg.Path)
 }
 
-// TestScoreIsConcurrencySafe tests the frozen doc comment's promise for real:
-// "Evaluation may be called from several goroutines (parallel search); recording
-// must stay serialised through the registry." It skips (with the upstream panic as
-// its reason) while stage A/B are skeletons, and fails loudly if a goroutine panics
-// once they are ready.
+// TestScoreIsConcurrencySafe 真实地检验冻结文档注释中的承诺: “求值可能从多个
+// goroutine 被调用 (并行搜索); 记录必须经 registry 保持串行化。” 在 stage A/B 仍是
+// 骨架期间它跳过 (以上游 panic 为原因), 而当它们就绪后若有 goroutine panic 则大声
+// 失败。
 func TestScoreIsConcurrencySafe(t *testing.T) {
 	spec := config.DefaultSpec()
 	var (
@@ -410,9 +404,8 @@ func TestScoreIsConcurrencySafe(t *testing.T) {
 		}
 		return x
 	}
-	// One probe evaluation against a throwaway registry: a panic here means the
-	// upstream path is not usable yet, and a panic inside a goroutine could not be
-	// recovered (it would take the test binary down with it).
+	// 对一次性的 registry 做一次探针求值: 这里 panic 意味着上游路径还不可用, 而
+	// goroutine 内部的 panic 无法被恢复 (它会把测试二进制一起带走)。
 	probe := New(openRegistry(t), ev, "probe")
 	if p, ok := capture(func() { probe.Score(designAt(0), Meta{Algorithm: "probe", Seed: 7}) }); !ok {
 		t.Skipf("dependency not ready: scoring panicked upstream: %v", p)
@@ -465,7 +458,7 @@ func TestScoreIsConcurrencySafe(t *testing.T) {
 		if rec.Score != res.Score {
 			t.Fatalf("design %s: registry score %v, runner score %v", res.DesignID, rec.Score, res.Score)
 		}
-		// The raw terms of the evaluation reached the record unchanged.
+		// 这次求值的原始项原封不动地到达了 record。
 		for k, v := range res.Terms {
 			if rec.Terms[k] != v {
 				t.Fatalf("design %s: terms[%s] = %v in the registry, %v in the result",
@@ -478,15 +471,13 @@ func TestScoreIsConcurrencySafe(t *testing.T) {
 	}
 }
 
-// TestScoreEndToEnd exercises the real path runner.Score owns — evaluate, assign
-// ids, write the record, back-fill DesignID/ExperimentID — against the real
-// objective.Evaluator and physics.Solver.
+// TestScoreEndToEnd 针对真实的 objective.Evaluator 与 physics.Solver 演练
+// runner.Score 自己拥有的真实路径 —— 求值、分配 id、写入 record、回填
+// DesignID/ExperimentID。
 //
-// Stage A (physics) and stage B (objective) are separate parallel lines and are
-// still panic skeletons at the time of writing. When they are not ready this test
-// SKIPS with the upstream panic as its reason: it does not mock the evaluator and
-// it does not pretend the seam was verified. When they land, the same code runs
-// for real.
+// Stage A (physics) 与 stage B (objective) 是两条并行的独立线, 写作时仍是会 panic
+// 的骨架。它们未就绪时本测试会以上游 panic 为原因 SKIP: 它不 mock 求值器, 也不
+// 假装这个接缝已被验证。等它们落地, 同一段代码就会真实运行。
 func TestScoreEndToEnd(t *testing.T) {
 	spec := config.DefaultSpec()
 	var (

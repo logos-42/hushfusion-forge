@@ -6,16 +6,14 @@ import (
 	"testing"
 )
 
-// TestEmitSchemaParityFixture writes a small registry through the REAL writer so
-// that the independent Python checker (python/aux/schema_check.py, acceptance
-// gate G9) can be run against Go's actual bytes instead of against Go's idea of
-// its own schema. The Python checker re-states the field names, the metric keys,
-// the param block and the "design_id == D%04d of experiment_id" rule from the
-// outside, so a rename here would be caught by something that shares no code
-// with Go.
+// TestEmitSchemaParityFixture 通过真实的写入方产出一个小的 registry, 这样独立的
+// Python 检查器 (python/aux/schema_check.py, 验收门 G9) 可以对 Go 实际写出的字节
+// 运行, 而不是对 Go 自己以为的 schema 运行。Python 检查器从外部重新声明了字段名、
+// metric 键、param 块以及 “design_id == experiment_id 的 D%04d” 规则, 所以这里改名
+// 会被一个与 Go 不共享任何代码的东西抓住。
 //
-// It is skipped unless FORGE_FIXTURE_DIR is set, so `go test ./...` never writes
-// outside its temp directories. Usage:
+// 除非设置了 FORGE_FIXTURE_DIR, 否则它会被跳过, 因此 `go test ./...` 永远不会写到
+// 临时目录之外。用法:
 //
 //	FORGE_FIXTURE_DIR=/tmp/forge-fix go test ./internal/registry/ -run TestEmitSchemaParityFixture
 //	python3 python/aux/schema_check.py /tmp/forge-fix/registry.jsonl
@@ -31,8 +29,8 @@ func TestEmitSchemaParityFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	// A root, a child and a grandchild: the fixture exercises parent_design, the
-	// lineage edge and the id/design_id pairing, not just a flat list.
+	// 一个根、一个子节点、一个孙节点: 这个夹具演练了 parent_design、lineage 边
+	// 以及 id/design_id 的配对, 而不只是一个平铺列表。
 	root := recordFixture(-0.2905708161, "human_baseline")
 	root.Feasible = false
 	if _, err := reg.AppendAssign(root); err != nil {

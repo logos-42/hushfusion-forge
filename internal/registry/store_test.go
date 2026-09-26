@@ -10,7 +10,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Open / append basics
+// Open / 追加基础
 // ---------------------------------------------------------------------------
 
 func TestOpenCreatesAnEmptyRegistry(t *testing.T) {
@@ -76,9 +76,9 @@ func TestAppendAssignsSequentialIDsAndAUTCTimestamp(t *testing.T) {
 	}
 }
 
-// TestAppendKeepsRecordsThatAlreadyCarryIDs pins the "when they are unset" half
-// of the frozen Append doc: an explicitly identified record (an import, a
-// re-scored baseline) is written as given.
+// TestAppendKeepsRecordsThatAlreadyCarryIDs 钉住冻结 Append 文档中与之相对的那
+// 一半 —— “当它们未设置时”才分配: 一条显式带标识的 record (一次导入、一个重新
+// 评分的 baseline) 按原样写入。
 func TestAppendKeepsRecordsThatAlreadyCarryIDs(t *testing.T) {
 	reg := openTemp(t)
 	rec := recordFixture(-1.0, "human_baseline")
@@ -97,14 +97,14 @@ func TestAppendKeepsRecordsThatAlreadyCarryIDs(t *testing.T) {
 	}
 }
 
-// TestAppendDoesNotAdvanceTheCounterOnFailure keeps the id sequence gap-free when
-// a write cannot happen at all (the counter must not burn an id).
+// TestAppendDoesNotAdvanceTheCounterOnFailure 在完全无法写入时保持 id 序列无
+// 空洞 (计数器不得白白烧掉一个 id)。
 func TestAppendDoesNotAdvanceTheCounterOnFailure(t *testing.T) {
 	reg := openTemp(t)
 	if err := reg.Append(recordFixture(0.1, "random")); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	// Make the registry path unwritable by turning it into a directory.
+	// 把 registry 路径变成一个目录, 从而让它不可写。
 	if err := os.Remove(reg.Path); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
@@ -123,8 +123,8 @@ func TestAppendDoesNotAdvanceTheCounterOnFailure(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// concurrency (the hard criterion: 100 goroutines -> exactly 100 records,
-// contiguous ids, no gaps, no duplicates; run with -race)
+// 并发 (硬性标准: 100 个 goroutine -> 恰好 100 条 record, id 连续、无空洞、
+// 无重复; 用 -race 运行)
 // ---------------------------------------------------------------------------
 
 func TestAppendGapFreeUnderConcurrency(t *testing.T) {
@@ -179,7 +179,7 @@ func TestAppendGapFreeUnderConcurrency(t *testing.T) {
 	if problems := readProblems(t, reg); len(problems) != 0 {
 		t.Fatalf("Check after %d concurrent appends: %v", n, problems)
 	}
-	// One record per line, each terminated: the file itself must be clean.
+	// 每行一条 record, 每行都有结尾: 文件本身也必须是干净的。
 	data, err := os.ReadFile(reg.Path)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
@@ -192,9 +192,9 @@ func TestAppendGapFreeUnderConcurrency(t *testing.T) {
 	}
 }
 
-// TestAppendAssignReturnsTheWrittenRecord is the criterion runner.Score's
-// lineage depends on: the ids handed back are the ids of the record that reached
-// the file, even when 100 goroutines are racing.
+// TestAppendAssignReturnsTheWrittenRecord 是 runner.Score 的 lineage 所依赖的
+// 标准: 交还回来的 id 就是真正落到文件里的那条 record 的 id, 即使有 100 个
+// goroutine 在竞争也如此。
 func TestAppendAssignReturnsTheWrittenRecord(t *testing.T) {
 	reg := openTemp(t)
 	const n = 100
@@ -254,8 +254,8 @@ func TestAppendAssignReturnsTheWrittenRecord(t *testing.T) {
 	}
 }
 
-// TestConcurrentReadsDuringAppends documents that a reader either sees a record
-// or does not; it never sees half of one (the registry mutex covers reads too).
+// TestConcurrentReadsDuringAppends 记录这样一件事: 读者要么看到一条 record, 要么
+// 看不到; 它永远不会看到半条 (registry 的互斥锁同样覆盖读)。
 func TestConcurrentReadsDuringAppends(t *testing.T) {
 	reg := openTemp(t)
 	const n = 50
@@ -301,7 +301,7 @@ func TestConcurrentReadsDuringAppends(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// truncation tolerance
+// 截断容忍
 // ---------------------------------------------------------------------------
 
 func TestRecordsSkipsATruncatedFinalLine(t *testing.T) {
@@ -326,13 +326,13 @@ func TestRecordsSkipsATruncatedFinalLine(t *testing.T) {
 	}
 }
 
-// TestOpenRepairsATruncatedTailThenKeepsIDsContiguous is the "process was killed
-// mid-write" scenario end to end: the half-written line is dropped, the next
-// record reuses the id that would have been used, and the gate stays green.
+// TestOpenRepairsATruncatedTailThenKeepsIDsContiguous 端到端地演练“进程在写入
+// 中途被杀”的场景: 写了一半的那行被丢弃, 下一条 record 复用它本会使用的 id,
+// 门保持绿色。
 func TestOpenRepairsATruncatedTailThenKeepsIDsContiguous(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	fragment := `{"experiment_id":4,"design_id":"D0004","algorithm":"evolution","seed":7,"score":0.3,"params":{},"terms":{},"metrics":{},"ta`
-	// No trailing newline: exactly what a write cut short leaves behind.
+	// 没有结尾换行: 这正是写入被截短后留下的样子。
 	writeLines(t, path, []string{
 		rawRecordLine(t, 1, "D0001", "human_baseline", -0.29),
 		rawRecordLine(t, 2, "D0002", "random", 0.10),
@@ -363,7 +363,7 @@ func TestOpenRepairsATruncatedTailThenKeepsIDsContiguous(t *testing.T) {
 		t.Fatalf("Check after repair: %v", problems)
 	}
 
-	// The fragment must be gone, not glued to: the next record has to be readable.
+	// 残片必须消失, 而不是被粘上: 下一条 record 必须可读。
 	rec, err := reg.AppendAssign(recordFixture(0.3, "evolution"))
 	if err != nil {
 		t.Fatalf("AppendAssign after repair: %v", err)
@@ -396,15 +396,14 @@ func TestOpenRepairsATruncatedTailThenKeepsIDsContiguous(t *testing.T) {
 	}
 }
 
-// TestOpenFixesAMissingTrailingNewline covers the other half of the same hazard:
-// a complete last record without its newline would otherwise have the next
-// record appended onto it.
+// TestOpenFixesAMissingTrailingNewline 覆盖同一个隐患的另一半: 一条完整但缺少
+// 换行的最后 record, 否则下一条 record 会被追加到它上面。
 func TestOpenFixesAMissingTrailingNewline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.jsonl")
 	writeLines(t, path, []string{
 		rawRecordLine(t, 1, "D0001", "human_baseline", -0.29),
 		rawRecordLine(t, 2, "D0002", "random", 0.10),
-	}, false) // no trailing '\n'
+	}, false) // 没有结尾换行
 
 	reg, err := Open(path)
 	if err != nil {
@@ -428,8 +427,8 @@ func TestOpenFixesAMissingTrailingNewline(t *testing.T) {
 	}
 }
 
-// TestOpenLeavesAHealthyFileByteIdentical guards against a "repair" that rewrites
-// history it has no business touching.
+// TestOpenLeavesAHealthyFileByteIdentical 防止一种“修复”去重写它本无权触碰的
+// 历史。
 func TestOpenLeavesAHealthyFileByteIdentical(t *testing.T) {
 	reg := openTemp(t)
 	for i := 0; i < 3; i++ {
@@ -486,10 +485,10 @@ func TestReopenCountsExistingRecordsAndContinuesNumberOfIDs(t *testing.T) {
 	}
 }
 
-// TestMissingRequiredKeysGuard covers the defensive guard inside AppendAssign.
-// It is unreachable through Record today (every required key is a non-omitempty
-// field), which is exactly why Check() validates the RAW line instead of a typed
-// decode, and why the guard is a unit-tested function rather than a branch.
+// TestMissingRequiredKeysGuard 覆盖 AppendAssign 内部的防御性守卫。今天经由
+// Record 它是不可达的 (每个必需键都是非 omitempty 字段), 这正是 Check() 校验 RAW
+// 行而非类型化解码的原因, 也是这个守卫是被单元测试覆盖的函数而不是一个分支的
+// 原因。
 func TestMissingRequiredKeysGuard(t *testing.T) {
 	full := `{"experiment_id":1,"design_id":"D0001","algorithm":"random","seed":7,"score":0.1,"params":{},"terms":{},"metrics":{}}`
 	if missing := missingRequiredKeys([]byte(full)); len(missing) != 0 {

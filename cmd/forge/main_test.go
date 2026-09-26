@@ -16,14 +16,12 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/search"
 )
 
-// These tests cover the wiring itself: the frozen schema accessors the CLI
-// compares through, the parsing helpers, the tolerance rule of the golden gates
-// and the record the CLI writes into the registry. None of them evaluates
-// physics or search, so they stay green while other stages are still skeletons.
+// 这些测试覆盖接线本身: CLI 用来比较的冻结 schema 访问器、解析辅助函数、golden 门
+// 的容差规则, 以及 CLI 写进 registry 的那条 record。它们都不求值 physics 或 search,
+// 因此在其他 stage 仍是骨架时也能保持绿色。
 
-// TestMetricAccessorCoversFrozenKeys is a schema-drift guard: the metric keys the
-// CLI compares and prints must cover the frozen physics.Metrics JSON tags and the
-// frozen observation keys of rlenv.
+// TestMetricAccessorCoversFrozenKeys 是一道 schema 漂移守卫: CLI 用来比较和打印的
+// metric 键必须覆盖冻结的 physics.Metrics JSON tag 以及 rlenv 冻结的观测键。
 func TestMetricAccessorCoversFrozenKeys(t *testing.T) {
 	spec := config.DefaultSpec()
 	m := physics.Metrics{
@@ -62,21 +60,20 @@ func TestMetricAccessorCoversFrozenKeys(t *testing.T) {
 			t.Errorf("CLI accessor table lists %q which is not a physics.Metrics JSON field", k)
 		}
 	}
-	// The observation keys rlenv appends must be printable too.
+	// rlenv 追加的观测键也必须可打印。
 	for _, k := range rlenv.ObsMetricKeys {
 		if _, ok := metricValue(m, k); !ok {
 			t.Errorf("rlenv observation key %q is not covered by metricValue", k)
 		}
 	}
-	// The bool metric must survive the float encoding used in the golden file.
+	// 那个 bool metric 必须挺过 golden 文件所用的 float 编码。
 	if v, _ := metricValue(m, "coil_proximity_floor_hit"); v != 1 {
 		t.Errorf("coil_proximity_floor_hit = %v, want 1 for true", v)
 	}
 }
 
-// TestRelDiffZeroGoldenRule documents the comparison rule of the golden gates:
-// relative for values of real size, absolute for values that are zero by
-// construction (a relative comparison against 0 is undefined, not strict).
+// TestRelDiffZeroGoldenRule 记录 golden 门的比较规则: 对真有量级的值用相对, 对按
+// 构造为零的值用绝对 (与 0 做相对比较不是严格, 而是未定义)。
 func TestRelDiffZeroGoldenRule(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -102,7 +99,7 @@ func TestRelDiffZeroGoldenRule(t *testing.T) {
 	}
 }
 
-// TestSplitListAndInts covers the flag-value parsing the CLI relies on.
+// TestSplitListAndInts 覆盖 CLI 依赖的 flag 值解析。
 func TestSplitListAndInts(t *testing.T) {
 	got := splitList(" random , lhs ,, evolution ")
 	want := []string{"random", "lhs", "evolution"}
@@ -124,9 +121,8 @@ func TestSplitListAndInts(t *testing.T) {
 	}
 }
 
-// TestFindFileSearchesUpward proves the golden-path resolution works from a
-// package subdirectory (cmd/forge) and that a missing file is an error, not an
-// empty comparison.
+// TestFindFileSearchesUpward 证明 golden 路径解析从一个包子目录 (cmd/forge) 也能
+// 工作, 且文件缺失是一个错误, 而不是一次空比较。
 func TestFindFileSearchesUpward(t *testing.T) {
 	path, err := findFile(goldenBaseline)
 	if err != nil {
@@ -140,9 +136,8 @@ func TestFindFileSearchesUpward(t *testing.T) {
 	}
 }
 
-// TestBaselineRecordShape checks the record the CLI writes: the design vector is
-// split per coil, and every registry required field is present in the JSON that
-// reaches the registry (the schema-parity gate's Go half).
+// TestBaselineRecordShape 检查 CLI 写出的 record: design 向量按线圈拆分, 且到达
+// registry 的 JSON 中包含每一个 registry 必需字段 (schema-parity 门的 Go 那一半)。
 func TestBaselineRecordShape(t *testing.T) {
 	spec := config.DefaultSpec()
 	k := spec.NCoils
@@ -196,10 +191,9 @@ func TestBaselineRecordShape(t *testing.T) {
 	}
 }
 
-// TestXcheckSchemaMatchesGolden is the schema half of the oracle hand-off: the
-// JSON keys of the exported field samples must be exactly the keys of
-// testdata/golden_field_samples.json, otherwise python/aux/oracle.py cannot
-// recompute them (acceptance gate G5).
+// TestXcheckSchemaMatchesGolden 是交给 oracle 的交接中的 schema 那一半: 导出的场
+// 采样的 JSON 键必须与 testdata/golden_field_samples.json 的键完全一致, 否则
+// python/aux/oracle.py 无法重算它们 (验收门 G5)。
 func TestXcheckSchemaMatchesGolden(t *testing.T) {
 	path, err := findFile(goldenSamples)
 	if err != nil {
@@ -251,8 +245,7 @@ func TestXcheckSchemaMatchesGolden(t *testing.T) {
 		}
 	}
 
-	// Same point budget as the anchor file, so the two exports are comparable
-	// row by row.
+	// 与锚点文件相同的点数预算, 这样两份导出可以逐行对比。
 	ptsR, ptsZ := xcheckPoints()
 	if len(ptsR) != len(ptsZ) {
 		t.Fatalf("xcheck points: %d r vs %d z", len(ptsR), len(ptsZ))
@@ -268,8 +261,8 @@ func TestXcheckSchemaMatchesGolden(t *testing.T) {
 	}
 }
 
-// metricsFromGolden maps the golden metrics object onto physics.Metrics, so the
-// comparison functions can be fed the anchor values themselves.
+// metricsFromGolden 把 golden 的 metrics 对象映射到 physics.Metrics, 这样比较函数
+// 可以直接被喂入锚点值本身。
 func metricsFromGolden(m map[string]float64) physics.Metrics {
 	return physics.Metrics{
 		BMidT: m["B_mid_T"], BThroatT: m["B_throat_T"], ZThroatM: m["z_throat_m"],
@@ -280,11 +273,9 @@ func metricsFromGolden(m map[string]float64) physics.Metrics {
 	}
 }
 
-// TestGoldenComparisonIsGreenOnGoldenAndRedOnDeviation feeds the golden values
-// themselves through the comparison the acceptance gate uses: it must be green,
-// and it must go red as soon as the score or a metric is off by more than the
-// contract's tolerance. (A gate that cannot go red is not a gate — and this is
-// the split-out comparison, so it needs no physics to run.)
+// TestGoldenComparisonIsGreenOnGoldenAndRedOnDeviation 把 golden 值本身喂进验收门
+// 使用的比较: 它必须是绿的, 并且一旦 score 或某个 metric 的偏差超过合同容差就必须
+// 变红。(不会变红的门不是门 —— 而这里是拆出来的比较, 运行它不需要 physics。)
 func TestGoldenComparisonIsGreenOnGoldenAndRedOnDeviation(t *testing.T) {
 	st := &verifyState{}
 	if _, err := st.loadGolden(); err != nil {
@@ -309,19 +300,19 @@ func TestGoldenComparisonIsGreenOnGoldenAndRedOnDeviation(t *testing.T) {
 		t.Fatalf("metric comparison rejected the golden metrics themselves: %v", err)
 	}
 
-	// 1e-4 off on the score must be red.
+	// score 上偏离 1e-4 必须变红。
 	badScore := exact
 	badScore.Score += 1e-4
 	if _, err := compareBaselineEval(badScore, st.gold); err == nil {
 		t.Error("score comparison stayed green on a 1e-4 deviation")
 	}
-	// A missing term must be red, not silently skipped.
+	// 缺失的项必须变红, 而不是被悄悄跳过。
 	badTerms := exact
 	badTerms.Terms = map[string]float64{}
 	if _, err := compareBaselineEval(badTerms, st.gold); err == nil {
 		t.Error("term comparison stayed green with every term missing")
 	}
-	// A 1e-3 relative deviation on a metric of real size must be red.
+	// 真有量级的 metric 上 1e-3 的相对偏差必须变红。
 	if _, ok := st.gold.Metrics["B_throat_T"]; !ok {
 		t.Fatal("golden metrics lost B_throat_T")
 	}
@@ -333,8 +324,8 @@ func TestGoldenComparisonIsGreenOnGoldenAndRedOnDeviation(t *testing.T) {
 	if _, err := compareBaselineMetrics(metricsFromGolden(bad), st.gold.Metrics); err == nil {
 		t.Error("metric comparison stayed green on a 1e-3 relative deviation")
 	}
-	// A metric that the golden file pins at zero is compared absolutely: 1e-3
-	// counts as a real deviation, not as "relative to nothing".
+	// golden 文件中钉为零的 metric 按绝对比较: 1e-3 算作真实偏差, 而不是“相对于
+	// 虚无”。
 	if st.gold.Metrics["ripple"] != 0 {
 		t.Fatalf("this test assumes the golden ripple is 0, got %v", st.gold.Metrics["ripple"])
 	}
@@ -344,8 +335,8 @@ func TestGoldenComparisonIsGreenOnGoldenAndRedOnDeviation(t *testing.T) {
 	}
 }
 
-// TestParseFlagsExitCodes pins the CLI's exit-code contract: --help is success,
-// a bad flag or a stray positional argument is a usage error.
+// TestParseFlagsExitCodes 钉住 CLI 的退出码契约: --help 是成功, 坏 flag 或多出的
+// 位置参数是用法错误。
 func TestParseFlagsExitCodes(t *testing.T) {
 	fs := newFlagSet("t", "t", "test flag set")
 	_ = fs.Bool("check", true, "a bool flag")
@@ -367,9 +358,9 @@ func TestParseFlagsExitCodes(t *testing.T) {
 	}
 }
 
-// TestWarmStartIsOnlyInjectedForTheWarmMethod guards the cold-vs-warm
-// comparison: 'forge run --method evolution' must run the cold variant, or the
-// measured "value of inherited design knowledge" would be zero by construction.
+// TestWarmStartIsOnlyInjectedForTheWarmMethod 守护冷热对比:
+// 'forge run --method evolution' 必须跑冷变体, 否则所测的“继承 design 知识之价值”
+// 会按构造为零。
 func TestWarmStartIsOnlyInjectedForTheWarmMethod(t *testing.T) {
 	spec := config.DefaultSpec()
 	warm := make([]float64, spec.NParams())
@@ -401,16 +392,15 @@ func TestWarmStartIsOnlyInjectedForTheWarmMethod(t *testing.T) {
 		}
 	}
 
-	// The decision must follow the frozen algorithm name, not a literal.
+	// 这个决定必须跟随冻结的 algorithm 名称, 而不是一个字面量。
 	opt := runOptions(spec, search.AlgorithmEvolution, 0, 10, 1, 0, warm)
 	if opt.WarmStart != nil {
 		t.Errorf("evolution got a warm start: %v", opt.WarmStart)
 	}
 }
 
-// TestVersionCommandRuns is the cheapest smoke test of the wiring: 'forge
-// version' touches config, rlenv, registry and search without evaluating
-// anything.
+// TestVersionCommandRuns 是最廉价的一次接线冒烟测试: 'forge version' 会触碰
+// config、rlenv、registry 与 search, 但不求值任何东西。
 func TestVersionCommandRuns(t *testing.T) {
 	if code := cmdVersion(nil); code != 0 {
 		t.Fatalf("cmdVersion = %d, want 0", code)

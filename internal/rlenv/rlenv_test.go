@@ -17,16 +17,15 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// A toy scorer: deterministic, self-contained, independent of every other
-// stage. Only config (the frozen spec/bounds) and the frozen EvalResult /
-// Metrics types are touched, so these tests stay green while the physics,
-// objective and registry packages are still skeletons.
+// 一个玩具 scorer: 确定、自包含、独立于其他所有 stage。它只触碰 config (冻结的
+// spec/bounds) 与冻结的 EvalResult / Metrics 类型, 因此当 physics、objective 和
+// registry 包仍是骨架时这些测试也能保持绿色。
 // ---------------------------------------------------------------------------
 
 type toyScorer struct {
 	spec config.Spec
 
-	// observation bookkeeping, used to verify provenance and lineage
+	// 记录观测用的台账, 用来验证来源信息与 lineage
 	calls     int
 	designs   []string // design_id handed out, in order
 	parents   []string // meta.Parent received, in order
@@ -34,15 +33,14 @@ type toyScorer struct {
 	seeds     []int
 	evalIdx   []int
 	gens      []int
-	lastEval  []float64 // the raw vector as evaluated (after any canonicalisation)
+	lastEval  []float64 // 被求值时的原始向量 (经过任何规范化之后)
 	gotDesign bool
-	// nonFinite makes the scorer return math.NaN to exercise the loud-failure path
+	// nonFinite 让 scorer 返回 math.NaN, 以演练大声失败的路径
 	nonFinite bool
 }
 
-// toyScore is a pure function of the design vector — no counters, no state — so
-// that a reward sequence can be telescoped independently of the environment's
-// own bookkeeping.
+// toyScore 是 design 向量的纯函数 —— 没有计数器, 没有状态 —— 这样 reward 序列
+// 可以独立于环境自己的台账做望远镜式求和。
 func toyScore(spec config.Spec, x []float64) float64 {
 	lo, hi := spec.Lower(), spec.Upper()
 	if len(x) != len(lo) {
@@ -55,8 +53,7 @@ func toyScore(spec config.Spec, x []float64) float64 {
 		d := (v - target) / span
 		s -= d * d
 	}
-	// A smooth coupling so the surface is not separable (a policy cannot win by
-	// tuning one coordinate at a time).
+	// 一个平滑的耦合项, 使曲面不可分离 (policy 无法靠一次调一个坐标取胜)。
 	s -= 0.25 * math.Sin(4*math.Pi*(x[0]-lo[0])/hi[0])
 	return s
 }
@@ -122,7 +119,7 @@ func (t *toyScorer) Score(x []float64, meta runner.Meta) objective.EvalResult {
 
 func newToy(spec config.Spec) *toyScorer { return &toyScorer{spec: spec} }
 
-// midDesign returns a deterministic in-box starting design.
+// midDesign 返回一个确定的、位于盒内的起始 design。
 func midDesign(spec config.Spec) []float64 {
 	lo, hi := spec.Lower(), spec.Upper()
 	x := make([]float64, len(lo))
@@ -133,12 +130,11 @@ func midDesign(spec config.Spec) []float64 {
 }
 
 // ---------------------------------------------------------------------------
-// G10 — the anti-fabrication gate.
+// G10 —— 反造假门。
 // ---------------------------------------------------------------------------
 
-// TestNoLearnedPolicy is acceptance gate G10: the repository has no learned
-// policy, so LoadPolicy must fail for every input instead of returning a
-// fabricated number. A file that exists is still not a policy.
+// TestNoLearnedPolicy 是验收门 G10: 本仓库没有学到的 policy, 因此 LoadPolicy 对
+// 任何输入都必须失败, 而不是返回一个编造的数字。一个存在着的文件仍然不是 policy。
 func TestNoLearnedPolicy(t *testing.T) {
 	paths := []string{
 		"", "policy.json", "checkpoints/ppo.bin", "/nonexistent/path/policy.joblib",
@@ -153,8 +149,8 @@ func TestNoLearnedPolicy(t *testing.T) {
 		}
 	}
 
-	// Even a real, readable file must not be accepted: if LoadPolicy ever starts
-	// reading a file it also has to start proving what is in it.
+	// 即使是真实、可读的文件也不能被接受: 如果 LoadPolicy 有朝一日开始读文件, 它
+	// 也必须有朝一日开始证明文件里是什么。
 	dir := t.TempDir()
 	f := filepath.Join(dir, "plausible_policy.json")
 	if werr := os.WriteFile(f, []byte(`{"weights":[1,2,3],"score":-1.234}`), 0o644); werr != nil {
@@ -164,20 +160,18 @@ func TestNoLearnedPolicy(t *testing.T) {
 		t.Fatalf("LoadPolicy(%q) on an existing file = %v, want ErrNoLearnedPolicy", f, err)
 	}
 
-	// The error must be self-explaining, not a bare "not implemented".
+	// 这个错误必须能自我解释, 而不是一句光秃秃的 "not implemented"。
 	if msg := ErrNoLearnedPolicy.Error(); !strings.Contains(msg, "Phase 1") {
 		t.Errorf("ErrNoLearnedPolicy message should name Phase 1, got %q", msg)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// reward = score(after) - score(before), checked against an independent
-// evaluation of the first and final designs.
+// reward = score(之后) - score(之前), 对照对首个与最终 design 的独立求值来检查。
 // ---------------------------------------------------------------------------
 
-// TestRewardTelescopes asserts the episode return equals
-// score(final) - score(initial) to 1e-9, with score() recomputed outside the
-// environment from the same deterministic scorer.
+// TestRewardTelescopes 断言 episode 的 return 等于 score(最终) - score(初始),
+// 误差在 1e-9 以内, 且 score() 是在环境之外用同一个确定 scorer 重新算出来的。
 func TestRewardTelescopes(t *testing.T) {
 	spec := config.DefaultSpec()
 	sc := newToy(spec)
@@ -221,8 +215,8 @@ func TestRewardTelescopes(t *testing.T) {
 		sum += reward
 	}
 
-	// The episode must actually move: a "reward telescopes" test that passes on a
-	// frozen design proves nothing.
+	// episode 必须真的在移动: 一个在冻结 design 上也能通过的“reward 望远镜式
+	// 求和”测试证明不了任何东西。
 	if moved == 0 {
 		t.Fatal("no step changed the design: the action had no effect on the state")
 	}
@@ -253,12 +247,12 @@ func TestRewardTelescopes(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Shapes, bounds, and clipping.
+// 形状、边界与裁剪。
 // ---------------------------------------------------------------------------
 
-// TestActionSemantics pins what an action does: a normalised delta of exactly
-// DeltaScale*(upper-lower) per parameter, clipped to [-1,1] in action space and
-// to the box in design space, with the reward of the moved design.
+// TestActionSemantics 钉住一个动作做了什么: 每个参数精确地是
+// DeltaScale*(upper-lower) 的归一化增量, 在动作空间裁剪到 [-1,1]、在 design 空间
+// 裁剪到盒子, 以及移动后 design 的 reward。
 func TestActionSemantics(t *testing.T) {
 	spec := config.DefaultSpec()
 	sc := newToy(spec)
@@ -266,7 +260,7 @@ func TestActionSemantics(t *testing.T) {
 	const scale = 0.15
 
 	env := NewEnv(sc, spec, 4, scale)
-	x0 := midDesign(spec) // box centre: a +1 action cannot be clipped
+	x0 := midDesign(spec) // 盒子中心: +1 的动作不会被裁剪
 	env.Reset(x0)
 
 	action := make([]float64, env.ActionDim())
@@ -281,7 +275,7 @@ func TestActionSemantics(t *testing.T) {
 			t.Fatalf("parameter %d after a +1 action = %v, want %v (span %v)",
 				i, sc.lastEval[i], want, hi[i]-lo[i])
 		}
-		// 2*scale in normalised observation units, since the box centre is 0
+		// 因为盒子中心是 0, 归一化观测单位下是 2*scale
 		wantObs := 2 * scale
 		if math.Abs(obs[i]-wantObs) > 1e-12 {
 			t.Fatalf("normalised slot %d after a +1 action = %v, want %v", i, obs[i], wantObs)
@@ -295,14 +289,14 @@ func TestActionSemantics(t *testing.T) {
 		t.Fatal("a design-changing action returned reward 0")
 	}
 
-	// An out-of-range action must behave exactly like the clipped one (the delta
-	// is bounded by DeltaScale, not by the caller's idea of magnitude).
+	// 越界动作的行为必须与裁剪后的完全一致 (增量由 DeltaScale 限制, 而不是由
+	// 调用方对量级的想法决定)。
 	for i := range action {
 		action[i] = 1e9
 	}
 	obsHuge, rewardHuge, _, _, _ := env.Step(action)
 	for i := range x0 {
-		want := midDesign(spec)[i] + 2*scale*(hi[i]-lo[i]) // two +1 steps from centre
+		want := midDesign(spec)[i] + 2*scale*(hi[i]-lo[i]) // 从中心出发两步 +1
 		if math.Abs(sc.lastEval[i]-want) > 1e-12 {
 			t.Fatalf("parameter %d after a +1e9 action = %v, want %v (clip to +1)", i, sc.lastEval[i], want)
 		}
@@ -315,8 +309,8 @@ func TestActionSemantics(t *testing.T) {
 	}
 }
 
-// TestObsDimAndBounds checks shapes, the normalised design mapping, metric-slot
-// scaling and the invariant that no action can push a design out of the box.
+// TestObsDimAndBounds 检查形状、归一化 design 映射、metric 槽位缩放, 以及“没有
+// 动作能把 design 推出盒子”这一不变量。
 func TestObsDimAndBounds(t *testing.T) {
 	spec := config.DefaultSpec()
 	sc := newToy(spec)
@@ -349,7 +343,7 @@ func TestObsDimAndBounds(t *testing.T) {
 				t.Fatalf("%s: metric slot %q = %v is not finite", tag, ObsMetricKeys[i-dim], obs[i])
 			}
 		}
-		// the evaluated design must always sit inside the spec box
+		// 被求值的 design 必须始终落在 spec 盒子之内
 		for i, v := range sc.lastEval {
 			if v < lo[i]-1e-9 || v > hi[i]+1e-9 {
 				t.Fatalf("%s: evaluated parameter %d = %v outside [%v, %v]", tag, i, v, lo[i], hi[i])
@@ -357,7 +351,7 @@ func TestObsDimAndBounds(t *testing.T) {
 		}
 	}
 
-	// A wildly out-of-box start design must be clipped, not accepted.
+	// 一个远远在盒子外的起始 design 必须被裁剪, 而不是被接受。
 	wild := make([]float64, dim)
 	for i := range wild {
 		if i%2 == 0 {
@@ -374,7 +368,7 @@ func TestObsDimAndBounds(t *testing.T) {
 		}
 	}
 
-	// Extreme actions must never leave the box either.
+	// 极端动作同样绝不能离开盒子。
 	rng := rand.New(rand.NewSource(7))
 	action := make([]float64, dim)
 	for step := 0; step < 40; step++ {
@@ -392,15 +386,15 @@ func TestObsDimAndBounds(t *testing.T) {
 		checkObs(fmt.Sprintf("step(%d)", step), obs)
 	}
 
-	// The normalised design slots must map back to the state the scorer saw:
-	// obs[i] = 2*(x-lo)/(hi-lo) - 1.
+	// 归一化 design 槽位必须能映射回 scorer 看到的状态:
+	// obs[i] = 2*(x-lo)/(hi-lo) - 1。
 	for i := 0; i < dim; i++ {
 		want := 2*(sc.lastEval[i]-lo[i])/(hi[i]-lo[i]) - 1
 		if math.Abs(obs[i]-want) > 1e-12 {
 			t.Fatalf("obs slot %d = %v, want %v (normalised design mapping)", i, obs[i], want)
 		}
 	}
-	// Spot-check two metric slots against their reference scaling.
+	// 抽查两个 metric 槽位相对其参考缩放的取值。
 	m := toyMetrics(spec, sc.lastEval)
 	wantMid := m.BMidT / ObsMetricRefs[0]
 	if math.Abs(obs[dim]-wantMid) > 1e-12 {
@@ -412,9 +406,8 @@ func TestObsDimAndBounds(t *testing.T) {
 	}
 }
 
-// TestActionShapeAndTerminationAreLoud documents the failure policy: a
-// malformed action, a Step before Reset, and a non-finite score all fail
-// loudly instead of producing a plausible-looking number.
+// TestActionShapeAndTerminationAreLoud 记录失败策略: 畸形的动作、Reset 之前的
+// Step、以及非有限的 score 都会大声失败, 而不是产出一个看起来合理的数字。
 func TestActionShapeAndTerminationAreLoud(t *testing.T) {
 	spec := config.DefaultSpec()
 
@@ -450,8 +443,8 @@ func TestActionShapeAndTerminationAreLoud(t *testing.T) {
 
 	t.Run("rollout input guards", func(t *testing.T) {
 		env := NewEnv(newToy(spec), spec, 4, 0.15)
-		// A nil environment and a non-positive step count are caller errors, and
-		// must be reported as such rather than silently rolled out as 0 steps.
+		// nil 环境与非正的步数是调用方错误, 必须照此报告, 而不是悄悄按 0 步
+		// rollout。
 		func() {
 			defer func() {
 				if r := recover(); r == nil {
@@ -468,8 +461,7 @@ func TestActionShapeAndTerminationAreLoud(t *testing.T) {
 			}()
 			RandomPolicyRollout(env, 0, 1)
 		}()
-		// The guards run before anything is evaluated, so a 0-step call must not
-		// have touched the scorer.
+		// 守卫在任何求值之前运行, 因此 0 步的调用不得触碰 scorer。
 		if sc := env.Sc.(*toyScorer); sc.calls != 0 {
 			t.Errorf("the rejected rollout spent %d evaluations", sc.calls)
 		}
@@ -517,12 +509,11 @@ func TestActionShapeAndTerminationAreLoud(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Lineage.
+// Lineage。
 // ---------------------------------------------------------------------------
 
-// TestStepFormsLineage asserts that one episode is a connected lineage chain:
-// every step's design names the previous design as its parent, and only the
-// reset design is a root.
+// TestStepFormsLineage 断言一条 episode 是一条连通的 lineage 链: 每一步的 design
+// 都以前一个 design 为父节点, 且只有 reset 时的 design 是根。
 func TestStepFormsLineage(t *testing.T) {
 	spec := config.DefaultSpec()
 	sc := newToy(spec)
@@ -569,8 +560,7 @@ func TestStepFormsLineage(t *testing.T) {
 			t.Fatalf("step %d reported an empty design_id", i)
 		}
 	}
-	// EvalIndex counts evaluations monotonically; Generation counts position in
-	// the episode.
+	// EvalIndex 单调地计数求值次数; Generation 计数在 episode 中的位置。
 	for i, idx := range sc.evalIdx {
 		if idx != i {
 			t.Fatalf("evaluation %d carried EvalIndex %d, want %d", i, idx, i)
@@ -586,8 +576,8 @@ func TestStepFormsLineage(t *testing.T) {
 			t.Fatalf("evaluation %d carried Algorithm %q, want %q", i, a, algorithmEnv)
 		}
 	}
-	// Two episodes in a row: the second reset is a new root, and EvalIndex keeps
-	// counting (the registry's evaluation counter does not restart).
+	// 连续两条 episode: 第二次 reset 是一个新的根, 且 EvalIndex 继续计数
+	// (registry 的求值计数器不重启)。
 	firstEpisodeEvals := sc.calls
 	env.Reset(midDesign(spec))
 	if got := sc.parents[len(sc.parents)-1]; got != "" {
@@ -601,8 +591,8 @@ func TestStepFormsLineage(t *testing.T) {
 	}
 }
 
-// TestEnsureFillsDefaults checks that a keyed struct literal without NewEnv is
-// still usable (and that defaults are the documented ones).
+// TestEnsureFillsDefaults 检查不经 NewEnv 的带键 struct 字面量仍然可用 (并且默认
+// 值就是被文档化的那些)。
 func TestEnsureFillsDefaults(t *testing.T) {
 	spec := config.DefaultSpec()
 	env := &Env{Sc: newToy(spec), Spec: spec}

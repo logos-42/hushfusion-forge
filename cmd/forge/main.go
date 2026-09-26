@@ -1,20 +1,20 @@
-// Command forge is the single entry point of the HUSHFUSION Forge engine.
+// Command forge 是 HUSHFUSION Forge 引擎的唯一入口。
 //
-// It is the *wiring* owner: every other package is reachable from here and
-// nothing else is. The commands map onto the acceptance gates in CONTRACT.md:
+// 它是*接线*的负责人: 其他每个包都从这里可达, 别处则无路可达。这些命令对应
+// CONTRACT.md 中的验收门:
 //
-//	baseline    the human the machine is asked to beat, with all its raw terms
-//	verify      end-to-end integration gate (G4/G5/G8/G10 inputs, one PASS/FAIL table)
-//	xcheck      Br/Bz/|B| export for the independent Python oracle (G5 input)
-//	run         one algorithm, one seed, one budget, through the registry (G7)
-//	benchmark   equal-budget comparison across methods and seeds
-//	rules       mine replicated design rules out of a registry
-//	report      render the Chinese run report, honest-limits section included
-//	registry    inspect a registry and check its integrity (G8)
-//	version     version, spec shape and the frozen schema facts
+//	baseline    机器被要求超越的那个人, 连同它全部的原始项
+//	verify      端到端集成门 (G4/G5/G8/G10 的输入, 一张 PASS/FAIL 表)
+//	xcheck      为独立的 Python oracle 导出 Br/Bz/|B| (G5 输入)
+//	run         一种算法、一个 seed、一份预算, 经过 registry (G7)
+//	benchmark   跨方法与跨 seed 的等预算对比
+//	rules       从 registry 中挖掘可复现的 design 规则
+//	report      渲染中文运行报告, 含诚实边界章节
+//	registry    检视一个 registry 并检查其完整性 (G8)
+//	version     版本、spec 形状与冻结的 schema 事实
 //
-// Exit codes: 0 success, 1 a check failed / a package reported an error,
-// 2 bad usage. --help on any command exits 0.
+// 退出码: 0 成功, 1 某项检查失败 / 某个包报了错, 2 用法错误。任何命令上的 --help
+// 都以 0 退出。
 package main
 
 import (
@@ -43,21 +43,19 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/search"
 )
 
-// Version is the engine version (v0.1 interface freeze).
+// Version 是引擎版本 (v0.1 接口冻结)。
 const Version = "0.1.0"
 
-// buildCommit is injected at build time:
+// buildCommit 在构建时注入:
 //
 //	go build -ldflags "-X main.buildCommit=$(git rev-parse HEAD)" ./cmd/forge
 //
-// The Go standard library here cannot shell out to git (no os/exec in this
-// build's dependency set), so when nothing is injected and FORGE_GIT_COMMIT is
-// unset we print "unknown" instead of guessing a commit.
+// 这里的 Go 标准库无法调起 git (本次构建的依赖集中没有 os/exec), 因此在没有注入、
+// 且 FORGE_GIT_COMMIT 未设置时, 我们打印 "unknown", 而不是猜一个 commit。
 var buildCommit = ""
 
-// Repo-relative defaults. Paths are resolved from the working directory, with an
-// upward search for the golden test data (see findFile) so that running from a
-// subdirectory does not silently compare against nothing.
+// 相对仓库的默认值。路径从工作目录解析, 并对 golden 测试数据做向上搜索 (见
+// findFile), 这样在子目录里运行时不会悄悄拿空值做比较。
 const (
 	defTag         = "phase0"
 	defRunDir      = "runs/phase0"
@@ -72,15 +70,15 @@ const (
 	solverName     = "analytic-vacuum-loops"
 )
 
-// Tolerances fixed by CONTRACT.md §5. Loosening these would be falsifying the
-// acceptance criterion itself, so they are named constants and never flags.
+// 由 CONTRACT.md §5 固定的容差。放宽它们等于篡改验收标准本身, 因此它们是具名
+// 常量, 永远不是 flag。
 const (
 	tolScore   = 1e-6 // |score - golden_score|
-	tolMetrics = 1e-6 // relative, per metric
-	tolTerms   = 1e-6 // absolute, per raw score term (see compareBaselineEval)
-	tolField   = 1e-9 // relative, per |B| field sample (the contract's criterion)
-	tolComp    = 1e-6 // relative, per Br/Bz component (see compareFieldSeries)
-	tolSolvers = 1e-9 // relative, analytic vs discrete Biot–Savart
+	tolMetrics = 1e-6 // 相对, 每个 metric
+	tolTerms   = 1e-6 // 绝对, 每个原始 score 项 (见 compareBaselineEval)
+	tolField   = 1e-9 // 相对, 每个 |B| 场采样点 (合同的标准)
+	tolComp    = 1e-6 // 相对, 每个 Br/Bz 分量 (见 compareFieldSeries)
+	tolSolvers = 1e-9 // 相对, analytic vs discrete Biot–Savart
 )
 
 var allMethods = []string{"random", "lhs", "evolution", "evolution_warm"}
@@ -145,7 +143,7 @@ environment: FORGE_GIT_COMMIT overrides the commit reported by 'forge version'.
 }
 
 // ---------------------------------------------------------------------------
-// flag plumbing
+// flag 管道
 // ---------------------------------------------------------------------------
 
 func newFlagSet(name, synopsis, blurb string) *flag.FlagSet {
@@ -158,8 +156,8 @@ func newFlagSet(name, synopsis, blurb string) *flag.FlagSet {
 	return fs
 }
 
-// parseFlags returns -1 when the caller should continue, or the process exit
-// code (0 for --help, 2 for a parse error or stray positional argument).
+// parseFlags 在调用方应继续时返回 -1, 否则返回进程退出码 (--help 为 0, 解析错误
+// 或多余的位置参数为 2)。
 func parseFlags(fs *flag.FlagSet, args []string) int {
 	err := fs.Parse(args)
 	if err == nil {
@@ -184,14 +182,13 @@ func fail(format string, args ...any) int {
 func note(format string, args ...any) { fmt.Printf(format+"\n", args...) }
 
 // ---------------------------------------------------------------------------
-// shared helpers
+// 共享辅助函数
 // ---------------------------------------------------------------------------
 
 func defaultSpec() config.Spec { return config.DefaultSpec() }
 
-// analyticEvaluator builds the evaluator over the exact (elliptic-integral)
-// solver, using the human baseline's ohmic cost as the cost reference so that
-// "cost == 1.0" means "as expensive as the human design".
+// analyticEvaluator 基于精确 (椭圆积分) solver 构建求值器, 并以人类 baseline 的
+// 欧姆代价作为 cost 参考, 这样 "cost == 1.0" 就意味着“和人类设计一样贵”。
 func analyticEvaluator(spec config.Spec, costRef float64) *objective.Evaluator {
 	return objective.NewEvaluator(spec, physics.AnalyticSolver{}, costRef, physics.BuildGrids(spec))
 }
@@ -204,8 +201,8 @@ func baselineDesign() (baseline.Baseline, error) {
 	return base, nil
 }
 
-// findFile resolves a repo-relative path, searching upward from the working
-// directory (max 6 levels) so commands still work from a subdirectory.
+// findFile 解析相对仓库的路径, 从工作目录向上搜索 (最多 6 层), 因此命令在子目录
+// 里依然可用。
 func findFile(rel string) (string, error) {
 	if _, err := os.Stat(rel); err == nil {
 		return rel, nil
@@ -282,8 +279,8 @@ func resolveCommit() string {
 	return "unknown"
 }
 
-// splitList parses a comma-separated flag value ("0,1,2" / "random,lhs"),
-// trimming spaces and dropping empty fields.
+// splitList 解析一个逗号分隔的 flag 值 ("0,1,2" / "random,lhs"), 去掉空白并丢弃
+// 空字段。
 func splitList(s string) []string {
 	var out []string
 	for _, part := range strings.Split(s, ",") {
@@ -308,7 +305,7 @@ func splitInts(s string) ([]int, error) {
 }
 
 // ---------------------------------------------------------------------------
-// metrics access (frozen JSON tags; a key missing here is a schema drift bug)
+// metrics 访问 (冻结的 JSON tag; 这里缺一个键就是 schema 漂移 bug)
 // ---------------------------------------------------------------------------
 
 var metricKeys = []string{
@@ -316,7 +313,7 @@ var metricKeys = []string{
 	"ripple", "B_coil_max_T", "min_coil_gap_m", "cost_proxy", "n_coils", "mu0",
 }
 
-// metricBoolKeys are the metrics that are not floats.
+// metricBoolKeys 是非 float 的 metrics。
 var metricBoolKeys = []string{"coil_proximity_floor_hit"}
 
 func metricValue(m physics.Metrics, key string) (float64, bool) {
@@ -352,9 +349,8 @@ func metricValue(m physics.Metrics, key string) (float64, bool) {
 	return 0, false
 }
 
-// relDiff is the comparison used by the golden gates: relative for values of
-// real size, absolute for values that are zero by construction (a relative
-// comparison against 0 would be undefined, not strict).
+// relDiff 是 golden 门使用的比较: 对真有量级的值用相对, 对按构造为零的值用绝对
+// (与 0 做相对比较不是严格, 而是未定义)。
 func relDiff(got, want float64) float64 {
 	den := math.Max(math.Abs(want), 1e-9)
 	if den == 0 {
@@ -432,7 +428,7 @@ func printDesign(design []float64) {
 }
 
 // ---------------------------------------------------------------------------
-// baseline
+// baseline —— 人类 baseline
 // ---------------------------------------------------------------------------
 
 func cmdBaseline(args []string) int {
@@ -509,7 +505,7 @@ func cmdBaseline(args []string) int {
 }
 
 // ---------------------------------------------------------------------------
-// verify — the end-to-end integration gate
+// verify —— 端到端集成门
 // ---------------------------------------------------------------------------
 
 type goldenBaselineFile struct {
@@ -548,9 +544,8 @@ type gate struct {
 	msg  string
 }
 
-// runGate runs one gate, converting a panic from a not-yet-implemented stage
-// into a FAIL row instead of a stack trace: the point of the gate is to say
-// which stage is missing, loudly, not to crash the reviewer's terminal.
+// runGate 运行一道门, 把尚未实现的 stage 抛出的 panic 转成一行 FAIL 而不是一个
+// 栈回溯: 门的意义是大声说出缺哪个 stage, 而不是把评审者的终端搞崩。
 func runGate(name string, fn func() (string, error)) (g gate) {
 	g.name = name
 	defer func() {
@@ -578,8 +573,8 @@ type verifyState struct {
 	samples goldenSamplesFile
 	specKey map[string]any
 
-	// fieldGotBr keeps the computed Br series per golden sample index, so the
-	// gate's message can quote the actual number behind its worst deviation.
+	// fieldGotBr 按 golden 采样下标保存算出的 Br 序列, 这样门的消息可以引用它最差
+	// 偏差背后的真实数字。
 	fieldGotBr map[int][]float64
 }
 
@@ -672,8 +667,8 @@ func (st *verifyState) loadGolden() (string, error) {
 		st.gold.Score, len(st.samples.Samples), specKeys), nil
 }
 
-// keySetsMatch compares nested key sets; every golden key must exist on the Go
-// side (a missing key is a schema break in either direction).
+// keySetsMatch 比较嵌套的键集合; 每个 golden 键都必须在 Go 侧存在 (任一方向缺键
+// 都是 schema 破坏)。
 func keySetsMatch(golden, goMap map[string]any, label string) error {
 	for _, k := range sortedKeys(golden) {
 		if _, ok := goMap[k]; !ok {
@@ -689,8 +684,8 @@ func keySetsMatch(golden, goMap map[string]any, label string) error {
 }
 
 func (st *verifyState) gateSpecParity() (string, error) {
-	// testdata/golden_spec.json is {"provenance": {...}, "spec": {...}}; the
-	// parity gate is about the spec object itself.
+	// testdata/golden_spec.json 是 {"provenance": {...}, "spec": {...}}; parity 门
+	// 关心的是 spec 对象本身。
 	goldenSpec, ok := st.specKey["spec"].(map[string]any)
 	if !ok {
 		return "", errors.New(`golden spec has no "spec" object`)
@@ -731,7 +726,7 @@ func (st *verifyState) gateBaselineSolve() (string, error) {
 		return "", fmt.Errorf("baseline cost reference must be positive, got %v", base.Cost)
 	}
 	st.base = base
-	// cost_ref in the golden file is the baseline's own ohmic cost.
+	// golden 文件里的 cost_ref 是 baseline 自身的欧姆代价。
 	if st.gold.CostRef > 0 {
 		if d := relDiff(base.Cost, st.gold.CostRef); d > tolMetrics {
 			return "", fmt.Errorf("baseline cost %v vs golden cost_ref %v (rel diff %.3g > %v)",
@@ -742,17 +737,15 @@ func (st *verifyState) gateBaselineSolve() (string, error) {
 		relDiff(base.Cost, st.gold.CostRef)), nil
 }
 
-// compareBaselineEval is the golden comparison itself, split out from the gate
-// so that it can be tested (and made to go red) without evaluating anything.
+// compareBaselineEval 就是 golden 比较本身, 从门里拆出来, 这样它可以在不进行任何
+// 求值的情况下被测试 (并被弄红)。
 //
-// Tolerance rule: the composite score is compared absolutely at tolScore (the
-// contract's criterion). Raw terms are compared ABSOLUTELY at tolTerms, not
-// relatively, because log10 terms are ill-conditioned near 1: the field term is
-// log10(B_mid/B_ref) and B_mid is produced by solving a current to ~1e-10
-// relative, so a perfectly correct implementation lands ~3e-11 away from the
-// golden 9.6e-17 value — a 3e-2 relative error in a term whose absolute size is
-// 1e-16. An absolute criterion still catches any real deviation (a 1e-3 term
-// error fails) without reading floating-point noise as a disagreement.
+// 容差规则: 综合 score 在 tolScore 上按绝对比较 (合同的标准)。原始项在 tolTerms 上
+// 按绝对比较而不是相对, 因为 log10 项在接近 1 处病态: field 项是
+// log10(B_mid/B_ref), 而 B_mid 是通过把电流解到约 1e-10 相对精度得到的, 因此一个
+// 完全正确的实现也会落在距 golden 值 9.6e-17 约 3e-11 的位置 —— 在一个绝对量级为
+// 1e-16 的项上, 这是 3e-2 的相对误差。绝对标准仍然能抓住任何真实偏差 (项误差 1e-3
+// 就会失败), 而不会把浮点噪声读成不一致。
 func compareBaselineEval(res objective.EvalResult, gold goldenBaselineFile) (string, error) {
 	dScore := math.Abs(res.Score - gold.Score)
 	if dScore > tolScore {
@@ -779,8 +772,8 @@ func compareBaselineEval(res objective.EvalResult, gold goldenBaselineFile) (str
 		res.Score, dScore, worstKey, worst, res.Feasible), nil
 }
 
-// compareBaselineMetrics compares every metric the golden file carries, and
-// fails on a golden metric the Go side does not produce (schema drift).
+// compareBaselineMetrics 比较 golden 文件携带的每个 metric, 并对 Go 侧不产出的
+// golden metric 失败 (schema 漂移)。
 func compareBaselineMetrics(m physics.Metrics, goldenMetrics map[string]float64) (string, error) {
 	got := metricMap(m)
 	worstKey, worst := "", 0.0
@@ -819,22 +812,20 @@ func (st *verifyState) gateGoldenMetrics() (string, error) {
 	return compareBaselineMetrics(st.res.Metrics, st.gold.Metrics)
 }
 
-// fieldDiff is the worst relative deviation found in one design's field series.
+// fieldDiff 是在一个 design 的场序列中发现的最差相对偏差。
 type fieldDiff struct {
 	Mag, Br, Bz         float64
 	MagAt, BrAt, BzAt   int
 	MagSample, BrSample int
 }
 
-// compareFieldSeries compares one design's computed field against its golden
-// series.
+// compareFieldSeries 把一个 design 算出的场与其 golden 序列比较。
 //
-// The contract's 1e-9 criterion is on |B| (AnalyticSolver.Magnitude), and that
-// is what this gate fails on. The Cartesian components are compared at tolComp:
-// B_r vanishes on the axis and is computed there by a difference of nearly equal
-// terms, so near-axis points carry a conditioning floor far above 1e-9 relative
-// — a 1e-8 excursion in Br at r=0.02 m is arithmetic, not a wrong field. A
-// component error of 1e-6 relative does fail, which is what catches a real bug.
+// 合同的 1e-9 标准是针对 |B| (AnalyticSolver.Magnitude) 的, 这道门也正是在它之上
+// 失败。笛卡尔分量在 tolComp 上比较: B_r 在轴上为零, 且在轴上是由几乎相等的项相减
+// 算出的, 因此近轴点带有远高于相对 1e-9 的条件数地板 —— 在 r=0.02 m 处 Br 出现
+// 1e-8 的偏离是算术, 不是场算错。相对 1e-6 的分量误差确实会失败, 那才是抓住真实
+// bug 的判据。
 func compareFieldSeries(s goldenSample, gotMag, gotBr, gotBz []float64) (fieldDiff, error) {
 	var d fieldDiff
 	if len(gotMag) != len(s.BMag) || len(gotBr) != len(s.Br) || len(gotBz) != len(s.Bz) {
@@ -903,9 +894,8 @@ func (st *verifyState) gateGoldenFields() (string, error) {
 	}
 	ws := st.samples.Samples[worst.MagSample]
 	bs := st.samples.Samples[worst.BrSample]
-	// Print the golden value beside the worst component deviation: when the
-	// golden field is exactly zero there (a symmetry point), a "relative"
-	// deviation is really an absolute one of ~1e-17 and should read that way.
+	// 在最差分量偏差旁打印 golden 值: 当 golden 场在那里恰好为零 (一个对称点) 时,
+	// “相对”偏差实际上是一个约 1e-17 的绝对偏差, 也应该那样读。
 	return fmt.Sprintf("%d designs × %d points: max rel |B| %.2g (tol %v) [%s at r=%v z=%v], max rel Br %.2g [%s at r=%v z=%v: %v vs golden %v], Bz %.2g (components tol %v)",
 		len(st.samples.Samples), nPoints, worst.Mag, tolField, ws.DesignName,
 		ws.PointsR[worst.MagAt], ws.PointsZ[worst.MagAt],
@@ -915,9 +905,8 @@ func (st *verifyState) gateGoldenFields() (string, error) {
 }
 
 func (st *verifyState) gateSolvers() (string, error) {
-	// Cross-check the two independent implementations on the anchor points of
-	// the first golden design (far from the conductors, where the discrete sum
-	// converges fastest).
+	// 在第一个 golden design 的锚点上交叉校验两个独立实现 (远离导体之处, 离散求和
+	// 收敛最快)。
 	s := st.samples.Samples[0]
 	coils, err := physics.VectorToCoils(s.Design, st.spec)
 	if err != nil {
@@ -1004,7 +993,7 @@ func (st *verifyState) gateRegistry() (string, error) {
 			len(got.Params.RadiusM), len(got.Params.ZM), len(got.Params.CurrentA), st.spec.NCoils)
 	}
 
-	// A second, child record: lineage integrity must survive the round trip.
+	// 第二条 record 作为子节点: lineage 完整性必须挺过往返。
 	child := rec
 	child.ParentDesign = got.DesignID
 	child.Generation = got.Generation + 1
@@ -1025,7 +1014,7 @@ func (st *verifyState) gateRegistry() (string, error) {
 	return fmt.Sprintf("%d records, ids gap-free from 1, parent link intact, Check() clean", reg.Len()), nil
 }
 
-// baselineRecord turns an evaluated baseline into a registry record.
+// baselineRecord 把一次已求值的 baseline 变成一条 registry record。
 func baselineRecord(res objective.EvalResult, base baseline.Baseline) registry.Record {
 	design := base.Design
 	k := len(design) / 3
@@ -1082,8 +1071,8 @@ func (st *verifyState) gateRLEnvLayout() (string, error) {
 		return "", fmt.Errorf("%d metric keys vs %d refs", len(rlenv.ObsMetricKeys), len(rlenv.ObsMetricRefs))
 	}
 
-	// End-to-end: an episode evaluated through the real runner must land in the
-	// registry as a connected lineage chain (env → runner → registry).
+	// 端到端: 一条经过真实 runner 求值的 episode 必须作为一条连通的 lineage 链落进
+	// registry (env → runner → registry)。
 	if len(st.base.Design) == 0 {
 		return "", errors.New("no baseline design available (earlier gate failed)")
 	}
@@ -1106,7 +1095,7 @@ func (st *verifyState) gateRLEnvLayout() (string, error) {
 	rngState := uint64(12345)
 	for i := 0; i < steps; i++ {
 		for j := range action {
-			// xorshift64: deterministic, no extra imports needed
+			// xorshift64: 确定, 且不需要额外 import
 			rngState ^= rngState << 13
 			rngState ^= rngState >> 7
 			rngState ^= rngState << 17
@@ -1147,7 +1136,7 @@ func (st *verifyState) gateRLEnvLayout() (string, error) {
 		wantAction, wantObs, steps), nil
 }
 
-// nullScorer satisfies runner.Scorer for structural checks that never evaluate.
+// nullScorer 为从不求值的结构性检查满足 runner.Scorer。
 type nullScorer struct{}
 
 func (nullScorer) Score(x []float64, meta runner.Meta) objective.EvalResult {
@@ -1155,11 +1144,11 @@ func (nullScorer) Score(x []float64, meta runner.Meta) objective.EvalResult {
 }
 
 // ---------------------------------------------------------------------------
-// xcheck — the export the Python oracle recomputes independently
+// xcheck —— 供 Python oracle 独立重算的导出
 // ---------------------------------------------------------------------------
 
 type xcheckSample struct {
-	// Field order matches testdata/golden_field_samples.json (alphabetical).
+	// 字段顺序与 testdata/golden_field_samples.json 一致 (按字母序)。
 	BMag       []float64 `json:"b_mag"`
 	Br         []float64 `json:"br"`
 	Bz         []float64 `json:"bz"`
@@ -1174,13 +1163,12 @@ type xcheckFile struct {
 	Samples []xcheckSample `json:"samples"`
 }
 
-// xcheckPoints mirrors the golden sample layout: on-axis points (the r = 0
-// branch of the closed form), near-axis points, stratified interior points and
-// far-field probes well outside the coil box.
+// xcheckPoints 复刻 golden 采样布局: 轴上的点 (闭式解的 r = 0 分支)、近轴点、
+// 分层的内部点, 以及远在线圈盒之外的远场探针。
 func xcheckPoints() (r, z []float64) {
 	r = []float64{0.0, 0.0, 0.0, 0.0, 0.02, 0.05, 0.10, 0.15}
 	z = []float64{0.0, 0.25, 0.75, 1.35, -0.05, 0.0, 0.05, 0.10}
-	// 20 deterministic interior points
+	// 20 个确定的内部点
 	state := uint64(0x5EEDF00D)
 	next := func() float64 {
 		state ^= state << 13
@@ -1192,15 +1180,14 @@ func xcheckPoints() (r, z []float64) {
 		r = append(r, 1.25*next())
 		z = append(z, -1.5+3.0*next())
 	}
-	// far-field probes
+	// 远场探针
 	r = append(r, 0.79, 0.81, 1.19, 1.21)
 	z = append(z, 0.0, 0.3, -0.6, 0.9)
 	return r, z
 }
 
-// designInBox reports whether a design vector starts inside the search box (a
-// design outside it would be clipped by VectorToCoils, i.e. evaluated as a
-// different machine).
+// designInBox 报告一个 design 向量是否一开始就在搜索盒内 (盒外的 design 会被
+// VectorToCoils 裁剪, 即被当作另一台机器来求值)。
 func designInBox(design, lo, hi []float64) bool {
 	for i := range design {
 		if design[i] < lo[i] || design[i] > hi[i] {
@@ -1210,13 +1197,13 @@ func designInBox(design, lo, hi []float64) bool {
 	return true
 }
 
-// probe is one design plus the sample points it was evaluated at.
+// probe 是一个 design 加上它被求值所在的采样点。
 type probe struct {
 	name     string
 	design   []float64
 	ptsR     []float64
 	ptsZ     []float64
-	inBox    bool // whether the design came in as-is (vs clipped to the box)
+	inBox    bool // design 是否原样进来 (相对于被裁剪到盒内)
 	fromGold bool
 }
 
@@ -1277,13 +1264,13 @@ func cmdXcheck(args []string) int {
 		if n >= 2 {
 			pert := append([]float64(nil), gold.Design...)
 			k := spec.NCoils
-			for i := 0; i < k; i++ { // radii +5%
+			for i := 0; i < k; i++ { // 半径 +5%
 				pert[i] *= 1.05
 			}
-			for i := 0; i < k; i++ { // z compressed by 5%
+			for i := 0; i < k; i++ { // z 压缩 5%
 				pert[k+i] *= 0.95
 			}
-			for i := 0; i < k; i++ { // currents +8%
+			for i := 0; i < k; i++ { // 电流 +8%
 				pert[2*k+i] *= 1.08
 			}
 			add("golden_perturbed_r+5%_z-5%_I+8%", pert)
@@ -1363,8 +1350,8 @@ func cmdXcheck(args []string) int {
 		tag := ""
 		switch {
 		case !probes[i].inBox:
-			// VectorToCoils clips to the box: say so, because then the exported
-			// design is not the design as written.
+			// VectorToCoils 会裁剪到盒内: 要说出来, 因为那时导出的 design 并不是写下来的
+			// 那个 design。
 			tag = "OUT OF BOX — evaluated as the clipped design"
 		case probes[i].fromGold:
 			tag = "golden design + golden points (direct 3-way comparison)"
@@ -1383,7 +1370,7 @@ func cmdXcheck(args []string) int {
 }
 
 // ---------------------------------------------------------------------------
-// run / benchmark
+// run / benchmark —— 单次运行与基准测试
 // ---------------------------------------------------------------------------
 
 func cmdRun(args []string) int {
@@ -1437,8 +1424,7 @@ func cmdRun(args []string) int {
 	note("best_design_id=%s", res.BestDesignID)
 	note("best_feasible=%v", res.BestFeasible)
 	note("evals_to_beat=%d", res.EvalsToBeat)
-	// The machine-readable line: 'forge run' twice with the same seed must print
-	// the same string (G7).
+	// 机器可读的那一行: 同一个 seed 跑两次 'forge run' 必须打印同一个字符串 (G7)。
 	note("best_score=%v", res.BestScore)
 	note("delta_vs_human=%v", res.BestScore-baseScore)
 	if len(res.BestTerms) > 0 {
@@ -1458,13 +1444,12 @@ func cmdRun(args []string) int {
 	return 0
 }
 
-// runOptions builds the search options for one run.
+// runOptions 为一次 run 构建搜索选项。
 //
-// The human baseline design is injected as WarmStart ONLY for evolution_warm.
-// The reason to run both evolution and evolution_warm is to measure what
-// inherited design knowledge buys; injecting the baseline into the cold variant
-// as well would silently delete that comparison and make the two methods
-// identical (stage E's harness applies the same rule).
+// 人类 baseline 的 design 只在 evolution_warm 时作为 WarmStart 注入。同时跑
+// evolution 与 evolution_warm 的原因, 是要衡量继承来的 design 知识买到了什么; 如果
+// 连冷变体也注入 baseline, 就会悄悄删掉这个对比, 让两种方法变成同一个 (stage E 的
+// harness 采用同样的规则)。
 func runOptions(spec config.Spec, method string, seed, budget, workers int,
 	baselineScore float64, warmDesign []float64) search.Options {
 	opt := search.DefaultOptions(spec)
@@ -1596,8 +1581,8 @@ func searchMethodNames() []string {
 	return names
 }
 
-// methodListOrNone names the registered algorithms, or says so when stage D has
-// not populated search.Methods yet (an honest "not there" beats an empty line).
+// methodListOrNone 列出已注册的算法, 或者在 stage D 还没填充 search.Methods 时
+// 说明这一点 (诚实的“还没有”胜过一行空白)。
 func methodListOrNone() string {
 	names := searchMethodNames()
 	if len(names) == 0 {
@@ -1607,7 +1592,7 @@ func methodListOrNone() string {
 }
 
 // ---------------------------------------------------------------------------
-// rules / report / registry / version
+// rules / report / registry / version —— 其余子命令
 // ---------------------------------------------------------------------------
 
 func cmdRules(args []string) int {
