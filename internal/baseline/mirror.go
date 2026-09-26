@@ -5,7 +5,6 @@
 package baseline
 
 import (
-	"errors"
 	"fmt"
 	"math"
 
@@ -36,37 +35,13 @@ const (
 	cellBisectMaxIter = 200
 )
 
-// errNoAnalyticSolver is returned while stage A's internal/physics still has no
-// implementation: there is nothing to call yet, and inventing a field would be
-// worse than failing.
-var errNoAnalyticSolver = errors.New(
-	"internal/physics does not provide a usable solver yet: physics.AnalyticSolver has no " +
-		"Name/Magnitude methods (stage A has not landed, or the receiver changed)")
-
-// analyticSolver returns the physics package's closed-form solver.
-//
-// Why the run-time type assertion instead of `physics.AnalyticSolver{}`: stage B
-// owns internal/baseline, stage A owns internal/physics, and while B was written
-// AnalyticSolver had no methods yet — naming it as a physics.Solver would not
-// compile, which would break `go build ./...` for every other line. Asserting at
-// run time keeps this package compiling today and makes it start working the
-// moment stage A lands; it needs no maintenance whether A attaches Name/Magnitude
-// to the value or to the pointer.
-//
-// needs-mainline: once stage A lands this can become
-//
-//	return physics.AnalyticSolver{}, nil
-//
-// (or whatever constructor physics grows) and errNoAnalyticSolver can go.
-func analyticSolver() (physics.Solver, error) {
-	a := physics.AnalyticSolver{}
-	for _, cand := range []any{a, &a} {
-		if s, ok := cand.(physics.Solver); ok {
-			return s, nil
-		}
-	}
-	return nil, errNoAnalyticSolver
-}
+// analyticSolver is the closed-form solver the reference implementation uses
+// (internal/physics: the exact circular-filament field via elliptic integrals,
+// "analytic-vacuum-loops"). It is the single place where "which solver is the
+// human baseline's reference" is decided — TextbookMirror and the golden tests
+// both go through here, so they cannot drift apart. Falling through to the
+// discrete solver by accident would move every golden number.
+func analyticSolver() physics.Solver { return physics.AnalyticSolver{} }
 
 // mirrorCoils lays out the hand design, in the reference implementation's order
 // (the two central-cell loops, then the two throats). testdata/golden_baseline.json

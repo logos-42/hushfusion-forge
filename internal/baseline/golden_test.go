@@ -69,11 +69,7 @@ func TestTextbookMirrorMatchesGolden(t *testing.T) {
 
 	// The score the machine is asked to beat, computed through the real pipeline
 	// (metrics -> terms -> weighted -> composite).
-	solver, err := analyticSolver()
-	if err != nil {
-		t.Fatalf("analytic solver: %v", err)
-	}
-	ev := objective.NewEvaluator(spec, solver, g.CostRef, physics.BuildGrids(spec))
+	ev := objective.NewEvaluator(spec, analyticSolver(), g.CostRef, physics.BuildGrids(spec))
 	res := ev.Evaluate(b.Design)
 
 	if math.Abs(res.Score-g.Score) > 1e-6 {
@@ -270,11 +266,7 @@ func TestTextbookMirrorSolvesCellCurrentToBRef(t *testing.T) {
 	}
 
 	// The solve's own claim, measured directly.
-	solver, err := analyticSolver()
-	if err != nil {
-		t.Fatalf("analytic solver: %v", err)
-	}
-	m := physics.MetricsFor(b.Coils, spec, physics.BuildGrids(spec), solver)
+	m := physics.MetricsFor(b.Coils, spec, physics.BuildGrids(spec), analyticSolver())
 	if relDiff(m.BMidT, spec.BRef) > 1e-9 {
 		t.Errorf("solved midplane field = %.16g T, want spec.BRef = %g T", m.BMidT, spec.BRef)
 	}

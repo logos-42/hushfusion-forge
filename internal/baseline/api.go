@@ -5,8 +5,6 @@
 package baseline
 
 import (
-	"fmt"
-
 	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 )
@@ -56,11 +54,6 @@ func HelmholtzPair(radius, current float64) []physics.Coil {
 // the Go implementation must reproduce that file within 1e-6.
 func TextbookMirror(spec config.Spec) (Baseline, error) {
 	// The reference implementation solves against its default closed-form
-	// solver; same here (see analyticSolver for why this is not a literal
-	// physics.AnalyticSolver{} yet).
-	solver, err := analyticSolver()
-	if err != nil {
-		return Baseline{}, fmt.Errorf("baseline.TextbookMirror: %w", err)
-	}
-	return textbookMirror(spec, solver, physics.BuildGrids(spec))
+	// solver; same here (see analyticSolver).
+	return textbookMirror(spec, analyticSolver(), physics.BuildGrids(spec))
 }
