@@ -664,8 +664,12 @@ func (st *verifyState) loadGolden() (string, error) {
 	if len(st.samples.Samples) == 0 {
 		return "", fmt.Errorf("%s contains no samples", paths[goldenSamples])
 	}
-	return fmt.Sprintf("baseline score %v, %d field-sample designs, spec keys %d",
-		st.gold.Score, len(st.samples.Samples), len(st.specKey)), nil
+	specKeys := 0
+	if obj, ok := st.specKey["spec"].(map[string]any); ok {
+		specKeys = len(obj)
+	}
+	return fmt.Sprintf("baseline score %v, %d field-sample designs, golden spec: %d spec keys + provenance",
+		st.gold.Score, len(st.samples.Samples), specKeys), nil
 }
 
 // keySetsMatch compares nested key sets; every golden key must exist on the Go
