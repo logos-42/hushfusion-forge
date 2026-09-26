@@ -1,0 +1,519 @@
+{
+  "provenance": {
+    "generator": "scripts/emit_pp_anchors.py",
+    "upstream_root": "/Users/apple/Downloads/lean/ProjectionPhysics",
+    "upstream_commit": "d28cd417b3f4d22c01d233204b0f8a70765ef5d1",
+    "upstream_commit_subject": "feat: μ 动力学接 FRC——窗口余量单调收窄 / 锁定因子良定义 / 窗口关闭步判据（TD19–TD21）",
+    "upstream_artifacts_tracked_by_git": 0,
+    "generated_at_utc": "2026-09-26T03:47:48Z",
+    "generated_at_local": "2026-09-26T11:47:48.305054+08:00",
+    "read_from": [
+      "artifacts/moirefield/report.json",
+      "artifacts/moirefield/summary.txt",
+      "artifacts/mudynamics/report.json",
+      "artifacts/mudynamics/summary.txt",
+      "artifacts/fusionroadmap/report.json",
+      "artifacts/fusionroadmap/summary.txt"
+    ],
+    "skipped_fields": [],
+    "source_of_truth": "上游仓库 commit d28cd417b3f4d22c01d233204b0f8a70765ef5d1 + 本地重跑 scripts/verify_moire_field.py 的产物。上游 artifacts/ 不入上游 git（同一 commit 的 `git ls-files artifacts/` = 0 个文件），因此这些数字来自该 commit 的**工作区重跑结果**，可由该脚本重放。",
+    "check_note": "重放上游脚本后 report.json 与重放前逐字节相同，唯一差异是 meta.date。因此 --check 不做整文件比对（那样每天都会假红），只比锚点字段并显式忽略 generated_at_* 与 upstream_root。",
+    "tolerance_note": "上游字段本身是逐位拷贝；Go 侧**复算**的派生量与上游差 ~2e-15 相对（Go 的无精度常数算术 vs CPython 的 float64 逐步求值、x*x vs **2），因此 anchor_test.go 用 rel 1e-12 锚定；summary.txt 里打过折的数字按打印精度锚定。"
+  },
+  "moirefield": {
+    "report_json": "artifacts/moirefield/report.json",
+    "summary_txt": "artifacts/moirefield/summary.txt",
+    "constants": {
+      "mu0": 1.2566370614359173e-06,
+      "k_B": 1.380649e-23,
+      "T_keV": 15.0,
+      "beta": 1.0,
+      "n_design": 1e+20,
+      "a_ref": 0.2,
+      "D0": 1.11,
+      "tau0_s": 0.03603603603603604,
+      "floor_FC11": 0.0002194319636249623,
+      "B_death_ref_T": 0.9965686430348397
+    },
+    "n_design_perm3": 1e+20,
+    "b_min_design_T": 1.099096320779316,
+    "x_req_at_design": 0.00032464897329762205,
+    "chi_mu_at_design": 1.4794971887162678,
+    "floor_FC11": 0.0002194319636249623,
+    "tau0_s": 0.03603603603603604,
+    "b_death_ref_T": 0.9965686430348397,
+    "sources": [
+      {
+        "key": "MATBG_N2_perp",
+        "label": "MATBG (N=2) 面外 B_c2",
+        "citation": "Díez-Mérida 2023 NatCommun 14,2396",
+        "B_cap_T": 0.12,
+        "n_max_perm3": 1.1920404258640212e+18,
+        "n_op_perm3": 1.1920404258640212e+18,
+        "chi_B_required_over_cap": 9.1591360064943,
+        "beta_impossible": true,
+        "tau_lawson_s": 167.77954477092075,
+        "X_req_cap": 4.613133274552643e-08,
+        "chi_mu": 0.00021023068828919959,
+        "feasible": false,
+        "p_rel": 3.160493827160493e-08,
+        "V_rel_for_same_power": 31640625.000000007,
+        "m8_mu_feasible": false,
+        "m8_verdict": "无解（μ 窗口关闭，FC11）"
+      },
+      {
+        "key": "MATBG_N2_par",
+        "label": "MATBG (N=2) 面内 B_c",
+        "citation": "Qin&MacDonald 2021 PRL 127,097001",
+        "B_cap_T": 1.6,
+        "n_max_perm3": 2.119182979313816e+20,
+        "n_op_perm3": 1e+20,
+        "chi_B_required_over_cap": 0.6869352004870725,
+        "beta_impossible": false,
+        "tau_lawson_s": 2.0,
+        "X_req_cap": 0.00032464897329762205,
+        "chi_mu": 1.4794971887162678,
+        "feasible": true,
+        "p_rel": 0.000998872123151959,
+        "V_rel_for_same_power": 1001.1291503906245,
+        "m8_mu_feasible": true,
+        "m8_verdict": "可用（物理层过门；工程层见 M6/M7）"
+      },
+      {
+        "key": "MATTG_N3_par",
+        "label": "MATTG (N=3) 面内 B_c（下界）",
+        "citation": "Cao 2021 Nature 595,526",
+        "B_cap_T": 10.0,
+        "n_max_perm3": 8.278058512944592e+21,
+        "n_op_perm3": 1e+20,
+        "chi_B_required_over_cap": 0.10990963207793161,
+        "beta_impossible": false,
+        "tau_lawson_s": 2.0,
+        "X_req_cap": 0.00032464897329762205,
+        "chi_mu": 1.4794971887162678,
+        "feasible": true,
+        "p_rel": 1.5241579027587255,
+        "V_rel_for_same_power": 0.6561000000000001,
+        "m8_mu_feasible": true,
+        "m8_verdict": "可用（物理层过门；工程层见 M6/M7）"
+      },
+      {
+        "key": "ITER_TF",
+        "label": "ITER TF 导体级场",
+        "citation": "ITER 公开参数",
+        "B_cap_T": 5.3,
+        "n_max_perm3": 2.325306636286136e+21,
+        "n_op_perm3": 1e+20,
+        "chi_B_required_over_cap": 0.20737666429798418,
+        "beta_impossible": false,
+        "tau_lawson_s": 2.0,
+        "X_req_cap": 0.00032464897329762205,
+        "chi_mu": 1.4794971887162678,
+        "feasible": true,
+        "p_rel": 0.12026338972717572,
+        "V_rel_for_same_power": 8.315082439207446,
+        "m8_mu_feasible": true,
+        "m8_verdict": "可用（物理层过门；工程层见 M6/M7）"
+      },
+      {
+        "key": "SPARC_TF",
+        "label": "SPARC TF",
+        "citation": "PF 轮引用",
+        "B_cap_T": 12.2,
+        "n_max_perm3": 1.232106229066673e+22,
+        "n_op_perm3": 1e+20,
+        "chi_B_required_over_cap": 0.09008986235896034,
+        "beta_impossible": false,
+        "tau_lawson_s": 2.0,
+        "X_req_cap": 0.00032464897329762205,
+        "chi_mu": 1.4794971887162678,
+        "feasible": true,
+        "p_rel": 3.3765196768785235,
+        "V_rel_for_same_power": 0.2961629416371314,
+        "m8_mu_feasible": true,
+        "m8_verdict": "可用（物理层过门；工程层见 M6/M7）"
+      },
+      {
+        "key": "CFR2_vac",
+        "label": "CFR2 真空场（紧凑 FRC 基准）",
+        "citation": "Slough 2025 Nucl.Fusion 65,106019",
+        "B_cap_T": 9.0,
+        "n_max_perm3": 6.70522739548512e+21,
+        "n_op_perm3": 1e+20,
+        "chi_B_required_over_cap": 0.12212181341992401,
+        "beta_impossible": false,
+        "tau_lawson_s": 2.0,
+        "X_req_cap": 0.00032464897329762205,
+        "chi_mu": 1.4794971887162678,
+        "feasible": true,
+        "p_rel": 1.0,
+        "V_rel_for_same_power": 1.0,
+        "m8_mu_feasible": true,
+        "m8_verdict": "可用（物理层过门；工程层见 M6/M7）"
+      },
+      {
+        "key": "CFR2_comp",
+        "label": "CFR2 压缩后场（脉冲）",
+        "citation": "同上",
+        "B_cap_T": 35.0,
+        "n_max_perm3": 1.0140621678357126e+23,
+        "n_op_perm3": 1e+20,
+        "chi_B_required_over_cap": 0.031402752022266174,
+        "beta_impossible": false,
+        "tau_lawson_s": 2.0,
+        "X_req_cap": 0.00032464897329762205,
+        "chi_mu": 1.4794971887162678,
+        "feasible": true,
+        "p_rel": 228.7189452827313,
+        "V_rel_for_same_power": 0.004372178259058725,
+        "m8_mu_feasible": true,
+        "m8_verdict": "可用（物理层过门；工程层见 M6/M7）"
+      }
+    ],
+    "death_scan": [
+      {
+        "a_m": 0.05,
+        "B_death_T": 3.986274572139359,
+        "closed_sources": [
+          "MATBG_N2_par",
+          "MATBG_N2_perp"
+        ],
+        "open_sources": [
+          "CFR2_comp",
+          "CFR2_vac",
+          "ITER_TF",
+          "MATTG_N3_par",
+          "SPARC_TF"
+        ]
+      },
+      {
+        "a_m": 0.1,
+        "B_death_T": 1.9931372860696794,
+        "closed_sources": [
+          "MATBG_N2_par",
+          "MATBG_N2_perp"
+        ],
+        "open_sources": [
+          "CFR2_comp",
+          "CFR2_vac",
+          "ITER_TF",
+          "MATTG_N3_par",
+          "SPARC_TF"
+        ]
+      },
+      {
+        "a_m": 0.15,
+        "B_death_T": 1.3287581907131198,
+        "closed_sources": [
+          "MATBG_N2_perp"
+        ],
+        "open_sources": [
+          "CFR2_comp",
+          "CFR2_vac",
+          "ITER_TF",
+          "MATBG_N2_par",
+          "MATTG_N3_par",
+          "SPARC_TF"
+        ]
+      },
+      {
+        "a_m": 0.2,
+        "B_death_T": 0.9965686430348397,
+        "closed_sources": [
+          "MATBG_N2_perp"
+        ],
+        "open_sources": [
+          "CFR2_comp",
+          "CFR2_vac",
+          "ITER_TF",
+          "MATBG_N2_par",
+          "MATTG_N3_par",
+          "SPARC_TF"
+        ]
+      },
+      {
+        "a_m": 0.3,
+        "B_death_T": 0.6643790953565599,
+        "closed_sources": [
+          "MATBG_N2_perp"
+        ],
+        "open_sources": [
+          "CFR2_comp",
+          "CFR2_vac",
+          "ITER_TF",
+          "MATBG_N2_par",
+          "MATTG_N3_par",
+          "SPARC_TF"
+        ]
+      },
+      {
+        "a_m": 0.5,
+        "B_death_T": 0.39862745721393594,
+        "closed_sources": [
+          "MATBG_N2_perp"
+        ],
+        "open_sources": [
+          "CFR2_comp",
+          "CFR2_vac",
+          "ITER_TF",
+          "MATBG_N2_par",
+          "MATTG_N3_par",
+          "SPARC_TF"
+        ]
+      },
+      {
+        "a_m": 1.0,
+        "B_death_T": 0.19931372860696797,
+        "closed_sources": [
+          "MATBG_N2_perp"
+        ],
+        "open_sources": [
+          "CFR2_comp",
+          "CFR2_vac",
+          "ITER_TF",
+          "MATBG_N2_par",
+          "MATTG_N3_par",
+          "SPARC_TF"
+        ]
+      },
+      {
+        "a_m": 2.0,
+        "B_death_T": 0.09965686430348399,
+        "closed_sources": [],
+        "open_sources": [
+          "CFR2_comp",
+          "CFR2_vac",
+          "ITER_TF",
+          "MATBG_N2_par",
+          "MATBG_N2_perp",
+          "MATTG_N3_par",
+          "SPARC_TF"
+        ]
+      }
+    ],
+    "honesty": [
+      "全部结论 = PF3/FC1/FC11b/AMC1 已证条目的直接代入（真但平凡），无新物理预言",
+      "μ 主动产生机制 = 第二输入缺口（未变）；本轮只算\"需要多少 μ、窗口是否打开\"",
+      "二维材料 B_c2/n_s/I_c 取文献上界（乐观包络），多器件分散",
+      "载流门与制冷门是量级账，不是装置设计；片电流用 1μm 宽假设",
+      "FET 栅控是 MATBG 超导的必要条件，线圈化需逐层栅极——未计工程代价"
+    ],
+    "honesty_note": "上游报告自写的诚实边界，原文照录（上游口径，不是本仓库的结论）",
+    "summary_text": {
+      "tau0_s": 0.036,
+      "floor_FC11": 0.00021943,
+      "b_min_design_T": 1.099,
+      "b_death_ref_T": 0.997,
+      "chi_mu_at_design": 1.479
+    }
+  },
+  "mudynamics": {
+    "report_json": "artifacts/mudynamics/report.json",
+    "summary_txt": "artifacts/mudynamics/summary.txt",
+    "state_equation": "μ(t+Δt) = μ(t) + η·(1 − μ(t))",
+    "closed_form": "μ_n = 1 − (1 − η)^n (1 − μ₀)",
+    "n_close": {
+      "upstream_field_int": 165,
+      "upstream_field_path": "results.N15_frc_interface['D-T 窗口关闭步 n*（阈值 μ ≥ 0.99978）']",
+      "summary_txt_int": 165,
+      "mu_threshold_printed": 0.99978,
+      "mu_threshold_printed_source": "results.N15_frc_interface 的字段名「D-T 窗口关闭步 n*（阈值 μ ≥ 0.99978）」",
+      "eta": 0.05,
+      "eta_source": "artifacts/mudynamics/summary.txt N11「关闭步 n*=165（η=0.05, D-T）」",
+      "analytic_recompute": 164.24112420137013,
+      "analytic_recompute_mu0": 0.0,
+      "analytic_recompute_source": "emit 脚本独立复算 n = ln((1−μ₀)/FLOOR)/ln(1/(1−η))，FLOOR 取上游 moirefield report.json 的 meta.constants.floor_FC11，η 取上游 mudynamics summary.txt N11",
+      "analytic_recompute_note": "解析值是实数（164.2411…），上游字段是**整数步**（165）—— 两者说的不是同一件事，不许互相冒充；Go 侧 FirstClosedStep = ceil(解析值) 必须复现上游那个整数。"
+    },
+    "window_margin_strictly_decreasing": true,
+    "locking_factor_well_defined": true,
+    "locking_factor_strictly_increasing": true,
+    "threshold_equivalent_to_FC11b": true,
+    "total_steps_below_one": 401,
+    "honesty": [
+      "状态方程是模型选择，不是物理定律",
+      "η 的物理来源仍是第二输入缺口（缺口从 'η 是哪来的' 移到 '抹平功率是哪来的'）",
+      "收敛域分析（η vs 2）在数值层给出；Lean 侧只形式化超调边界（η vs 1）",
+      "FRC 接缝（TD19–TD21）是把 μ 轨道代入 FC11b/FC5b 的单调性/良定义性结论，不是新的物理机制",
+      "全部为代数/序关系/有限维见证；无新物理预言"
+    ],
+    "honesty_note": "上游报告自写的诚实边界，原文照录（上游口径，不是本仓库的结论）"
+  },
+  "fusionroadmap": {
+    "report_json": "artifacts/fusionroadmap/report.json",
+    "summary_txt": "artifacts/fusionroadmap/summary.txt",
+    "mu_min_from_delta": {
+      "δ=1e-03": {
+        "mu_min": 0.0009990009990009992,
+        "R_ci_mu_min": 0.0009999999999998899
+      },
+      "δ=1e-04": {
+        "mu_min": 9.999000099990002e-05,
+        "R_ci_mu_min": 9.999999999998899e-05
+      },
+      "δ=1e-05": {
+        "mu_min": 9.99990000099999e-06,
+        "R_ci_mu_min": 9.999999999843467e-06
+      },
+      "δ=1e-06": {
+        "mu_min": 9.99999000001e-07,
+        "R_ci_mu_min": 1.000000000139778e-06
+      }
+    },
+    "rci_at_mu": {
+      "μ=0.0001": {
+        "R_ci": 0.00010001000100001711,
+        "tauE_gain": 1.0000500037503126
+      },
+      "μ=0.001": {
+        "R_ci": 0.0010010010010010895,
+        "tauE_gain": 1.0005003753127737
+      },
+      "μ=0.01": {
+        "R_ci": 0.010101010101010166,
+        "tauE_gain": 1.005037815259212
+      },
+      "μ=0.1": {
+        "R_ci": 0.11111111111111116,
+        "tauE_gain": 1.0540925533894598
+      },
+      "μ=0.5": {
+        "R_ci": 1.0,
+        "tauE_gain": 1.414213562373095
+      },
+      "μ=0.9": {
+        "R_ci": 9.000000000000002,
+        "tauE_gain": 3.16227766016838
+      },
+      "μ=0.99": {
+        "R_ci": 98.99999999999991,
+        "tauE_gain": 9.999999999999995
+      },
+      "μ=0.999": {
+        "R_ci": 998.9999999999991,
+        "tauE_gain": 31.622776601683782
+      }
+    },
+    "lambda_hypotheses": {
+      "μ=0.1": {
+        "FC5": 1.0,
+        "geometric_capture": 1.0540925533894598
+      },
+      "μ=0.5": {
+        "FC5": 1.0,
+        "geometric_capture": 1.414213562373095
+      },
+      "μ=0.9": {
+        "FC5": 1.0,
+        "geometric_capture": 3.16227766016838
+      },
+      "μ=0.99": {
+        "FC5": 1.0,
+        "geometric_capture": 9.999999999999995
+      },
+      "μ=0.999": {
+        "FC5": 1.0,
+        "geometric_capture": 31.622776601683782
+      }
+    },
+    "fc5_prediction": "Λ ≡ 1（改善输运 ⟹ 稳定性同因子恶化）",
+    "geometric_capture_claim": "Λ > 1（未证——本设计与 FC 轮的分歧点）",
+    "power_multiple": {
+      "k=1": 10000.0,
+      "k=0.5": 100000000.0,
+      "k=0.25": 1e+16,
+      "k=0.1": 1e+40
+    },
+    "power_multiple_per_decade": {
+      "k=1": 10.0,
+      "k=0.5": 100.0,
+      "k=0.25": 10000.0,
+      "k=0.1": 10000000000.0
+    },
+    "ladder": [
+      {
+        "阶段": "G0 判据规范",
+        "月区间": "0–3",
+        "μ 目标": 0.0001,
+        "装置尺度": "桌面（无装置）",
+        "人·月": 6,
+        "累计人·月占比 [%]": 0.52
+      },
+      {
+        "阶段": "G1 D1 判决",
+        "月区间": "3–6",
+        "μ 目标": 0.001,
+        "装置尺度": "桌面判据台",
+        "人·月": 9,
+        "累计人·月占比 [%]": 1.29
+      },
+      {
+        "阶段": "G2 D3 标度初值",
+        "月区间": "6–12",
+        "μ 目标": 0.01,
+        "装置尺度": "中型测试台",
+        "人·月": 30,
+        "累计人·月占比 [%]": 3.88
+      },
+      {
+        "阶段": "G3 独立复现",
+        "月区间": "12–18",
+        "μ 目标": 0.01,
+        "装置尺度": "中型测试台 ×2",
+        "人·月": 48,
+        "累计人·月占比 [%]": 8.01
+      },
+      {
+        "阶段": "G4 D2 锁定判决",
+        "月区间": "18–24",
+        "μ 目标": 0.1,
+        "装置尺度": "FRC 级约束装置",
+        "人·月": 72,
+        "累计人·月占比 [%]": 14.21
+      },
+      {
+        "阶段": "G5 D-D 产额标度",
+        "月区间": "24–36",
+        "μ 目标": 0.5,
+        "装置尺度": "FRC 级 + 中子诊断",
+        "人·月": 240,
+        "累计人·月占比 [%]": 34.88
+      },
+      {
+        "阶段": "G6 D-T 燃烧",
+        "月区间": "36–48",
+        "μ 目标": 0.99,
+        "装置尺度": "燃烧装置 + 氚设施",
+        "人·月": 336,
+        "累计人·月占比 [%]": 63.82
+      },
+      {
+        "阶段": "G7 稳态 + 净电",
+        "月区间": "48–60",
+        "μ 目标": 0.999,
+        "装置尺度": "全系统集成",
+        "人·月": 420,
+        "累计人·月占比 [%]": 100.0
+      }
+    ],
+    "ladder_note": "排程假设，不是判据 —— internal/design 不得使用（契约 §6）",
+    "honesty": [
+      "本报告是计划文档的数值支撑，不是物理证据：所有门槛取自仓库已证条目（FC2/FC4/FC5/FC9/FC11/AMC1/AMC7），未新增物理。",
+      "μ 主动产生机制仍是第二输入缺口——D1 判决实验正是为了判决它。",
+      "人·月与占比是排程假设（非实测），人员成本数字按 leo 规则不入 wiki。",
+      "未含：氚/中子设施、μ 主动产生若需微波/激光/额外磁体（Y2 门后重估）。"
+    ],
+    "honesty_note": "上游报告自写的诚实边界，原文照录（上游口径，不是本仓库的结论）",
+    "summary_text": {
+      "mu_max_FC11_DT": 0.999781,
+      "mu_min_delta": 0.0001,
+      "mu_min": 9.999e-05,
+      "power_multiple": {
+        "k=1": 10000.0,
+        "k=0.5": 100000000.0,
+        "k=0.25": 1e+16,
+        "k=0.1": 1e+40
+      }
+    }
+  }
+}

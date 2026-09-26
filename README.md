@@ -3,7 +3,7 @@
 **中文** | [English](README.en.md)
 
 [![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
-[![Phase 0](https://img.shields.io/badge/Phase%200-16%2F16%20gates-brightgreen)](scripts/verify.sh)
+[![Phase 0](https://img.shields.io/badge/Phase%200-17%2F17%20gates-brightgreen)](scripts/verify.sh)
 
 > 不是造一台装置，而是造一个**能不断产生、验证、淘汰下一代装置设计的工程系统**。
 > Forge 是这个系统的第一版：电磁线圈设计的设计—评分—记录—学习闭环。
@@ -42,7 +42,7 @@ Phase 0 的验收问题只有一个：
 ## 架构（Go 为主栈，Python 只做辅助）
 
 ```
-cmd/forge/            CLI：baseline / verify / run / benchmark / rules / report / registry / xcheck
+cmd/forge/            CLI：baseline / verify / design / run / benchmark / rules / report / registry / xcheck
 internal/
   config/             唯一真源：全部物理常数、搜索边界、目标权重
   physics/            圆环电流精确静磁学（完整椭圆积分 AGM）+ 独立分段 Biot–Savart 交叉实现
@@ -55,6 +55,7 @@ internal/
   knowledge/          从注册表挖设计规则（每个 run 单独算 Spearman，全部同号才保留）
   report/             中文运行报告（含**诚实边界**章节）
   rlenv/              Phase 1 的 RL 环境接口 + 随机策略参考基线
+  design/             内部设计判决层：上游 ProjectionPhysics 的闭式解 + 六道门 + 锚点（G17）
   owners/             文件所有权名册 + 冻结门（互不重叠 / 无遗漏 / 变异会红）
 python/               仅辅助：独立 scipy oracle（跨语言交叉验证）+ 出图 + 统计对账
 ```
@@ -106,6 +107,6 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 
 ## 版本与 License
 
-`v0.1.0` —— Phase 0：设计 → 评分 → 记录 → 学习闭环可跑，16 道门全绿（`bash scripts/verify.sh phase0`）。
+`v0.1.0` —— Phase 0：设计 → 评分 → 记录 → 学习闭环可跑，17 道门全绿（`bash scripts/verify.sh phase0`）。
 
 MIT — Copyright (c) 2026 LIU YUANJIE（刘元杰）

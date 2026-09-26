@@ -5,6 +5,7 @@
 //
 //	baseline    机器被要求超越的那个人, 连同它全部的原始项
 //	verify      端到端集成门 (G4/G5/G8/G10 的输入, 一张 PASS/FAIL 表)
+//	design      内部设计判决层: 六道门 + 上游 ProjectionPhysics 的闭式解与锚点
 //	xcheck      为独立的 Python oracle 导出 Br/Bz/|B| (G5 输入)
 //	run         一种算法、一个 seed、一份预算, 经过 registry (G7)
 //	benchmark   跨方法与跨 seed 的等预算对比
@@ -27,11 +28,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/logos-42/hushfusion-forge/internal/baseline"
 	"github.com/logos-42/hushfusion-forge/internal/config"
+	"github.com/logos-42/hushfusion-forge/internal/design"
 	"github.com/logos-42/hushfusion-forge/internal/experiment"
 	"github.com/logos-42/hushfusion-forge/internal/knowledge"
 	"github.com/logos-42/hushfusion-forge/internal/objective"
@@ -101,6 +104,8 @@ func run(args []string) int {
 		return cmdBaseline(rest)
 	case "verify":
 		return cmdVerify(rest)
+	case "design":
+		return cmdDesign(rest)
 	case "xcheck":
 		return cmdXcheck(rest)
 	case "run":
@@ -128,6 +133,7 @@ HUSHFUSION Forge v%s — the design loop: parameterise → physics → score →
 commands:
   baseline    print the human baseline: design, metrics, terms, score
   verify      end-to-end integration gate (spec → baseline → golden → registry → anti-fabrication)
+  design      internal design gate: six gates + upstream ProjectionPhysics closed forms
   xcheck      export Br/Bz/|B| samples for the independent Python oracle (G5 input)
   run         run one algorithm at one seed and budget, recording into the registry
   benchmark   equal-budget benchmark across methods and seeds
@@ -1141,6 +1147,236 @@ type nullScorer struct{}
 
 func (nullScorer) Score(x []float64, meta runner.Meta) objective.EvalResult {
 	return objective.EvalResult{Design: x}
+}
+
+// ---------------------------------------------------------------------------
+// design —— 内部设计判决层
+// ---------------------------------------------------------------------------
+
+// designVerdict 是一条门在表格里的判定文字。
+func designVerdict(g design.Gate) string {
+	switch {
+	case g.Unknown:
+		return "unknown"
+	case g.Pass:
+		return "PASS"
+	default:
+		return "FAIL"
+	}
+}
+
+// fmtNum 让表格里的数字可读且够精确; 非有限值不打印成 "NaN" 了事。
+func fmtNum(v float64) string {
+	switch {
+	case math.IsNaN(v):
+		return "NaN"
+	case math.IsInf(v, 1):
+		return "+Inf"
+	case math.IsInf(v, -1):
+		return "-Inf"
+	}
+	return strconv.FormatFloat(v, 'g', 10, 64)
+}
+
+// boxCentreDesign 是 spec 派生的确定性参考设计: 每一维取搜索盒的中点, 再走一遍
+// vectorToCoils/coilsToVector 的规范形式。定义与 internal/search 的 fallback 一致
+// (mirror 的比例只对 4 个线圈有定义, 那里非 4 线圈时同样退到盒子中心)。
+//
+// 它不是"某台装置", 只是一份确定性的、由 spec 完全决定的线圈组, 好让 --design spec
+// 这条路径可复现、可回归。
+func boxCentreDesign(spec config.Spec) []float64 {
+	lo, hi := spec.Lower(), spec.Upper()
+	x := make([]float64, len(lo))
+	for i := range x {
+		x[i] = 0.5 * (lo[i] + hi[i])
+	}
+	coils, err := physics.VectorToCoils(x, spec)
+	if err != nil {
+		return x
+	}
+	return physics.CoilsToVector(coils)
+}
+
+// windowVerdict 只报契约 §5 里那两条「有没有解」的门 —— 装置设计的死活问题。
+// 单独拎出来是因为它和总判决不是同一件事: 总判决还要看导体场与可造性。
+func windowVerdict(s design.Scope) string {
+	keys := []string{design.GateDeath, design.GateMuWindow}
+	for _, k := range keys {
+		g, ok := s.GateByKey(k)
+		if !ok {
+			return "unknown（门缺失）"
+		}
+		if g.Unknown {
+			return "unknown（读不到场源）"
+		}
+		if !g.Pass {
+			return "FAIL —— μ 窗口关闭, 无解 (不是「更难」)"
+		}
+	}
+	return "PASS —— 该场源在此尺度上有解"
+}
+
+func cmdDesign(args []string) int {
+	fs := newFlagSet("design",
+		"design [--a A] [--source KEY] [--eta E] [--mu0 MU] [--design baseline|spec] [--json]",
+		"Run the internal design gate layer (docs/design-layer.md) on one coil design:\n"+
+			"the six gates of the upstream ProjectionPhysics design space (field_min / death /\n"+
+			"mu_window / coil_load / buildable / steps) plus FC5 reported as unknown. Prints the\n"+
+			"gate table (key / Chinese name / formula / computed value / threshold / verdict /\n"+
+			"provenance), the overall verdict and the source-material table.\n\n"+
+			"Everything upstream-shaped comes from internal/design, whose numbers are anchored to\n"+
+			"the upstream artifact files by testdata/projectionphysics_anchors.json (never copied\n"+
+			"into Go source by hand).\n\n"+
+			"Exit status 1 means at least one decisive gate failed — that is a verdict, not an error.")
+	a := fs.Float64("a", design.ARef,
+		"constraint-region scale a in metres (upstream A_REF); B_death ∝ 1/a")
+	source := fs.String("source", design.SourceMATBGN2Par,
+		"field-source material key (see the source table below)")
+	eta := fs.Float64("eta", 0.05, "gain of the mu state equation, eta ∈ [0,2)")
+	mu0 := fs.Float64("mu0", 0.0, "initial mu ∈ [0,1)")
+	which := fs.String("design", "baseline",
+		"which coil design to gate: baseline (internal/baseline human design) | spec (box centre)")
+	asJSON := fs.Bool("json", false, "emit input, design, metrics, gates and the source table as JSON")
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+
+	if !(*a > 0) || math.IsInf(*a, 0) || math.IsNaN(*a) {
+		return fail("--a must be a positive finite length in metres, got %v", *a)
+	}
+	if !(*eta >= 0 && *eta < 2) {
+		return fail("--eta must be in [0,2) (the state equation is a model choice, not a law), got %v", *eta)
+	}
+	if !(*mu0 >= 0 && *mu0 < 1) {
+		return fail("--mu0 must be in [0,1) (mu = 1 is not reachable in finite steps, TD8), got %v", *mu0)
+	}
+	src, ok := design.LookupSource(*source)
+	if !ok {
+		keys := make([]string, 0, len(design.SourceTable()))
+		for _, s := range design.SourceTable() {
+			keys = append(keys, s.Key)
+		}
+		return fail("unknown --source %q (known: %s)", *source, strings.Join(keys, ", "))
+	}
+	if *which != "baseline" && *which != "spec" {
+		return fail("--design must be baseline or spec, got %q", *which)
+	}
+
+	spec := defaultSpec()
+	base, err := baselineDesign()
+	if err != nil {
+		return fail("%v", err)
+	}
+	ev := analyticEvaluator(spec, base.Cost)
+
+	designName := base.Name
+	dv := base.Design
+	if *which == "spec" {
+		designName = "spec_box_centre (every dimension at the midpoint of the search box)"
+		dv = boxCentreDesign(spec)
+	}
+	res := ev.Evaluate(dv)
+
+	in := design.Input{DeviceScaleM: *a, SourceKey: *source, Eta: *eta, Mu0: *mu0}
+	scope := design.Review(spec, res.Metrics, in)
+
+	if *asJSON {
+		payload := map[string]any{
+			"design":        designName,
+			"design_vector": dv,
+			"score":         res.Score,
+			"feasible":      res.Feasible,
+			"metrics":       metricMap(res.Metrics),
+			"input":         in,
+			"scope":         scope,
+			"sources":       design.SourceTable(),
+		}
+		b, merr := json.MarshalIndent(payload, "", "  ")
+		if merr != nil {
+			return fail("marshal design scope: %v", merr)
+		}
+		os.Stdout.Write(append(b, '\n'))
+		if !scope.AllDecisivePass {
+			return 1
+		}
+		return 0
+	}
+
+	note("forge design — 内部设计判决层 (docs/design-layer.md; 上游 ProjectionPhysics)")
+	note("设计: %s", designName)
+	note("  score=%v feasible=%v coils=%d", res.Score, res.Feasible, res.Metrics.NCoils)
+	note("输入 (不是设计变量): a=%.6g m  场源=%s (B_cap=%s T)  η=%v  μ₀=%v",
+		in.DeviceScaleM, src.Key, fmtNum(src.BCapT), in.Eta, in.Mu0)
+	note("上游闭式解: TAU0(a)=%s s  B_min(N_DESIGN)=%s T  B_death(a)=%s T",
+		fmtNum(scope.Tau0S), fmtNum(scope.BMinT), fmtNum(scope.BDeathT))
+	note("            n_max(B_cap)=%s m⁻³  n_op(B_cap)=%s m⁻³  χ_μ(B_cap,a)=%s",
+		fmtNum(scope.NMaxCap), fmtNum(scope.NOpCap), fmtNum(scope.ChiMuCap))
+	note("            P_rel=%s  V_rel=%s (相对 B_ref=%s T 满 β 基准)  μ 天花板 1−FLOOR=%s",
+		fmtNum(scope.PRelCap), fmtNum(scope.VRelCap), fmtNum(design.BRefPower), fmtNum(scope.MuCeiling))
+	note("")
+
+	note("六道门 (契约 §5) + FC5 单列 unknown:")
+	note("  %-11s %-9s %-14s %-16s %-14s %-8s %s",
+		"key", "中文名", "实算值", "阈值", "判定", "出处", "公式")
+	for _, g := range scope.Gates {
+		note("  %-11s %-9s %-14s %-16s %-8s %-8s %s",
+			g.Key, g.Label, fmtNum(g.Value), fmtNum(g.Ref), designVerdict(g), g.Provenance, g.Formula)
+	}
+	note("")
+
+	verdict := "FAIL"
+	if scope.AllDecisivePass {
+		verdict = "PASS"
+	}
+	note("总判决: %s (计入总判决的是五条门 %s; steps 报值不判生死, fc5_locked 一律 unknown)",
+		verdict, strings.Join(design.DecisiveGateKeys, "/"))
+	note("  通过 %d, 不过 %d, unknown %d (共 %d 条)", scope.Passed, scope.Failed, scope.Unknown, len(scope.Gates))
+	note("  窗口判决 (death + mu_window, 这两条才是「这个场源在 a 下有没有解」): %s",
+		windowVerdict(scope))
+	note("  χ_μ>1 ⟹ 可行; χ_μ<1 ⟹ μ 窗口关闭 = **无解**, 不是「更难」(契约 §5)")
+	if scope.SourceKnown {
+		note("  关闭步: 解析 n_close=%s 步; 整数首次关闭=%d 步 (永不关闭 = -1) —— 整数语义 = ceil(解析值); 上游 N15 字段与解析复算的数值见 testdata/projectionphysics_anchors.json",
+			fmtNum(scope.CloseStepAnalytic), scope.CloseStepInt)
+	}
+	for _, n := range scope.Notes {
+		note("  note: %s", n)
+	}
+	note("")
+
+	note("判决量上下文 (定义即口径; 本层只报「怎么测」, 不做预测):")
+	note("  D1 R_ci(μ₀)=%s   锁定因子 1/√(1−μ₀)=%s   μ_min(δ=1e-4)=%s",
+		fmtNum(scope.RciMu0), fmtNum(scope.LockingFactor), fmtNum(design.MuMinFromDelta(1e-4)))
+	note("  D2 Λ = τ_E 增益 / S* 惩罚: unknown —— FC5 预言 ≡1, 几何捕获 Λ>1 未证 (不进判决)")
+	note("  D3 μ ∝ P^k, 跨 4 个数量级所需功率倍数: k=1 → %s | k=0.5 → %s | k=0.25 → %s | k=0.1 → %s",
+		fmtNum(design.PowerMultiple(1, 4)), fmtNum(design.PowerMultiple(0.5, 4)),
+		fmtNum(design.PowerMultiple(0.25, 4)), fmtNum(design.PowerMultiple(0.1, 4)))
+	note("")
+
+	note("场源材料类对照表 (a=%s m; 判决口径与上面三条门一致):", fmtNum(in.DeviceScaleM))
+	note("  %-15s %-30s %-8s %-12s %-12s %-12s %-10s %s",
+		"key", "中文名", "B_cap/T", "n_op/m⁻³", "P_rel", "V_rel", "χ_μ", "判决")
+	for _, s := range design.SourceTable() {
+		chi := design.ChiMu(s.BCapT, in.DeviceScaleM)
+		v := "可用"
+		if !(s.BCapT >= scope.BDeathT) {
+			v = "无解（μ 窗口关闭）"
+		} else if !(chi > 1) {
+			v = "窗口关闭"
+		}
+		note("  %-15s %-30s %-8s %-12s %-12s %-12s %-10s %s",
+			s.Key, s.Label, fmtNum(s.BCapT), fmtNum(design.NOp(s.BCapT)),
+			fmtNum(design.PRel(s.BCapT, design.BRefPower)),
+			fmtNum(design.VRel(s.BCapT, design.BRefPower)), fmtNum(chi), v)
+	}
+	note("")
+	note("诚实边界 (契约 §6): 本层不算 μ（μ 的主动产生 = 第二输入缺口）；Forge 的场模型仍是")
+	note("真空圆环丝电流的精确静磁学（无 plasma/无 β 修正/无平衡），本层只是把它喂进上游的门；")
+	note("不算排程与预算；fc5_locked 一律 unknown；本层是模型选择 + 上游已证条目的代入，真但平凡。")
+
+	if !scope.AllDecisivePass {
+		return 1
+	}
+	return 0
 }
 
 // ---------------------------------------------------------------------------

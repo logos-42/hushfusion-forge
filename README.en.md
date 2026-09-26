@@ -3,7 +3,7 @@
 [中文](README.md) | **English**
 
 [![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
-[![Phase 0](https://img.shields.io/badge/Phase%200-16%2F16%20gates-brightgreen)](scripts/verify.sh)
+[![Phase 0](https://img.shields.io/badge/Phase%200-17%2F17%20gates-brightgreen)](scripts/verify.sh)
 
 > Not a machine. An engineering system that keeps producing, validating and
 > killing the designs of the *next* machine. Forge is its first version: a
@@ -48,7 +48,7 @@ with the code).
 ## Architecture (Go is the primary stack; Python only assists)
 
 ```
-cmd/forge/            CLI: baseline / verify / run / benchmark / rules / report / registry / xcheck
+cmd/forge/            CLI: baseline / verify / design / run / benchmark / rules / report / registry / xcheck
 internal/
   config/             single source of truth: constants, search box, objective weights
   physics/            exact circular-filament magnetostatics (elliptic integrals via AGM)
@@ -63,6 +63,8 @@ internal/
   knowledge/          mines design rules from the registry (per-run Spearman, same sign required)
   report/             Chinese run report, including a mandatory honest-limits section
   rlenv/              the Phase-1 RL environment interface + a random-policy reference
+  design/             internal design gate layer: upstream ProjectionPhysics closed forms,
+                      the six gates, and its upstream anchors (gate G17)
   owners/             file-ownership roster + freeze gate (no overlap / no gap / mutation-tested)
 python/               auxiliary only: independent scipy oracle (cross-language check) + figures + statistics
 ```
@@ -120,6 +122,6 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 
 ## Version and License
 
-`v0.1.0` — Phase 0: the design → score → record → learn loop runs, 16/16 gates green (`bash scripts/verify.sh phase0`).
+`v0.1.0` — Phase 0: the design → score → record → learn loop runs, 17/17 gates green (`bash scripts/verify.sh phase0`).
 
 MIT — Copyright (c) 2026 LIU YUANJIE（刘元杰）

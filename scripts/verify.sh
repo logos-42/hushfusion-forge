@@ -115,6 +115,16 @@ _opt "G15 出图 + 独立复评最优/基线 ($TAG)" "[ -f runs/$TAG/results.jso
 _opt "G16 逐位复现 ($TAG)" "[ -f runs/$TAG/results.json ] && [ -f scripts/repro_check.py ]" \
   python3 scripts/repro_check.py "$TAG"
 
+# G17: 内部设计判决层 —— 上游锚点必须能由**上游真实 artifact 文件**重新推导出来，
+#      且本层的闭式解必须逐条对上 testdata/projectionphysics_anchors.json。
+#      --check 是重新读上游、重新算一遍再比数值（显式忽略上游 meta.date：重放上游脚本后
+#      唯一会变的就是它），不整文件比对，所以它不会每天假红。
+#      上游 artifacts 被上游 .gitignore 忽略（0 个文件在其 git 树里），所以前置条件只能
+#      是"那份工作区在不在"；不在就大声 SKIP —— 绝不拿锚点文件跟它自己比来过门。
+PP_DIR="$(python3 scripts/emit_pp_anchors.py --where 2>/dev/null || true)"
+_opt "G17 内部设计锚点门" "[ -n \"$PP_DIR\" ] && [ -d \"$PP_DIR\" ] && [ -f testdata/projectionphysics_anchors.json ]" \
+  bash -c 'set -e; python3 scripts/emit_pp_anchors.py --check; go test ./internal/design/'
+
 echo
 echo "=== 汇总: $pass 通过, $fail 失败, $skip 跳过 ==="
 if [ "$fail" -ne 0 ]; then

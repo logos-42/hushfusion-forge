@@ -102,6 +102,12 @@ var Stages = []Stage{
 		Owner: "agent-G",
 		Paths: []string{"python/"},
 	},
+	{
+		ID:    "design",
+		Name:  "internal design gate layer: ProjectionPhysics closed forms + six gates + upstream anchors",
+		Owner: "design",
+		Paths: []string{"internal/design/"},
+	},
 }
 
 // Overlaps 返回冲突的配对：完全相同的路径、重复的前缀，或一条线的前缀

@@ -41,6 +41,7 @@ Phase 0 的验收问题只有一个：
 | E | `internal/experiment/` `internal/knowledge/` `internal/report/` | agent-E |
 | F | `internal/rlenv/` `cmd/` | agent-F |
 | G | `python/` | agent-G |
+| design | `internal/design/` | design（2026-09-26 内部设计判决层：移植 ProjectionPhysics 的闭式解 + 六道门 + 上游锚点脚本，见 `docs/design-layer.md`） |
 
 **冻结门**（`go test ./internal/owners/`）三条判据：
 1. 名册互不重叠；2. 仓库内每个被跟踪文件都恰好属于一个 stage；3. 变异验证——把两个 stage 指到同一个包/同一文件必须报 overlap。
