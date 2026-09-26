@@ -65,10 +65,16 @@ same path can be tested without Go.
    `|sum_j B_j| + self` (gives 3.3346 T for the baseline) but the golden value
    3.4163 T is `sum_j |B_j| + self` (verified to ~4e-13). The oracle uses the
    golden semantics.
-3. **Aggregation of the per-run rhos is pinned only by tolerance.** The knowledge
-   docs do not say whether the reported `rho` is the mean, median or worst-case of
-   the per-run coefficients. `rules_check.py` computes all three and requires the
-   published value to match the closest one within 0.02.
+3. **Aggregation of the per-run rhos was under-specified — measured answer: worst-case.**
+   The knowledge docs do not say whether the reported `rho` is the mean, median or
+   worst-case of the per-run coefficients. `rules_check.py` computes all three and
+   requires the published value to match the closest one within 0.02. Run against a
+   real mined rule set (`runs/scratch/rules.md` + its registry) the reported values
+   match the **worst-case |rho|** to <=1.1e-16 on all five rules, while the mean
+   differs by 0.026-0.16 -- so Go reports the worst-case coefficient (consistent
+   with "the worst-case |rho| is at least MinAbsRho"). The tool keeps accepting any
+   of the three, and prints which one matched, so the gate stays a gate rather than
+   a re-statement of one implementation.
 4. **The 5 mm near-wire clamp is applied at different scopes.** api.go describes the
    floor for the coil-to-coil singular case in `B_coil_max` ("if another coil sits
    closer than 5e-3 m"). `internal/physics/magnet.go` applies it to *every* sample
@@ -93,6 +99,18 @@ exact closed form           max relative 5.4e-02  (1 point inside the 5 mm wire 
 So Go's analytic solver and this scipy oracle agree to ~1e-12 everywhere the
 singular branch is not deliberately clamped, and the only divergence is the
 documented near-wire definition above.
+
+Against a real benchmark report (`runs/scratch/bench/results.json`), `analyze.py`
+re-derives the aggregate block from `runs[]` (agrees to 1e-9 relative) and
+re-scores the recorded baseline and best design from scratch:
+
+```
+[OK] oracle re-score of the baseline: report=-0.29057081610977475 oracle=-0.290570816109776   abs_diff=1.2e-15
+[OK] oracle re-score of the best:     report=+1.1679212601196869  oracle=+1.1679212601196913  abs_diff=4.4e-15
+```
+
+i.e. on that (budget 60, seeds [0,1]) run an independent implementation confirms
+both the human baseline score and the +1.4585 machine advantage.
 
 ## Definitions that the golden files cannot pin (chosen here, documented honestly)
 

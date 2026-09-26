@@ -225,6 +225,55 @@ def axis_profile(spec_map, design, n_points=None):
 # markdown table
 # --------------------------------------------------------------------------- #
 
+def rescore_report(report, rel_tol=1e-6, verbose=True):
+    """Re-score the recorded baseline and best design with the independent oracle.
+
+    This is the strongest cheap check in the set: the report *claims* what the
+    baseline scored and what the machine's best scored, and both claims are
+    re-derived here from the design vectors by numpy/scipy. A disagreement means
+    the two implementations no longer share a definition of the score, which would
+    invalidate every "the machine beat the human" statement built on top of it.
+    """
+    spec_map = report.get("spec")
+    cost_ref = report.get("cost_ref")
+    ok = True
+    if not spec_map or not cost_ref:
+        if verbose:
+            print("  [WARN] report has no spec/cost_ref: re-scoring skipped")
+        return True
+    spec = oracle.Spec.from_map(spec_map)
+    grids = oracle.Grids(spec)
+    for label, rec in (("baseline", report.get("baseline") or {}), ("best", report.get("best") or {})):
+        design = rec.get("design")
+        if not design:
+            if verbose:
+                print(f"  [WARN] no design for the {label}: re-scoring skipped")
+            continue
+        got = oracle.evaluate(design, spec, cost_ref, grids)
+        claimed = rec.get("score")
+        if claimed is None:
+            if verbose:
+                print(f"  [WARN] no score recorded for the {label}: re-scoring skipped")
+            continue
+        claimed = float(claimed)
+        delta = abs(got["score"] - claimed)
+        good = delta <= rel_tol * max(abs(claimed), 1.0)
+        worst_key, worst = "", 0.0
+        for key in oracle.METRIC_KEYS:
+            ref = (rec.get("metrics") or {}).get(key)
+            if isinstance(ref, (int, float)) and not isinstance(ref, bool) and abs(ref) >= 1e-12:
+                rel = abs(got["metrics"][key] - ref) / abs(ref)
+                if rel > worst:
+                    worst, worst_key = rel, key
+        ok &= good
+        if verbose:
+            print(f"  [{'OK  ' if good else 'FAIL'}] oracle re-score of the {label}: "
+                  f"report={claimed!r} oracle={got['score']!r} abs_diff={delta:.3e} | "
+                  f"worst metric rel={worst:.2e}"
+                  + (f" ({worst_key})" if worst_key else ""))
+    return ok
+
+
 def benchmark_table(report, mine=None):
     agg = mine if mine is not None else (report.get("aggregate") or {})
     base = float((report.get("baseline") or {}).get("score", float("nan")))
@@ -311,6 +360,7 @@ def analyze(target, registry_path=None, make_figures=True, verbose=True):
         print(f"  registry records: {len(reg)}")
 
     ok, mine = compare_aggregate(report, verbose=verbose)
+    ok &= rescore_report(report, verbose=verbose)
     table = benchmark_table(report, mine=mine)
     (out_dir / "benchmark_table.md").write_text(table)
     if verbose:

@@ -29,8 +29,18 @@ def synth_runs(budget=40):
     return runs
 
 
-def make_report(spec, baseline, budget=40, tamper_aggregate=False):
+def make_report(spec, baseline, budget=40, tamper_aggregate=False, tamper_best=False):
     spec_map = json.loads((TESTDATA / "golden_spec.json").read_text())["spec"]
+    grids = oracle.Grids(spec)
+    cost_ref = baseline["cost_proxy"]
+    base_eval = oracle.evaluate(baseline["design"], spec, cost_ref, grids)
+    # the winning design of a real stage-E/F benchmark run (runs/scratch/bench), copied
+    # as plain numbers so this fixture has no file dependency -- it beats the baseline
+    best_design = [0.34074440599674666, 1.0, 0.1, 0.3157946290596812,
+                   -0.20688985165708562, 0.012635023002828594,
+                   0.04049787940226826, 0.07602128113826669,
+                   624565.672280665, 10000.0, 2163774.4578687255, 529264.0963625956]
+    best_eval = oracle.evaluate(best_design, spec, cost_ref, grids)
     report = {
         "meta": {"tag": "demo", "timestamp": "1970-01-01T00:00:00Z", "budget": budget,
                  "seeds": [1, 2], "methods": ["random", "evolution", "evolution_warm"],
@@ -38,11 +48,11 @@ def make_report(spec, baseline, budget=40, tamper_aggregate=False):
                  "workers": 1},
         "spec": spec_map,
         "solver": "analytic-vacuum-loops",
-        "cost_ref": baseline["cost_proxy"],
-        "baseline": {"name": "textbook_mirror", "note": "", "score": -0.2905708160753513,
-                     "feasible": True, "terms": {"field": 0.0, "mirror": 0.2475,
-                                                 "volume": 0.7809, "ripple": 0.0, "cost": 1.0},
-                     "weighted": {}, "penalties": {}, "metrics": {},
+        "cost_ref": cost_ref,
+        "baseline": {"name": "textbook_mirror", "note": "", "score": base_eval["score"],
+                     "feasible": base_eval["feasible"], "terms": base_eval["terms"],
+                     "weighted": base_eval["weighted"], "penalties": base_eval["penalties"],
+                     "metrics": base_eval["metrics"],
                      "design": baseline["design"], "cost_proxy": baseline["cost_proxy"],
                      "design_id": "D0001"},
         "runs": synth_runs(budget),
@@ -51,11 +61,11 @@ def make_report(spec, baseline, budget=40, tamper_aggregate=False):
         "robustness": {"variants": [], "baseline_score_per_variant": {}, "per_design": {},
                        "summary": {}},
         "best": {"design_id": "D0007", "algorithm": "evolution_warm", "seed": 2,
-                 "score": -0.1, "terms": {}, "metrics": {},
-                 "design": [0.29, 0.52, 0.49, 0.31, -1.02, -0.26, 0.24, 0.98,
-                            1.7e6, 4.1e5, 5.1e5, 1.5e6], "feasible": True},
+                 "score": best_eval["score"] + (0.05 if tamper_best else 0.0),
+                 "terms": best_eval["terms"], "metrics": best_eval["metrics"],
+                 "design": best_design, "feasible": best_eval["feasible"]},
         "registry_summary": {"n_records": 240, "n_feasible": 240, "per_algorithm": {},
-                             "best_score": -0.1, "best_design_id": "D0007",
+                             "best_score": best_eval["score"], "best_design_id": "D0007",
                              "best_algorithm": "evolution_warm"},
     }
     mined = analyze.recompute_aggregate(report)
@@ -105,6 +115,29 @@ def test_analyze_goes_red_when_the_aggregate_disagrees(tmp_path, spec, baseline,
     assert analyze.analyze(run_dir) == 1
     out = capsys.readouterr().out
     assert "[FAIL] aggregate[" in out
+
+
+def test_rescore_agrees_with_the_report(spec, baseline, capsys):
+    report = make_report(spec, baseline)
+    assert analyze.rescore_report(report) is True
+    out = capsys.readouterr().out
+    assert "oracle re-score of the baseline" in out and "oracle re-score of the best" in out
+    assert "[OK  ]" in out
+    # the re-scored best really is the machine's winning design
+    assert report["best"]["score"] > report["baseline"]["score"]
+
+
+def test_rescore_goes_red_on_a_falsified_best_score(tmp_path, spec, baseline, capsys):
+    report = make_report(spec, baseline, tamper_best=True)
+    assert analyze.rescore_report(report, verbose=False) is False
+    run_dir = write_run_dir(tmp_path, report)
+    assert analyze.analyze(run_dir) == 1
+    assert "[FAIL] oracle re-score of the best" in capsys.readouterr().out
+
+
+def test_rescore_skips_a_report_without_a_spec(capsys):
+    assert analyze.rescore_report({"baseline": {"score": 0.0}}) is True
+    assert "skipped" in capsys.readouterr().out
 
 
 def test_best_so_far_curves_have_a_band_per_method(spec, baseline):
