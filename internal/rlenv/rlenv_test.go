@@ -448,6 +448,33 @@ func TestActionShapeAndTerminationAreLoud(t *testing.T) {
 		NewEnv(nil, spec, 4, 0.15)
 	})
 
+	t.Run("rollout input guards", func(t *testing.T) {
+		env := NewEnv(newToy(spec), spec, 4, 0.15)
+		// A nil environment and a non-positive step count are caller errors, and
+		// must be reported as such rather than silently rolled out as 0 steps.
+		func() {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Error("RandomPolicyRollout(nil, ...) did not fail loudly")
+				}
+			}()
+			RandomPolicyRollout(nil, 3, 1)
+		}()
+		func() {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Error("RandomPolicyRollout(env, 0, ...) did not fail loudly")
+				}
+			}()
+			RandomPolicyRollout(env, 0, 1)
+		}()
+		// The guards run before anything is evaluated, so a 0-step call must not
+		// have touched the scorer.
+		if sc := env.Sc.(*toyScorer); sc.calls != 0 {
+			t.Errorf("the rejected rollout spent %d evaluations", sc.calls)
+		}
+	})
+
 	t.Run("non-finite score panics", func(t *testing.T) {
 		sc := newToy(spec)
 		sc.nonFinite = true
