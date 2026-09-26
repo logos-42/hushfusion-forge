@@ -117,18 +117,29 @@ Python 参考实现（已逐条验证过解析锚点）产出的 golden 数值�
 
 ## 6. 验收门（parent 亲自跑，不采信自述）
 
+**权威是 `scripts/verify.sh`，不是本表**：本表是它的镜像，改门必须同时改这里。`$TAG` 是运行标签
+（如 `phase0`）。`_opt` 类门在缺少前置产物时**跳过**（`runs/$TAG` 不存在、上游目录不在），
+汇总行会分开报「通过 / 失败 / 跳过」——**跳过不等于通过**。
+
 | 门 | 命令 | 判据 |
 |---|---|---|
-| G1 编译/静态 | `go build ./... && go vet ./...` | 干净 |
-| G2 格式 | `gofmt -l .` | 无输出 |
-| G3 所有权冻结 | `go test ./internal/owners/` | 3 个测试全绿（含变异会红） |
-| G4 单元锚点 | `go test ./...` | 全绿 |
-| G5 跨语言 oracle | `python3 python/aux/oracle.py --check-golden testdata/` | 与 Go 相对差 < 1e-9 / score < 1e-6 |
-| G6 基线在搜索盒内 | `go test ./internal/baseline/ -run TestBaselineInsideSearchBox` | 人工基线解码后**不被裁剪**（否则"人机对比"分数对象不是同一个设计） |
-| G7 复现性 | `forge run --method evolution --seed 7` 跑两次 | best_score 完全一致 |
-| G8 registry 完整性 | `forge registry --check` | id 连续、parent 存在、必填字段齐全 |
-| G9 schema parity | `python3 python/aux/schema_check.py runs/phase0/registry.jsonl` | Go 记录字段与冻结 schema 一致 |
-| G10 反造假 | `go test ./internal/rlenv/ -run TestNoLearnedPolicy` | 未实现的策略必须显式报错，不许返回编造数值 |
+| G1 构建 | `go build ./...` | 编译干净 |
+| G2 静态检查 | `go vet ./...` | 无警告 |
+| G3 gofmt 干净 | `test -z "$(gofmt -l .)"` | 格式化是契约 |
+| G4 所有权冻结门 | `go test ./internal/owners/` | 无文件重叠、无未归口文件；该门自身经过变异测试 |
+| G5 单元测试 | `go test ./...` | 全绿（含解析锚点：轴上闭式解 / Helmholtz 幅值与均匀度 / 离散-解析 / div-curl） |
+| G6 基线在搜索盒内 | `go test ./internal/baseline/ -run TestBaselineInsideSearchBox` | 人工基线解码后**不被裁剪**（否则人机对比比的不是同一个设计） |
+| G7 无伪造策略（反造假门） | `go test ./internal/rlenv/ -run TestNoLearnedPolicy` | 未实现的策略必须显式报错，不许返回编造数值 |
+| G8 python oracle 对 golden | `python3 python/aux/oracle.py --check-golden testdata/` | 独立 oracle（不 import Go）复现 Go 引擎 |
+| G9 forge verify（端到端） | `go run ./cmd/forge verify` | CLI 端到端 |
+| G10 跨语言场一致性 | `forge xcheck` + `oracle.py --compare-go --proximity-floor 0.005` | 带 5 mm 钳位开关（约定不一致会稳定复现 4.05e-02） |
+| G11 注册表完整性 ($TAG) | `forge registry --check --registry runs/$TAG/registry.jsonl` | id 连续、parent 存在、必填字段齐全 |
+| G12 go/python schema 一致 ($TAG) | `python3 python/aux/schema_check.py runs/$TAG/registry.jsonl` | Go 记录与冻结 schema 一致（`^D(\d{4,})$`） |
+| G13 python 辅助层测试 | `python3 -m pytest python/tests -q` | 全绿 |
+| G14 规则对账（scipy） | `python3 python/aux/rules_check.py --rules knowledge/design_rules.md --registry runs/$TAG/registry.jsonl` | 规则表与实际记录对账 |
+| G15 出图 + 独立复评最优/基线 ($TAG) | `python3 python/aux/analyze.py runs/$TAG` | 独立复评最优与基线 |
+| G16 逐位复现 ($TAG) | `python3 scripts/repro_check.py $TAG` | `registry.jsonl` 剔 `tag`/`timestamp` 后 sha256 完全相同 |
+| G17 内部设计锚点门 | `python3 scripts/emit_pp_anchors.py --check && go test ./internal/design/` | 上游 ProjectionPhysics（`logos-42/Hibs-Physics`）的闭式解逐条复现；锚点来自工作区重跑产物（上游 `artifacts/` 不入 git），出处见 `testdata/projectionphysics_anchors.json` 的 `provenance` |
 
 ---
 

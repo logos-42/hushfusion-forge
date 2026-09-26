@@ -11,9 +11,15 @@ ProjectionPhysics 的内部设计里——场能不能撑住设计密度（PF3/F
 
 ## 1. 上游出处（唯一真源）
 
+> 上游 = **`logos-42/Hibs-Physics`**（本地工作副本 `/Users/apple/Downloads/lean/ProjectionPhysics`，读出时 commit `d28cd417b3f4`）。
+> 注意：上游 `artifacts/` **被 .gitignore 忽略、不在 git 树里** —— 锚点的真正出处是「本地重跑上游脚本的产物」，
+> 可用 `python3 scripts/verify_moire_field.py` 重放（实测重放后 `report.json` 逐字节相同，唯一差异是 `meta.date`）。
+> 本仓库不许把这件事写成「来自上游仓库提交的 artifacts」；锚点文件里记的是客观事实
+> （上游 commit / 实际读到的文件 / `upstream_artifacts_tracked_by_git: 0`）。
+
 | 内容 | 上游文件 |
 |:--|:--|
-| 公式本体（B_min / n_max / X_req / B_death / χ_μ / p_rel / v_rel） | `ProjectionPhysics/scripts/verify_moire_field.py` §常数 + `def n_max/B_min/n_op/tau_lawson/X_req/B_death/p_rel/v_rel/chi_mu` |
+| 公式本体（B_min / n_max / X_req / B_death / χ_μ / p_rel / v_rel） | `scripts/verify_moire_field.py` §常数 + `def n_max/B_min/n_op/tau_lawson/X_req/B_death/p_rel/v_rel/chi_mu` |
 | 锚点数字（七层账本 M1–M8） | `ProjectionPhysics/artifacts/moirefield/{report.json,summary.txt}` |
 | 工程参数表（ρ_i、τ_E、μ 工作区间、FC5） | `ProjectionPhysics/docs/wiki/theory-antigravity-confinement.md` §4/§6 |
 | μ 动力学（TD19–TD21：窗口余量 / 锁定因子 / 关闭步） | `ProjectionPhysics/artifacts/mudynamics/summary.txt` |
