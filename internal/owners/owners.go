@@ -35,6 +35,7 @@ var Stages = []Stage{
 			"go.mod",
 			"LICENSE",
 			"README.md",
+			"README.en.md",
 			"PLAN.md",
 			"CONTRACT.md",
 			".gitignore",
@@ -42,6 +43,7 @@ var Stages = []Stage{
 			"internal/owners/",
 			"testdata/",
 			"scripts/",
+			"knowledge/",
 		},
 	},
 	{
