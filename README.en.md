@@ -26,6 +26,20 @@ Phase 0 has exactly one acceptance question:
 > **Can the machine find a better electromagnetic design than a competent
 > human-designed baseline — and can that claim be independently reproduced?**
 
+**Phase 0, measured (12 001 records; 4 methods × 3 seeds × 1000 evaluations; 5.5 s of compute)**:
+best machine design `score = 1.381419` (`evolution_warm`, seed 0) against a human baseline of
+`−0.290571` — Δ = **+1.672**; all four methods beat the human on 3/3 seeds.
+
+Read it with three caveats, always (full text in `runs/phase0/report.md` §6 and [PLAN.md](PLAN.md)):
+the human baseline is weak *inside this box* (random search catches it after ~8 evaluations); the
+warm-start gain at a 1000-evaluation budget sits inside the noise (+0.004, with larger variance); and
+**the winner parks a coil 4.2 mm from the midplane scoring point** — the objective still has no
+conductor-clearance constraint, so it is most likely an unbuildable degenerate solution rather than a
+machine-designed device.
+
+Live status, data sources and the gate list: [docs/wiki/](docs/wiki/index.md) (wiki-first, versioned
+with the code).
+
 ---
 
 ## Architecture (Go is the primary stack; Python only assists)
@@ -96,8 +110,12 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 - `runs/<tag>/` — the evidence of a run: `registry.jsonl` (one line per evaluation), `results.json`, `report.md`, `figures/`
 - `knowledge/design_rules.md` — the knowledge base: rules with their evidence (rho, same-sign run count, decile contrast)
 - `testdata/golden_*.json` — frozen cross-language numeric anchors
-- `CONTRACT.md` — the parallel-build contract (file roster, numeric anchors, acceptance gates)
+- `CONTRACT.md` — the parallel-build contract (file roster, numeric anchors, acceptance gates, mainline rulings)
+- `docs/wiki/` — the **wiki-first knowledge system**: overview / current status / sources / repo strategy / changelog, plus 21 validation scripts
+- `manifests/raw_sources.csv` — registry of local raw originals (the originals themselves stay out of git)
 
-## License
+## Version and License
+
+`v0.1.0` — Phase 0: the design → score → record → learn loop runs, 16/16 gates green (`bash scripts/verify.sh phase0`).
 
 MIT — Copyright (c) 2026 LIU YUANJIE（刘元杰）

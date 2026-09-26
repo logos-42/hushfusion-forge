@@ -23,6 +23,17 @@ Phase 0 的验收问题只有一个：
 
 > **机器能不能找到一个比"人工设计基线"更好的电磁设计？而且这条结论能被独立复现。**
 
+**Phase 0 实测（12001 条记录，4 方法 × 3 seed × 1000 次评估，纯计算 5.5 s）**：
+机器最优 `score = 1.381419`（`evolution_warm` seed 0），人工基线 `−0.290571`，Δ = **+1.672**；
+4 种方法在 3/3 seed 上全部赢过人工基线。
+
+但必须连读三条限定（详见 `runs/phase0/report.md` §6 与 [PLAN.md](PLAN.md)）：
+人工基线在这个盒子里偏弱（随机搜索平均 8 次评估即追平）；热启动的增益在 1000 次预算下落在噪声里
+（+0.004，方差反而更大）；**最优解把一圈线圈放在距中场打分点 4.2 mm 处**——目标函数还没有
+"导体净空"约束，所以它很可能是**不可造的退化解**，而不是一台机器设计的装置。
+
+活的状态、数据来源与门禁清单见 [docs/wiki/](docs/wiki/index.md)（wiki-first，随代码一起版本化）。
+
 ---
 
 ## 架构（Go 为主栈，Python 只做辅助）
@@ -84,8 +95,13 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 - `runs/<tag>/` — 本次运行的证据：`registry.jsonl`（每次评估一行）、`results.json`、`report.md`、`figures/`
 - `knowledge/design_rules.md` — 知识库：带证据（ρ、同号 run 数、分位对比）的设计规则
 - `testdata/golden_*.json` — 冻结的跨语言数值锚点
-- `CONTRACT.md` — 并行构建合同（文件所有权名册、数值锚点、验收门）
+- `CONTRACT.md` — 并行构建合同（文件所有权名册、数值锚点、验收门、主线裁决）
+- `docs/wiki/` — **wiki-first 知识系统**：项目概览 / 当前状态 / 数据来源 / 仓库策略 / 变更日志
+  + 21 个校验脚本（`wiki_check.py`、`wiki_lint.py --strict=v2`、`raw_manifest_check.py` 等）
+- `manifests/raw_sources.csv` — 本地 raw 原件的登记表（原件本身不进 git，见 `docs/wiki/sources-and-data.md`）
 
-## License
+## 版本与 License
+
+`v0.1.0` —— Phase 0：设计 → 评分 → 记录 → 学习闭环可跑，16 道门全绿（`bash scripts/verify.sh phase0`）。
 
 MIT — Copyright (c) 2026 LIU YUANJIE（刘元杰）

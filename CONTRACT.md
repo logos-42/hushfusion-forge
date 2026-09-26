@@ -32,7 +32,8 @@ Phase 0 的验收问题只有一个：
 
 | Stage | 包/路径 | 所有者 |
 |---|---|---|
-| root | `go.mod` `LICENSE` `README.md` `PLAN.md` `CONTRACT.md` `.gitignore` `internal/config/` `internal/owners/` `testdata/` `scripts/` | parent |
+| root | `go.mod` `LICENSE` `README.md` `README.en.md` `PLAN.md` `CONTRACT.md` `.gitignore` `internal/config/` `internal/owners/` `testdata/` `scripts/` `knowledge/` | parent |
+| wiki | `docs/` `manifests/` `AGENTS.md` `CLAUDE.md` `.cursorrules` `.windsurfrules` `.claude/` `.github/` | parent（2026-09-26 接入 wiki-first 知识系统时新增） |
 | A | `internal/physics/` | agent-A |
 | B | `internal/objective/` `internal/baseline/` | agent-B |
 | C | `internal/registry/` `internal/runner/` | agent-C |
@@ -151,3 +152,19 @@ stage: <A..G>
   端到端由 parent 在收口后跑。
 - F 段的 CLI 依赖全部包；允许先 `go build ./cmd/forge` 通过即算完成编译级验证，端到端由 parent 跑。
 - G 段的 oracle 必须**独立实现**，不许 import `internal/`，也不许调用 Go 二进制来"验证" Go。
+
+---
+
+## 9. 主线裁决（2026-09-26 收口轮，全部有实测支撑）
+
+| 议题 | 裁决 | 证据 |
+|---|---|---|
+| `registry.AppendAssign`（C 段新增的导出符号） | **批准保留**。冻结签名 `Append(Record) error` 按值传参、拿不回它分配的 id，而 `NextIDs()+Append()` 是真竞态；搜索层要按 DesignID 建谱系，必须拿到**已落盘那条记录**的 id。已核实：无冻结签名/类型/JSON tag 被改，`Append` 委托给它，写入路径只有一条 | `go test -race ./internal/registry/`（100 goroutine 无缺口）；`runs/phase0/registry.jsonl` 经 `registry --check` 与 `schema_check.py` 双门 PASS |
+| `internal/rlenv` 的 `ObsMetricValue`（F 段新增导出） | **批准保留**（观测槽取值的单一映射点；未知键 panic） | G7 反造假门 + `forge verify` 的 rlenv 槽位检查 |
+| 近导线 5 mm 的 `alpha2` 钳位语义 | **冻结为官方定义**：对**任意**采样点距导线 < 5e-3 m 即钳位。跨语言比场必须带 `--proximity-floor 0.005` | 带钳位：Go 与 scipy 差 1.7e-15；不带：稳定复现 4.05e-02（同一最优设计，反事实对照）。`verify.sh` G10 已写死该开关 |
+| `search.WarmStartDesign` 用字面量而非 import `internal/baseline` | **保留现状**：依赖箭头里没有 search→baseline；该字面量被 `testdata/golden_baseline.json` 硬校验（最大相对差 7.9e-11） | D 段隔离副本旁路核对 |
+| `internal/objective` 让 NaN 传播（不夹成有限值） | **保留**：物理层吐 NaN 时，分数就该是 NaN 而不是一个假的有限值 | B 段单测；`feasible` 判定与 Python `all(v<=0)` 对齐 |
+| `baseline.TextbookMirror` 解出的电流越界即 error（不返回被裁剪的基线） | **保留**：否则"人机对比"比的不是同一个设计 | G6 |
+| `golden_*.json` 里 bool/int 被写成 JSON 浮点（`"n_coils": 4.0`） | **暂不迁移**：三个阶段各用 `map[string]float64` 兜住，迁移的收益不抵最后一刻动真值的风险。列入 Phase 2 的 schema 迁移 | 现存 goldens 由 `oracle.py --check-golden` 全绿复核 |
+| `rlenv` 观测槽 6（`cost_proxy`/1.0 ≈ 1.8e12）量纲极差 | **记入 Phase 1 前置**：改为按基线 cost 归一，需同步改冻结的 `ObsMetricRefs` | 见 PLAN.md Phase 1 清单 |
+| 报告 §4 设计谱系偏薄（`registry.BranchImprovement()` 未进报告） | **记入 Phase 1**：报告 schema 冻结，加字段需同步 schema_check 与报告测试 | `runs/phase0/report.md` §4 |

@@ -16,3 +16,9 @@ venv/
 # scratch and throwaway comparison files do not
 runs/scratch/
 runs/**/*.tmp
+
+# raw 原件(与仓库平级的本地 raw 根,外加编辑器状态): 只进 manifest,不进 git
+.obsidian/
+raw/
+raw_local/
+raw_vault/

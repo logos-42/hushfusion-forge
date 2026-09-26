@@ -64,23 +64,69 @@ NVIDIA 厉害的不是 GPU，而是把 GPU 经营成一个自我强化的工业�
 
 | 项 | 落地 | 状态 |
 |---|---|---|
-| 参数化线圈（r, z, I）×4 | `internal/physics` | 已冻结接口，实现中 |
-| 电磁场计算（Biot–Savart） | `internal/physics/magnet.go` | 同上（含独立第二种实现） |
-| 目标函数（场强/镜比/体积/纹波/造价/约束） | `internal/objective` | 同上 |
-| 随机/分层/进化搜索 | `internal/search` | 同上 |
-| 每次评估落盘（含 term 分解） | `internal/registry`+`runner` | 同上 |
-| performance vs iteration 曲线 | `internal/report` + `python/aux/analyze.py` | 同上 |
-| 一页"我们学到了什么" | `internal/knowledge` → `knowledge/design_rules.md` | 同上 |
+| 参数化线圈（r, z, I）×4 | `internal/physics` | ✅ 已实现（19 项解析锚点：轴上闭式 2.98e-16、Helmholtz 均匀度 1.14e-4、离散-解析 1.19e-14、div/curl 1.4e-10） |
+| 电磁场计算（Biot–Savart） | `internal/physics/magnet.go` | ✅ 两条独立代码路径互验（AGM 椭圆积分 + 分段级数） |
+| 目标函数（场强/镜比/体积/纹波/造价/约束） | `internal/objective` | ✅ 分数可位级回算（`Σweighted − w·Σpenalties`） |
+| 随机/分层/进化/热启动进化 | `internal/search` | ✅ 等预算整数性、位级复现性、Workers 不变性全绿 |
+| 每次评估落盘（含 term 分解 + 谱系） | `internal/registry`+`runner` | ✅ 100 goroutine 并发无缺口；截断尾部自修复 |
+| performance vs iteration 曲线 | `internal/report` + `python/aux/analyze.py` | ✅ 报告 7 章节 + 出图 + 独立复评 |
+| 一页"我们学到了什么" | `internal/knowledge` → `knowledge/design_rules.md` | ✅ 规则由「每个 run 同号」硬过滤挖出，scipy 独立对账 |
+
+**Phase 0 实测结果**（2026-09-26，`runs/phase0/`，12001 条记录，4 方法 × 3 seed × 1000 次评估，纯计算 5.5 s）：
+
+| method | seeds | best mean | best std | 赢基线 | evals-to-beat(mean) |
+|---|---:|---:|---:|---:|---:|
+| 人工基线 `textbook_mirror` | — | −0.290571 | — | — | — |
+| `evolution` | 3 | **1.303252** | 0.015924 | 3/3 | 8.3 |
+| `evolution_warm` | 3 | **1.307292** | 0.064361 | 3/3 | 11.3 |
+| `lhs` | 3 | 0.628765 | 0.021582 | 3/3 | 14.0 |
+| `random` | 3 | 0.838502 | 0.191865 | 3/3 | 8.0 |
+
+机器最优 **D9857，score = 1.381419**（evolution_warm, seed 0），Δ vs 人类 = **+1.672**。
+三个必须一起说的事实（`runs/phase0/report.md` §6 有全文）：
+
+1. **人工基线在这个盒子里是弱基线**：随机搜索平均 8 次评估就追平它。它赢在"是个真装置"，不赢在指标。
+2. **热启动的增益在 1000 次预算下接近噪声**（1.3073 vs 1.3033，后者方差还更小）——
+   `evolution_warm` 只是把收敛前的初始位置提前，长预算下被追平。**"继承知识值多少钱"这一问
+   在 Phase 0 的答案是：在这个预算下 ≈ 0**，必须换更硬的判据（更小预算、跨任务迁移）才能测出来。
+3. **最优点在靠奇异性得分**（见下节），这是 Phase 0 最重要的负面结果。
+
+### Phase 0 的一个真实发现：最优设计踩在钳位半径上
+
+D9857 把两个线圈摆在 `a=0.10 m`、`z=−0.058 / +0.0042 m`，其中一圈距中场采样点仅
+**4.196 mm**——落在求解器 5 mm 的 `alpha2` 钳位半径**之内**。后果（两次独立复算实证）：
+
+| 复算方式 | B_mid | 与 Go 记录值的差 |
+|---|---:|---:|
+| Go 记录值（钳位） | 9.4119443 T | — |
+| Python oracle + 同样的 5 mm 钳位 | 9.4119443 T | **1.7e-15** |
+| Python oracle 不钳位（精确闭式） | 9.7930532 T | 4.05e-02 |
+
+结论有两层，都要记：
+
+- **工程上**：目标函数目前允许"把导体贴到打分点旁边"来换中场强。真实装置不可能在约束区域内部
+  放一圈 0.1 m 半径、1.78 MA 的线圈。**所以这个"最优设计"很可能不是可造的装置**，
+  而是一个被目标函数合法利用的退化解。
+- **数值上**：跨语言比场时必须对齐钳位半径（`--proximity-floor 0.005`），否则 1e-2 量级的
+  "分歧"会周期性出现——那是约定不一致，不是 bug。这条已写死进 `scripts/verify.sh` G10。
+
+**因此 Phase 1 的第一件事不是新算法，而是补一条"可造性"约束**（导体到约束区域的净空）：
 
 ### Phase 1 — 让系统学会设计（Day 8–30）
 
 **目标：让搜索带着上一轮的知识跑。** 产物：**Fusion Design Agent v0.1**
 
+- [ ] **补可造性约束（Phase 1 第一件事）**：导体到约束区域的最小净空（clearance）进 penalty 组，
+      然后跑**消融**：加约束前后，机器对人工基线的那 +1.672 还剩多少？这是本仓第一个真正的
+      "物理约束值多少钱"实验，也是把退化解踢出最优位的唯一方法。
 - [ ] Bayesian optimization（GP/代理模型）与 evolution 等预算对比
 - [ ] 把 `internal/rlenv` 接到已有的 OaK/持续学习实现上（**接口已就位，环境已完整，只缺策略**）
 - [ ] 设计规则作为搜索先验：`knowledge.RuleExpectation` 做**消融**（有先验 vs 无先验，同预算）
 - [ ] benchmark 表加入 `泛化` 列（已有判据：六个需求扰动变体的稳健性探针）
 - [ ] 设计注册表的谱系分析产出"哪个分支改进最多"
+- [ ] `rlenv` 观测槽 6（`cost_proxy`）改为按基线 cost 归一——现在是原始量级的 1.8e12，对策略是量纲极差的特征（需同步改冻结的 `ObsMetricRefs`）
+- [ ] 报告 §4 接入 `registry.BranchImprovement()` 的分支增益表（报告 schema 冻结，加字段需同步 schema_check 与报告测试）
+- [ ] 小预算阶梯（50/100/200）重测热启动增益——1000 次预算下它落在噪声里（+0.004，方差更大）
 
 判据：多 seed、等预算、消融齐全；RL 必须与 random policy 与 evolution 同时对比，不允许"RL=一切"。
 
@@ -156,3 +202,8 @@ bash scripts/verify.sh phase0                  # 全部门：物理锚点 + 跨�
   只报总分等于隐去信息。
 - grid search 在 D=12 维下不可行（每轴 5 点 = 2.4e8 次），本仓用 LHS 作为诚实替代，
   并在报告里写明这个替换，而不是含糊过去。
+- **最优解的合法性未经物理审查**：D9857 的线圈贴着中场采样点（4.2 mm），它的分数部分是
+  目标函数允许的退化解（详见 §3 Phase 0 发现）。任何引用 `score = 1.381419` 的场合都必须
+  连带这句限定，否则就是把一个不可造的位形说成"机器设计的装置"。
+- `evolution_warm` 与 `evolution` 的差在 1000 次预算下不显著（+0.004，方差反而更大）。
+  **"知识复用有正收益"这句话在 Phase 0 尚未被证实**，不许在 Phase 1 之前当成结论引用。
