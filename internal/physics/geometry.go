@@ -1,8 +1,7 @@
-// Device parameterisation and evaluation grids (stage A).
+// 装置参数化与求值网格 (stage A)。
 //
-// Mirrors forge/physics/geometry.py exactly, including the sample ordering of
-// the stacked grids: golden comparisons slice the stacked arrays by
-// [NAxis, NMid], so both the order and the count are part of the contract.
+// 精确镜像 forge/physics/geometry.py, 包括堆叠网格的采样次序: golden 比较按
+// [NAxis, NMid] 切分堆叠数组, 所以次序和数量都是契约的一部分。
 package physics
 
 import (
@@ -14,15 +13,13 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/config"
 )
 
-// midplaneZSamples is the fixed axial sample count of the midplane volume. The
-// frozen buildGrids doc comment pins it at 5 (the Python reference hard-codes
-// linspace(-ZMid, ZMid, 5) for the midplane even though the cell volume uses
-// spec.NVolZ).
+// midplaneZSamples 是中平面体积固定的轴向采样点数。冻结的 buildGrids 文档注释把它
+// 钉在 5 上 (Python 参考实现即使元胞体积用的是 spec.NVolZ, 中平面仍然硬编码为
+// linspace(-ZMid, ZMid, 5))。
 const midplaneZSamples = 5
 
-// linspace matches numpy.linspace(lo, hi, n): n evenly spaced values with both
-// endpoints included, the last one set to hi exactly (numpy does the same
-// final assignment, which removes the accumulated rounding at the endpoint).
+// linspace 对应 numpy.linspace(lo, hi, n): n 个均匀间距的值, 两端点都包含, 最后一个
+// 被精确置为 hi (numpy 也做同样的收尾赋值, 这消除了端点上累积的舍入误差)。
 func linspace(lo, hi float64, n int) []float64 {
 	if n <= 0 {
 		return nil
@@ -40,15 +37,15 @@ func linspace(lo, hi float64, n int) []float64 {
 	return out
 }
 
-// buildGrids builds the stacked sample points
-// [axis (r=0) | midplane volume | cell volume] in the frozen order:
+// buildGrids 按冻结的次序构造堆叠采样点
+// [轴上 (r=0) | 中平面体积 | 元胞体积]:
 //
 //	axis   : linspace(-ZAxisMax, ZAxisMax, NAxis), r = 0
 //	mid    : meshgrid(linspace(0, RPlasma, NVolR), linspace(-ZMid, ZMid, 5), "ij")
 //	cell   : meshgrid(linspace(0, RPlasma, NVolR), linspace(-ZCell, ZCell, NVolZ), "ij")
 //
-// With meshgrid(..., "ij") the *radius* varies slowest, so the flattened order
-// is (r_0, z_0), (r_0, z_1), ... , (r_1, z_0), ...
+// 使用 meshgrid(..., "ij") 时*半径*变化最慢, 所以展平后的次序是
+// (r_0, z_0), (r_0, z_1), ... , (r_1, z_0), ...
 func buildGrids(spec config.Spec) Grids {
 	axisZ := linspace(-spec.ZAxisMax, spec.ZAxisMax, spec.NAxis)
 	radii := linspace(0, spec.RPlasma, spec.NVolR)
@@ -102,10 +99,9 @@ func buildGrids(spec config.Spec) Grids {
 	}
 }
 
-// vectorToCoils decodes [r_0..r_K, z_0..z_K, I_0..I_K], clipping every entry to
-// the spec bounds and sorting the coils by z (stable, so equal-z coils keep the
-// vector order). The stable z-sort is the canonical form that removes the K!
-// permutation degeneracy without changing the machine.
+// vectorToCoils 解码 [r_0..r_K, z_0..z_K, I_0..I_K], 把每一项裁剪到 spec 边界, 并按
+// z 排序线圈 (稳定排序, 所以 z 相等的线圈保持它们在向量里的次序)。这个稳定的 z 排序
+// 就是规范形式, 它在不改变机器的前提下消除了 K! 排列简并。
 func vectorToCoils(x []float64, spec config.Spec) ([]Coil, error) {
 	want := spec.NParams()
 	if len(x) != want {
@@ -128,8 +124,7 @@ func vectorToCoils(x []float64, spec config.Spec) ([]Coil, error) {
 	return coils, nil
 }
 
-// clampVec is numpy.clip(v, lo, hi): NaN propagates, otherwise the value is
-// pinned into [lo, hi].
+// clampVec 对应 numpy.clip(v, lo, hi): NaN 会传播, 其它情况下把值钉进 [lo, hi]。
 func clampVec(v, lo, hi float64) float64 {
 	if v < lo {
 		return lo
@@ -140,8 +135,7 @@ func clampVec(v, lo, hi float64) float64 {
 	return v
 }
 
-// coilsToVector encodes coils in any order into the canonical vector
-// (z-ascending, stable).
+// coilsToVector 把任意顺序的线圈编码成规范向量 (按 z 升序, 稳定)。
 func coilsToVector(coils []Coil) []float64 {
 	ordered := make([]Coil, len(coils))
 	copy(ordered, coils)
@@ -160,9 +154,8 @@ func coilsToVector(coils []Coil) []float64 {
 	return out
 }
 
-// randomDesign draws a uniform sample of the search box and returns it in
-// canonical order (clipped + z-sorted), so search never evaluates a permutation
-// of a design it has already seen.
+// randomDesign 对搜索盒子做均匀采样, 并以规范次序返回它 (已裁剪 + 已按 z 排序), 这样
+// 搜索永远不会去评估一个已经见过的设计的排列。
 func randomDesign(rng *rand.Rand, spec config.Spec) []float64 {
 	lo, hi := spec.Lower(), spec.Upper()
 	x := make([]float64, len(lo))

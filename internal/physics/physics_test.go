@@ -12,22 +12,22 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
 const (
 	testdataDir = "../../testdata"
 
-	// frozen tolerances from CONTRACT.md / api.go
-	tolAxis       = 1e-12 // on-axis closed form vs textbook formula
-	tolHelmholtz  = 1e-12 // Helmholtz centre field
+	// 来自 CONTRACT.md / api.go 的冻结容差
+	tolAxis       = 1e-12 // 轴上闭式解对照教科书公式
+	tolHelmholtz  = 1e-12 // Helmholtz 中心场
 	uniHelmholtz  = 1.2e-4
-	tolDiscrete   = 1e-9 // discrete sum vs closed form at nSeg = 512
+	tolDiscrete   = 1e-9 // nSeg = 512 时离散和对照闭式解
 	tolGoldenFld  = 1e-9 // golden_field_samples.json
-	tolGoldenMet  = 1e-6 // golden_baseline.json metrics
-	tolVacuumId   = 1e-5 // div B / curl B by central differences
+	tolGoldenMet  = 1e-6 // golden_baseline.json 的度量
+	tolVacuumId   = 1e-5 // 用中心差分算 div B / curl B
 	discreteNSeg  = 512
-	awayFromWireM = 5e-2 // "away from the wire" for the 512-segment anchor
+	awayFromWireM = 5e-2 // 512 段锚点所要求的 "离导线较远"
 )
 
 func relDiff(got, want float64) float64 {
@@ -39,21 +39,17 @@ func checkRel(t *testing.T, what string, got, want, tol float64) {
 	checkRelScaled(t, what, got, want, 0, tol)
 }
 
-// zeroRoundoff is the absolute criterion used where a reference value is
-// exactly zero. |B| is the natural scale, and floating-point cancellation of
-// terms of that size leaves a residual of ~1e-16*|B| per operation; 1e-14*|B|
-// leaves two decades of headroom while still asserting "roundoff, not physics".
+// zeroRoundoff 是参考值恰好为零时使用的绝对判据。|B| 是自然的尺度, 该量级的项在浮点
+// 抵消后每次运算留下约 1e-16*|B| 的残差; 1e-14*|B| 留出两个数量级的余量, 同时仍然断言
+// "这是舍入误差, 不是物理"。
 const zeroRoundoff = 1e-14
 
-// checkRelScaled is the relative comparison used for the golden field samples.
+// checkRelScaled 是用于 golden 场样本的相对比较。
 //
-// One golden entry is exactly 0.0 because the configuration is symmetric
-// (textbook_mirror sample 28 sits on the midplane of a z-symmetric coil set, so
-// B_r cancels exactly in the reference implementation). A relative criterion is
-// vacuous for a zero reference, so that single case is stated as an absolute
-// one: |got| <= zeroRoundoff*|B| at that point. Every non-zero component is
-// still compared relatively at the frozen 1e-9 -- the zero branch never applies
-// to them, so this is not a relaxation of the anchor.
+// 其中一个 golden 条目恰好是 0.0, 因为该构型是对称的 (textbook_mirror 的第 28 个样本
+// 位于 z 对称线圈组的中平面上, 于是 B_r 在参考实现里精确抵消)。相对判据对零参考值是
+// 空洞的, 所以那个单例被表述为绝对判据: 该点处 |got| <= zeroRoundoff*|B|。每一个非零
+// 分量仍然按冻结的 1e-9 做相对比较 —— 零分支从不适用于它们, 所以这不是对锚点的放宽。
 func checkRelScaled(t *testing.T, what string, got, want, scale, tol float64) {
 	t.Helper()
 	if math.IsNaN(got) || math.IsInf(got, 0) {
@@ -102,7 +98,7 @@ func testCoils(x []float64) []Coil {
 	return out
 }
 
-// wireDistance is the smallest distance from (r, z) to any coil wire.
+// wireDistance 是从 (r, z) 到任一线圈导线的最小距离。
 func wireDistance(coils []Coil, r, z float64) float64 {
 	best := math.Inf(1)
 	for _, c := range coils {
@@ -114,7 +110,7 @@ func wireDistance(coils []Coil, r, z float64) float64 {
 }
 
 // ---------------------------------------------------------------------------
-// golden data shapes
+// golden 数据的结构
 // ---------------------------------------------------------------------------
 
 type goldenSamples struct {
@@ -152,12 +148,12 @@ type goldenBaseline struct {
 }
 
 // ---------------------------------------------------------------------------
-// 1. elliptic integrals (AGM) against the independent scipy values
+// 1. 椭圆积分 (AGM) 对照独立的 scipy 值
 // ---------------------------------------------------------------------------
 
 func TestEllipticKEAgainstScipy(t *testing.T) {
-	// K(m), E(m) from scipy.special.ellipk / ellipe (the reference oracle's
-	// own integrators); Go must reproduce them.
+	// K(m)、E(m) 来自 scipy.special.ellipk / ellipe (即参考 oracle 自己的积分器);
+	// Go 必须复现它们。
 	cases := []struct {
 		m, k, e float64
 	}{
@@ -177,17 +173,14 @@ func TestEllipticKEAgainstScipy(t *testing.T) {
 		{0.999999999, 11.747927296421043, 1.0000000056239633},
 		{1 - 1e-12, 15.201815980070121, 1.0000000000073508},
 	}
-	// Tolerances are the measured, understood achievable bounds of the frozen
-	// AGM formula in double precision -- not arbitrary slack. They are far
-	// tighter than anything the field anchors need (1e-9), and they exist to
-	// catch exactly the class of bug this test was written after: an earlier
-	// revision stopped the iteration on an absolute criterion that could never
-	// fire (see keEps in magnet.go) and lost 7.8e-14 on E(0.5), which a loose
-	// 1e-12 gate accepted.
+	// 容差是冻结的 AGM 公式在双精度下实测并已理解的可达界限 —— 不是随手放宽的松弛量。
+	// 它们比任何场锚点所需 (1e-9) 都紧得多, 存在的目的正是抓这个测试被写出来要抓的那
+	// 一类 bug: 早先的一个修订版用绝对判据来停止迭代, 而那个判据永远不会触发
+	// (见 magnet.go 的 keEps), 于是 E(0.5) 丢了 7.8e-14, 而一个宽松的 1e-12 门居然
+	// 接受了它。
 	//
-	// Regime split: E = K*(1 - sum), and as m -> 1 the sum approaches 1, so the
-	// subtraction loses ~1 digit: the floor is eps/|1-sum| which reaches
-	// ~2e-15 at m = 1-1e-12. Below m = 0.99 there is no such cancellation.
+	// 分区: E = K*(1 - sum), 当 m -> 1 时 sum 趋近 1, 于是这次减法丢掉约 1 位:
+	// 下限是 eps/|1-sum|, 在 m = 1-1e-12 处达到约 2e-15。m = 0.99 以下没有这种抵消。
 	worstK, worstE, worstEnear := 0.0, 0.0, 0.0
 	for _, c := range cases {
 		tol := 1e-15
@@ -206,13 +199,13 @@ func TestEllipticKEAgainstScipy(t *testing.T) {
 	}
 	t.Logf("worst vs scipy over %d m values: K %.2e, E(m<=0.99) %.2e, E(m>0.99) %.2e", len(cases), worstK, worstE, worstEnear)
 
-	// m = 0 is exact: K = E = pi/2.
+	// m = 0 是精确的: K = E = pi/2。
 	k0, e0 := ellipticKE(0)
 	if k0 != math.Pi/2 || e0 != math.Pi/2 {
 		t.Errorf("K(0)=%.17g E(0)=%.17g, want exactly pi/2=%.17g", k0, e0, math.Pi/2)
 	}
-	// Out of the frozen domain m in [0,1): reported as the limit, never as a
-	// silently finite number pretending to be K(1e-12 away from 1).
+	// 落在冻结定义域 m 属于 [0,1) 之外: 按极限上报, 绝不悄悄地给出一个有限数假装它是
+	// 距 1 仅 1e-12 的 K。
 	if k1, e1 := ellipticKE(1.0); !math.IsInf(k1, 1) || e1 != 1 {
 		t.Errorf("K(1)=%v E(1)=%v, want +Inf/1 (K diverges, E(1)=1)", k1, e1)
 	}
@@ -227,7 +220,7 @@ func strconvF(v float64) string {
 }
 
 // ---------------------------------------------------------------------------
-// 2. on-axis anchor: B_z(0,z) = mu0*I*a^2 / (2*(a^2+z^2)^1.5), B_r(0,z) = 0
+// 2. 轴上锚点: B_z(0,z) = mu0*I*a^2 / (2*(a^2+z^2)^1.5), B_r(0,z) = 0
 // ---------------------------------------------------------------------------
 
 func TestOnAxisAnchor(t *testing.T) {
@@ -247,7 +240,7 @@ func TestOnAxisAnchor(t *testing.T) {
 				mustFinite(t, "B_z(axis)", bz)
 				worstAxis = math.Max(worstAxis, math.Abs(bz-want)/want)
 
-				// OnAxisField must agree with the general evaluator.
+				// OnAxisField 必须与一般求值器一致。
 				got := onAxisField([]Coil{{Radius: a, Z: 0, Current: i}}, []float64{z})[0]
 				checkRel(t, "OnAxisField", got, want, tolAxis)
 			}
@@ -256,7 +249,7 @@ func TestOnAxisAnchor(t *testing.T) {
 	t.Logf("on-axis anchor: worst rel diff over %d (a, I, z) combinations: %.3e (tol %.0e)",
 		len(radii)*len(currents)*len(zs), worstAxis, tolAxis)
 
-	// Superposed on-axis field: two loops at +-0.25 (a Helmholtz-ish pair).
+	// 叠加后的轴上场: 两个位于 +-0.25 的环 (一对类 Helmholtz 的环)。
 	coils := []Coil{{Radius: 0.5, Z: -0.25, Current: 4.6322263959687366e5}, {Radius: 0.5, Z: 0.25, Current: 4.6322263959687366e5}}
 	z := []float64{-1, 0, 0.5}
 	got := onAxisField(coils, z)
@@ -271,7 +264,7 @@ func TestOnAxisAnchor(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Helmholtz anchor
+// 3. Helmholtz 锚点
 // ---------------------------------------------------------------------------
 
 func TestHelmholtzAnchor(t *testing.T) {
@@ -286,7 +279,7 @@ func TestHelmholtzAnchor(t *testing.T) {
 		want := math.Pow(4.0/5.0, 1.5) * config.MU0 * c.i / c.a
 		checkRel(t, "Helmholtz centre field", got, want, tolHelmholtz)
 
-		// Non-uniformity inside |z| <= 0.1a.
+		// |z| <= 0.1a 之内的不均匀度。
 		const n = 201
 		vals := make([]float64, n)
 		zs := make([]float64, n)
@@ -317,7 +310,7 @@ func TestHelmholtzAnchor(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. independent discrete Biot-Savart sum vs closed form
+// 4. 独立的离散 Biot-Savart 求和对照闭式解
 // ---------------------------------------------------------------------------
 
 func TestDiscreteMatchesAnalytic(t *testing.T) {
@@ -327,8 +320,8 @@ func TestDiscreteMatchesAnalytic(t *testing.T) {
 		{Radius: 0.3, Z: -1.0, Current: 1621279.2385890577},
 		{Radius: 0.3, Z: 1.0, Current: 1621279.2385890577},
 	}
-	// A sweep of points, filtered to "away from the wire" (>= 5 cm, see the
-	// honest limit documented in TestDiscreteConvergence).
+	// 一批扫描点, 过滤到 "离导线较远" (>= 5 cm, 见 TestDiscreteConvergence 中记录的
+	// 诚实边界)。
 	var rs, zs []float64
 	for _, r := range []float64{0, 0.02, 0.05, 0.15, 0.25, 0.45, 0.75, 1.1, 2.0} {
 		for _, z := range []float64{0, 0.1, 0.4, 0.8, 1.2, 1.6, -0.6, -1.35, 2.5} {
@@ -360,7 +353,7 @@ func TestDiscreteMatchesAnalytic(t *testing.T) {
 		t.Errorf("discrete vs analytic worst rel diff %.3e >= %.3e", worst, tolDiscrete)
 	}
 
-	// The same check on the golden sample points that sit away from the wire.
+	// 对位于离导线较远处的 golden 采样点做同样的检查。
 	var g goldenSamples
 	loadJSON(t, "golden_field_samples.json", &g)
 	n := 0
@@ -382,11 +375,9 @@ func TestDiscreteMatchesAnalytic(t *testing.T) {
 	t.Logf("golden sample points with wire distance >= %.3g m: %d", awayFromWireM, n)
 }
 
-// TestDiscreteConvergence records where the 512-segment anchor stops holding:
-// the midpoint sum converges geometrically in nSeg, with a rate that degrades as
-// the sample approaches the wire. At 5 cm the error is at machine precision;
-// at 1 cm it needs ~1440 segments. This is the honest boundary of the "< 1e-9
-// for nSeg >= 512" claim, measured rather than assumed.
+// TestDiscreteConvergence 记录 512 段锚点从哪里开始不再成立: 中点求和按 nSeg 几何
+// 收敛, 收敛率随采样点靠近导线而退化。在 5 cm 处误差已在机器精度; 在 1 cm 处需要
+// ~1440 段。这就是 "< 1e-9 for nSeg >= 512" 这一说法的诚实边界, 是量出来的而非假定。
 func TestDiscreteConvergence(t *testing.T) {
 	const a, i = 0.5, 1.0e6
 	coils := []Coil{{Radius: a, Current: i}}
@@ -403,8 +394,7 @@ func TestDiscreteConvergence(t *testing.T) {
 	if e512 >= tolDiscrete {
 		t.Errorf("at 5 cm from the wire, nSeg=512 rel diff %.3e >= %.3e", e512, tolDiscrete)
 	}
-	// Measured boundary (documented, not asserted as a pass/fail gate): the
-	// 512-segment anchor is NOT valid this close to the wire.
+	// 实测边界 (仅记录, 不作为通过/失败的门): 离导线这么近时 512 段锚点并**不**成立。
 	close512 := at(0.01, 512)
 	t.Logf("wire distance 0.01 m: rel diff 512=%.3e, 1440=%.3e (512 is below the 1e-9 anchor here)", close512, at(0.01, 1440))
 	if close512 <= tolDiscrete {
@@ -413,7 +403,7 @@ func TestDiscreteConvergence(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. golden field samples (cross-language truth, 3 designs x 32 points)
+// 5. golden 场样本 (跨语言真值, 3 个设计 x 32 个点)
 // ---------------------------------------------------------------------------
 
 func TestGoldenFieldSamples(t *testing.T) {
@@ -432,7 +422,7 @@ func TestGoldenFieldSamples(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: decode design: %v", s.DesignName, err)
 		}
-		// The design must already be canonical (z ascending): the golden data is.
+		// 设计必须已经是规范形式 (z 升序): golden 数据就是。
 		for i := 1; i < len(coils); i++ {
 			if coils[i].Z < coils[i-1].Z {
 				t.Fatalf("%s: golden design is not z-sorted", s.DesignName)
@@ -454,8 +444,8 @@ func TestGoldenFieldSamples(t *testing.T) {
 			checkRelScaled(t, s.DesignName+" B_z["+strconvF(float64(i))+"]", bz[0], s.Bz[i], s.BMag[i], tolGoldenFld)
 			checkRelScaled(t, s.DesignName+" |B|["+strconvF(float64(i))+"]", mag[i], s.BMag[i], s.BMag[i], tolGoldenFld)
 			if s.Br[i] == 0 {
-				// Golden exactly zero (exact symmetry cancellation): the check
-				// inside checkRelScaled demands a roundoff-level residual.
+				// golden 值精确为零 (对称性精确抵消): checkRelScaled 内部的检查
+				// 要求残差处于舍入水平。
 				zeroCancels++
 			} else {
 				worst = math.Max(worst, math.Abs(br[0]-s.Br[i])/math.Abs(s.Br[i]))
@@ -472,7 +462,7 @@ func TestGoldenFieldSamples(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. golden baseline metrics (< 1e-6 relative on every field)
+// 6. golden 基线度量 (每个场都 < 1e-6 相对)
 // ---------------------------------------------------------------------------
 
 func TestGoldenBaselineMetrics(t *testing.T) {
@@ -483,7 +473,7 @@ func TestGoldenBaselineMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode baseline design: %v", err)
 	}
-	// The golden design is the canonical encoding of the baseline.
+	// golden 的设计就是该基线的规范编码。
 	round := CoilsToVector(coils)
 	if len(round) != len(gb.Design) {
 		t.Fatalf("round trip length %d != %d", len(round), len(gb.Design))
@@ -495,12 +485,12 @@ func TestGoldenBaselineMetrics(t *testing.T) {
 	grids := BuildGrids(spec)
 	m := MetricsFor(coils, spec, grids, AnalyticSolver{})
 	t.Logf("golden baseline metrics: worst rel diff %.3e (tol %.0e)", checkGoldenMetrics(t, "textbook_mirror", m, gb.Metrics), tolGoldenMet)
-	// cost_proxy of the baseline is the objective's cost reference.
+	// 基线的 cost_proxy 就是目标函数的成本参考值。
 	checkRel(t, "cost_ref", m.CostProxy, gb.CostRef, tolGoldenMet)
 }
 
-// checkGoldenMetrics compares every metric and returns the worst relative
-// difference seen (so callers can log the evidence, not just pass/fail).
+// checkGoldenMetrics 比较每一个度量并返回所见到的最差相对差值 (这样调用方可以记录
+// 证据, 而不只是通过/失败)。
 func checkGoldenMetrics(t *testing.T, name string, got Metrics, want goldenMetrics) float64 {
 	t.Helper()
 	pairs := [][2]float64{
@@ -536,11 +526,10 @@ func checkGoldenMetrics(t *testing.T, name string, got Metrics, want goldenMetri
 	return worst
 }
 
-// TestCrossLanguageMetrics three extra designs, whose metrics were produced by
-// the protected Python reference (forge/physics/plasma_model.py at commit
-// 4375c9a) with the analytic solver over the same spec/grids. They exercise
-// paths the baseline alone does not: non-zero ripple, volume_good = 1.0 and
-// rippled multi-coil interiors.
+// TestCrossLanguageMetrics 用另外三个设计, 它们的度量由受保护的 Python 参考实现
+// (forge/physics/plasma_model.py, commit 4375c9a) 用解析 solver 在同一个 spec/grids 上
+// 产生。它们走过仅靠基线覆盖不到的路径: 非零 ripple、volume_good = 1.0 以及带波纹的
+// 多元胞内部。
 func TestCrossLanguageMetrics(t *testing.T) {
 	type ref struct {
 		name string
@@ -595,7 +584,7 @@ func TestCrossLanguageMetrics(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. vacuum identities: div B = 0 and curl B = 0 away from the conductor
+// 7. 真空恒等式: 远离导体处 div B = 0 与 curl B = 0
 // ---------------------------------------------------------------------------
 
 func TestVacuumIdentities(t *testing.T) {
@@ -603,9 +592,8 @@ func TestVacuumIdentities(t *testing.T) {
 		0.3, 0.5, 0.5, 0.3, -1.0, -0.25, 0.25, 1.0,
 		1621279.2385890577, 463222.63959687366, 463222.63959687366, 1621279.2385890577,
 	})
-	// Central differences with a small step: truncation ~ h^2, roundoff ~ eps/h.
-	// z = 0 is skipped (both identities degenerate to 0/0 there by symmetry and
-	// their term normalisations vanish).
+	// 小步长的中心差分: 截断误差 ~ h^2, 舍入误差 ~ eps/h。跳过 z = 0 (由对称性, 两个
+	// 恒等式在那里都退化成 0/0, 它们的项归一化也消失)。
 	const h = 1e-5
 	at := func(r, z float64) (float64, float64) {
 		br, bz := CoilsetField(coils, []float64{r}, []float64{z})
@@ -632,7 +620,7 @@ func TestVacuumIdentities(t *testing.T) {
 		t1 := ((r+h)*brP - (r-h)*brM) / (2 * h * r)
 		t2 := (bzP - bzM) / (2 * h)
 		divB := t1 + t2
-		// curl B (azimuthal component) = dB_r/dz - dB_z/dr
+		// curl B (方位角分量) = dB_r/dz - dB_z/dr
 		t3 := (brZP - brZM) / (2 * h)
 		t4 := (bzRP - bzRM) / (2 * h)
 		curlB := t3 - t4
@@ -643,7 +631,7 @@ func TestVacuumIdentities(t *testing.T) {
 
 		relDiv := math.Abs(divB) / (math.Abs(t1) + math.Abs(t2))
 		relCurl := math.Abs(curlB) / (math.Abs(t3) + math.Abs(t4))
-		// second, independent normalisation: the residual over a gradient length
+		// 第二种独立归一化: 残差相对于一个梯度长度
 		scaleDiv := math.Abs(divB) * 0.5 / bMag
 		scaleCurl := math.Abs(curlB) * 0.5 / bMag
 		if relDiv >= tolVacuumId || relCurl >= tolVacuumId || scaleDiv >= tolVacuumId || scaleCurl >= tolVacuumId {
@@ -655,13 +643,13 @@ func TestVacuumIdentities(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 8. degenerate geometry: proximity floor, finite metrics, no NaN
+// 8. 退化几何: proximity floor、有限度量、无 NaN
 // ---------------------------------------------------------------------------
 
 func TestNearWireAndProximityFloor(t *testing.T) {
 	const a, i = 0.5, 1.0e6
 
-	// A sample sitting on the wire, and samples just inside/outside the floor.
+	// 一个正好坐在导线上的采样点, 以及恰在 floor 内/外两侧的几个采样点。
 	for _, d := range []float64{0, 1e-12, 1e-9, 1e-6, 1e-3, 4.9e-3, 5e-3, 1e-2} {
 		r, z := a-d, 0.0
 		br, bz := LoopField(a, i, r, z)
@@ -670,8 +658,8 @@ func TestNearWireAndProximityFloor(t *testing.T) {
 		t.Logf("wire gap %.1e: B_r=%.6g B_z=%.6g", d, br, bz)
 	}
 
-	// Two coils 1 mm apart: the closed form is singular at the neighbour's
-	// location, so the floor must keep the metric finite and set the flag.
+	// 两个相距 1 mm 的线圈: 闭式解在邻线圈的位置上是奇异的, 所以 floor 必须让度量保持
+	// 有限并置上那个标志。
 	close := []Coil{{Radius: 0.5, Z: 0, Current: 1.0e6}, {Radius: 0.5, Z: 1e-3, Current: 1.0e6}}
 	spec := config.DefaultSpec()
 	grids := BuildGrids(spec)
@@ -683,11 +671,9 @@ func TestNearWireAndProximityFloor(t *testing.T) {
 		t.Errorf("1 mm coil separation must set CoilProximityFloorHit")
 	}
 
-	// Fully coincident coils (the golden "single_loop" design has four loops at
-	// (0.35 m, 0 m)): alpha2 -> 0 and (a^2 - r^2 - z^2) -> 0 at once. The value
-	// is the floored one, so it is only checked for finiteness here -- the
-	// protected Python reference does not floor and is not a reference for this
-	// case.
+	// 完全重合的线圈 (golden 的 "single_loop" 设计有四个环在 (0.35 m, 0 m)):
+	// alpha2 -> 0 与 (a^2 - r^2 - z^2) -> 0 同时发生。这里的值是被钳住的值, 所以只检查
+	// 有限性 —— 受保护的 Python 参考实现不做钳制, 它不是这种情况的参考。
 	coincident := []Coil{
 		{Radius: 0.35, Current: 3e5}, {Radius: 0.35, Current: 3e5},
 		{Radius: 0.35, Current: 3e5}, {Radius: 0.35, Current: 3e5},
@@ -703,27 +689,26 @@ func TestNearWireAndProximityFloor(t *testing.T) {
 		t.Errorf("coincident coils gap = %v, want 0", mc.MinCoilGapM)
 	}
 
-	// A design inside the box that is comfortably legal must not trip the flag.
+	// 一个位于盒内、明显合法的设计不得触发该标志。
 	legal := []Coil{{Radius: 0.5, Z: -0.25, Current: 4e5}, {Radius: 0.5, Z: 0.25, Current: 4e5}, {Radius: 0.3, Z: -1.0, Current: 1.5e6}, {Radius: 0.3, Z: 1.0, Current: 1.5e6}}
 	if ml := MetricsFor(legal, spec, grids, AnalyticSolver{}); ml.CoilProximityFloorHit {
 		t.Errorf("a legal design must not report CoilProximityFloorHit")
 	}
 }
 
-// TestDegenerateInputs pins the behaviour on inputs the search can actually
-// produce: a one-coil design, and a grid with no samples at all.
+// TestDegenerateInputs 钉住搜索确实可能产生的输入上的行为: 单线圈设计, 以及完全没有
+// 采样点的网格。
 func TestDegenerateInputs(t *testing.T) {
 	spec := config.DefaultSpec()
 	grids := BuildGrids(spec)
 
 	one := []Coil{{Radius: 0.5, Z: 0, Current: 1.0e6}}
 	m := MetricsFor(one, spec, grids, AnalyticSolver{})
-	// MinCoilGapM is +Inf by contract for fewer than two coils; every other
-	// metric must be a finite number.
+	// 按契约, 少于两个线圈时 MinCoilGapM 是 +Inf; 其它每个度量都必须是有限数。
 	for _, v := range []float64{m.BMidT, m.BThroatT, m.ZThroatM, m.MirrorRatio, m.VolumeGood, m.Ripple, m.BCoilMaxT, m.CostProxy} {
 		mustFinite(t, "single-coil metric", v)
 	}
-	// No other coil -> no conductor field from neighbours, only the pack anchor.
+	// 没有别的线圈 -> 没有来自邻居的导体场, 只有绕组包锚点。
 	checkRel(t, "single-coil B_coil_max", m.BCoilMaxT, spec.SelfField(), 1e-15)
 	if !math.IsInf(m.MinCoilGapM, 1) {
 		t.Errorf("single coil gap = %v, want +Inf", m.MinCoilGapM)
@@ -732,7 +717,7 @@ func TestDegenerateInputs(t *testing.T) {
 		t.Errorf("single coil: n_coils=%d floor_hit=%v, want 1/false", m.NCoils, m.CoilProximityFloorHit)
 	}
 
-	// Empty grid: a documented bail-out, no panic, no NaN.
+	// 空网格: 一个文档化的提前退出, 不 panic, 不出 NaN。
 	empty := MetricsFor(one, spec, Grids{}, AnalyticSolver{})
 	for _, v := range []float64{empty.BMidT, empty.BThroatT, empty.ZThroatM, empty.MirrorRatio, empty.VolumeGood, empty.Ripple, empty.BCoilMaxT, empty.CostProxy} {
 		mustFinite(t, "empty-grid metric", v)
@@ -741,7 +726,7 @@ func TestDegenerateInputs(t *testing.T) {
 		t.Errorf("empty grid should give the zero metric, got B_mid=%v cost=%v", empty.BMidT, empty.CostProxy)
 	}
 
-	// No coils at all.
+	// 完全没有线圈。
 	none := MetricsFor(nil, spec, grids, AnalyticSolver{})
 	if none.NCoils != 0 || none.BCoilMaxT != 0 {
 		t.Errorf("empty coil set: n_coils=%d B_coil_max=%v, want 0/0", none.NCoils, none.BCoilMaxT)
@@ -749,11 +734,9 @@ func TestDegenerateInputs(t *testing.T) {
 	mustFinite(t, "empty coil set B_mid", none.BMidT)
 }
 
-// TestMetricAgreementAcrossSolvers re-runs the whole metric pipeline with the
-// independent discrete solver. The two solvers share no code below the Solver
-// interface, so agreeing metrics is a check on the metric definitions
-// themselves (slicing, volume fraction, conductor-field superposition), not
-// just on the field.
+// TestMetricAgreementAcrossSolvers 用独立的离散 solver 重跑整条度量流水线。两个 solver
+// 在 Solver 接口之下不共享任何代码, 所以度量一致是对度量定义本身 (切片、体积分数、
+// 导体场叠加) 的检查, 而不只是对场的检查。
 func TestMetricAgreementAcrossSolvers(t *testing.T) {
 	spec := config.DefaultSpec()
 	grids := BuildGrids(spec)
@@ -784,9 +767,8 @@ func TestMetricAgreementAcrossSolvers(t *testing.T) {
 	if d.CoilProximityFloorHit != a.CoilProximityFloorHit {
 		t.Errorf("floor flag differs between solvers: %v vs %v", d.CoilProximityFloorHit, a.CoilProximityFloorHit)
 	}
-	// |z_throat| must agree: the throat of a z-symmetric coil set is attained at
-	// two sample positions that differ by ~1e-16, so which of the two the argmax
-	// returns is a roundoff-level tie-break, not a physics difference.
+	// |z_throat| 必须一致: 一个 z 对称线圈组的 throat 在两个彼此相差 ~1e-16 的采样
+	// 位置上取得, 所以 argmax 返回其中哪一个只是舍入级的并列打破, 不是物理差异。
 	checkRel(t, "discrete vs analytic |z_throat_m|", math.Abs(d.ZThroatM), math.Abs(a.ZThroatM), tolGoldenMet)
 	if d.ZThroatM != a.ZThroatM {
 		t.Logf("z_throat tie-break: discrete=%.17g analytic=%.17g (equal up to roundoff; |z| agrees)", d.ZThroatM, a.ZThroatM)
@@ -794,7 +776,7 @@ func TestMetricAgreementAcrossSolvers(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 9. one stacked sampling pass per MetricsFor
+// 9. 每次 MetricsFor 只有一次堆叠采样 pass
 // ---------------------------------------------------------------------------
 
 type countingSolver struct {
@@ -831,7 +813,7 @@ func TestSingleStackSamplingPass(t *testing.T) {
 	if cnt.stackCalls != 1 {
 		t.Errorf("field evaluated over the full stack %d times, want exactly 1 (lens=%v)", cnt.stackCalls, cnt.lens)
 	}
-	// K conductor-field calls, each over the K-1 other coil locations.
+	// K 次导体场调用, 每次覆盖另外 K-1 个线圈的位置。
 	wantCalls := 1 + len(coils)
 	if cnt.calls != wantCalls {
 		t.Errorf("MetricsFor made %d field calls, want %d (lens=%v)", cnt.calls, wantCalls, cnt.lens)
@@ -841,9 +823,8 @@ func TestSingleStackSamplingPass(t *testing.T) {
 			t.Errorf("conductor-field call over %d points, want %d", n, len(coils)-1)
 		}
 	}
-	// The counting wrapper delegates to the same solver, so the metric values
-	// must be bit-identical to a plain run (the wrapper only counts). Compared
-	// against the golden as well, at the frozen 1e-6.
+	// 计数包装器委托给同一个 solver, 所以度量值必须与一次普通运行逐位相同 (包装器只
+	// 负责计数)。同时也按冻结的 1e-6 与 golden 比较。
 	plain := MetricsFor(coils, spec, grids, AnalyticSolver{})
 	if m != plain {
 		t.Errorf("counting wrapper changed the metrics:\n got %+v\nwant %+v", m, plain)
@@ -852,7 +833,7 @@ func TestSingleStackSamplingPass(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 10. grids: layout, counts and ordering
+// 10. 网格: 布局、数量与次序
 // ---------------------------------------------------------------------------
 
 func TestBuildGridsLayout(t *testing.T) {
@@ -869,7 +850,7 @@ func TestBuildGridsLayout(t *testing.T) {
 	if len(g.MidR) != nMid || len(g.CellR) != nCell || len(g.CellZ) != nCell {
 		t.Fatalf("mid/cell aux lengths %d/%d/%d, want %d/%d/%d", len(g.MidR), len(g.CellR), len(g.CellZ), nMid, nCell, nCell)
 	}
-	// Axis block: r = 0, z = linspace(-ZAxisMax, ZAxisMax, NAxis) with exact ends.
+	// 轴上块: r = 0, z = linspace(-ZAxisMax, ZAxisMax, NAxis) 且端点精确。
 	if g.StackR[0] != 0 || g.StackR[spec.NAxis-1] != 0 {
 		t.Errorf("axis block is not r = 0")
 	}
@@ -881,11 +862,11 @@ func TestBuildGridsLayout(t *testing.T) {
 			t.Fatalf("axis sample %d: stack=(%v,%v) axis z=%v", i, g.StackR[i], z, g.AxisZ[i])
 		}
 	}
-	// Symmetric span: numpy.linspace lands exactly on 0 for an odd count.
+	// 对称跨度: 奇数个数时 numpy.linspace 恰好落在 0 上。
 	if g.AxisZ[spec.NAxis/2] != 0 {
 		t.Errorf("axis centre sample = %v, want exactly 0", g.AxisZ[spec.NAxis/2])
 	}
-	// Midplane block: meshgrid(r, z, "ij") -> radius slowest, 5 z per radius.
+	// 中平面块: meshgrid(r, z, "ij") -> 半径最慢, 每个半径 5 个 z。
 	for i := 0; i < spec.NVolR; i++ {
 		for j := 0; j < 5; j++ {
 			k := spec.NAxis + i*5 + j
@@ -902,15 +883,14 @@ func TestBuildGridsLayout(t *testing.T) {
 			}
 		}
 	}
-	// First midplane sample is r=0 on the midplane; the cell block starts right
-	// after it with the same radius.
+	// 第一个中平面采样点是中平面上的 r=0; 元胞块紧接着它以同样的半径开始。
 	if g.StackR[spec.NAxis] != 0 || g.StackZ[spec.NAxis] != -spec.ZMid {
 		t.Errorf("first midplane sample = (%v,%v), want (0,%v)", g.StackR[spec.NAxis], g.StackZ[spec.NAxis], -spec.ZMid)
 	}
 	if g.StackR[spec.NAxis+nMid] != 0 || math.Abs(g.StackZ[spec.NAxis+nMid]+spec.ZCell) > 1e-15 {
 		t.Errorf("first cell sample = (%v,%v), want (0,%v)", g.StackR[spec.NAxis+nMid], g.StackZ[spec.NAxis+nMid], -spec.ZCell)
 	}
-	// axis_in_cell: |z| <= ZCell.
+	// axis_in_cell: |z| <= ZCell。
 	nIn := 0
 	for i, z := range g.AxisZ {
 		if g.AxisInCell[i] != (math.Abs(z) <= spec.ZCell) {
@@ -927,44 +907,42 @@ func TestBuildGridsLayout(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 11. AxisRipple definition
+// 11. AxisRipple 的定义
 // ---------------------------------------------------------------------------
 
 func TestAxisRipple(t *testing.T) {
 	const bMid = 1.0
-	// Monotonic profile: no interior extrema -> exactly 0.
+	// 单调剖面: 没有内部极值 -> 精确为 0。
 	if got := AxisRipple([]float64{1, 2, 3, 4, 5, 6}, bMid, 0.05); got != 0 {
 		t.Errorf("monotonic ripple = %v, want 0", got)
 	}
-	// Single peak: one extremum -> exactly 0.
+	// 单峰: 只有一个极值 -> 精确为 0。
 	if got := AxisRipple([]float64{1, 2, 3, 4, 3, 2, 1}, bMid, 0.05); got != 0 {
 		t.Errorf("single-peaked ripple = %v, want 0", got)
 	}
-	// Too short / non-positive B_mid -> 0.
+	// 太短 / B_mid 非正 -> 0。
 	if got := AxisRipple([]float64{1, 2, 3, 4}, bMid, 0.05); got != 0 {
 		t.Errorf("short profile ripple = %v, want 0", got)
 	}
 	if got := AxisRipple([]float64{1, 2, 3, 2, 1, 2, 3}, 0, 0.05); got != 0 {
 		t.Errorf("zero B_mid ripple = %v, want 0", got)
 	}
-	// Deep structure between two peaks: sum |peak - adjacent valley| / B_mid.
-	// profile peaks at 4.0 and 3.5 with a valley of 3.0 between them.
+	// 两个峰之间的深结构: sum |peak - adjacent valley| / B_mid。
+	// 剖面在 4.0 与 3.5 处起峰, 两峰之间是一个 3.0 的谷。
 	prof := []float64{1, 2, 3, 4.0, 3.0, 3.5, 1}
 	got := AxisRipple(prof, bMid, 0.05)
 	want := (math.Abs(4.0-3.0) + math.Abs(3.0-3.5)) / bMid
 	if math.Abs(got-want) > 1e-15 {
 		t.Errorf("alternating ripple = %v, want %v", got, want)
 	}
-	// Same shape but with an alternating structure shallower than
-	// prominence*B_mid: only structures deeper than 0.05*B_mid count.
-	// Two alternating extrema (a max at 4.0, a min at 3.96) whose depth 0.04 is
-	// below prominence*B_mid = 0.05: it does not count.
+	// 同样的形状, 但相间结构比 prominence*B_mid 更浅: 只有比 0.05*B_mid 更深的结构
+	// 才算。两个相间极值 (4.0 处的 max, 3.96 处的 min), 深度 0.04 低于
+	// prominence*B_mid = 0.05: 它不算。
 	shallow := []float64{1, 4.0, 3.96, 4.5, 5.0}
 	if got := axisRipple(shallow, bMid, 0.05); got != 0 {
 		t.Errorf("shallow structure ripple = %v, want 0 (0.04 < prominence 0.05)", got)
 	}
-	// Prominence is a parameter, not a constant: the same structure counts once
-	// the threshold drops below it.
+	// prominence 是参数, 不是常量: 一旦阈值降到该结构之下, 同一个结构就算数了。
 	wantShallow := 0.04 / bMid
 	if got := AxisRipple(shallow, bMid, 0.005); math.Abs(got-wantShallow) > 1e-15 {
 		t.Errorf("ripple with prominence 0.005 = %v, want %v", got, wantShallow)
@@ -984,24 +962,24 @@ func TestMinCoilGap(t *testing.T) {
 	}
 	coils := []Coil{{Radius: 0.5, Z: -0.25, Current: 1}, {Radius: 0.5, Z: 0.25, Current: 1}, {Radius: 0.3, Z: 1.0, Current: 1}}
 	checkRel(t, "min gap", MinCoilGap(coils), 0.5, 1e-15)
-	// 3-D distance includes the radius difference.
+	// 3-D 距离包含半径差。
 	checkRel(t, "min gap with radius offset", MinCoilGap([]Coil{{Radius: 0.3, Z: 0, Current: 1}, {Radius: 0.5, Z: 0, Current: 1}}), 0.2, 1e-15)
 }
 
 // ---------------------------------------------------------------------------
-// 13. design vector encode/decode
+// 13. 设计向量的编码/解码
 // ---------------------------------------------------------------------------
 
 func TestVectorCoilsRoundTrip(t *testing.T) {
 	spec := config.DefaultSpec()
-	// Out-of-bounds vector: must be clipped, then z-sorted, then re-encodable.
+	// 越界向量: 必须被裁剪, 然后按 z 排序, 然后可重新编码。
 	x := []float64{0.3, 2.0, 0.5, -0.2 /*r*/, 1.9, -3.0, 0.25, 1.0 /*z*/, 5e7, 1.0, 4.6e5, 1.6e6}
 	coils, err := VectorToCoils(x, spec)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	// clipped: r=[0.3,1.0,0.5,0.1] z=[1.2,-1.2,0.25,1.0] I=[2.5e6,1e4,4.6e5,1.6e6],
-	// then z-sorted: -1.2, 0.25, 1.0, 1.2.
+	// 裁剪后: r=[0.3,1.0,0.5,0.1] z=[1.2,-1.2,0.25,1.0] I=[2.5e6,1e4,4.6e5,1.6e6],
+	// 再按 z 排序: -1.2, 0.25, 1.0, 1.2。
 	want := []Coil{
 		{Radius: spec.Bounds.Radius[1], Z: -spec.Bounds.Z[1], Current: 1.0e4},
 		{Radius: 0.5, Z: 0.25, Current: 4.6e5},
@@ -1022,8 +1000,7 @@ func TestVectorCoilsRoundTrip(t *testing.T) {
 			t.Errorf("round trip coil %d = %+v, want %+v", i, back[i], coils[i])
 		}
 	}
-	// Permutation invariance: a permuted design decodes to the same canonical
-	// vector (the K! degeneracy is removed by the z-sort).
+	// 排列不变性: 一个被置换的设计解码成同一个规范向量 (K! 简并被 z 排序消除)。
 	base := []float64{0.5, 0.3, 0.5, 0.3 /*r*/, -0.25, 1.0, 0.25, -1.0 /*z*/, 4.6e5, 1.6e6, 4.6e5, 1.6e6}
 	perm := []float64{0.3, 0.5, 0.3, 0.5 /*r*/, 1.0, -0.25, -1.0, 0.25 /*z*/, 1.6e6, 4.6e5, 1.6e6, 4.6e5}
 	cb, err := VectorToCoils(base, spec)
@@ -1040,7 +1017,7 @@ func TestVectorCoilsRoundTrip(t *testing.T) {
 			t.Fatalf("permutation changed the canonical vector at %d: %v vs %v", i, vb[i], vp[i])
 		}
 	}
-	// Wrong length is an error.
+	// 长度不对是一个错误。
 	if _, err := VectorToCoils([]float64{0.5, 0.5}, spec); err == nil {
 		t.Errorf("decoding a 2-entry vector must fail")
 	}
@@ -1060,7 +1037,7 @@ func TestRandomDesignIsInBoxAndCanonical(t *testing.T) {
 				t.Fatalf("design[%d] = %v outside [%v, %v]", i, v, lo[i], hi[i])
 			}
 		}
-		// Canonical: z ascending.
+		// 规范形式: z 升序。
 		k := spec.NCoils
 		for i := 1; i < k; i++ {
 			if x[k+i] < x[k+i-1] {
@@ -1075,7 +1052,7 @@ func TestRandomDesignIsInBoxAndCanonical(t *testing.T) {
 			t.Fatalf("re-encode length %d != %d", len(got), len(x))
 		}
 	}
-	// Same seed -> same stream (reproducibility is a Phase-0 gate).
+	// 同一个 seed -> 同一条流 (可复现性是 Phase-0 的一道门)。
 	a := RandomDesign(rand.New(rand.NewSource(7)), spec)
 	b := RandomDesign(rand.New(rand.NewSource(7)), spec)
 	for i := range a {
@@ -1086,7 +1063,7 @@ func TestRandomDesignIsInBoxAndCanonical(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 14. solver identities
+// 14. solver 恒等式
 // ---------------------------------------------------------------------------
 
 func TestSolverNamesAndFiniteness(t *testing.T) {
@@ -1111,7 +1088,7 @@ func TestSolverNamesAndFiniteness(t *testing.T) {
 			}
 		}
 	}
-	// Equivalence with the component evaluator.
+	// 与分量求值器等价。
 	br, bz := CoilsetField(coils, rs, zs)
 	ana := AnalyticSolver{}.Magnitude(coils, rs, zs)
 	for i := range rs {

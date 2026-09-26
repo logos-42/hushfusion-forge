@@ -1,9 +1,9 @@
-// Package physics: device parameterisation, magnetostatics, field metrics.
+// Package physics: 装置参数化、静磁学、场度量。
 //
-// FROZEN INTERFACE (v0.1) — owner: stage A (see internal/owners/owners.go).
-// Implemented in magnet.go / metrics.go / geometry.go by the stage owner.
+// FROZEN INTERFACE (v0.1) — owner: stage A (见 internal/owners/owners.go)。
+// 由 stage owner 在 magnet.go / metrics.go / geometry.go 中实现。
 //
-// Everything here is a *vacuum field* property. There is no plasma.
+// 这里的一切都是*真空场*性质。没有 plasma。
 package physics
 
 import (
@@ -12,37 +12,36 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/config"
 )
 
-// Coil is a single circular filament loop with its axis on the z-axis.
+// Coil 是单个圆形丝环, 其轴位于 z 轴上。
 type Coil struct {
 	Radius  float64 `json:"radius_m"`
 	Z       float64 `json:"z_m"`
 	Current float64 `json:"current_A"`
 }
 
-// Solver computes |B| of a coil set at cylindrical sample points.
+// Solver 计算一组线圈在柱坐标采样点上的 |B|。
 //
-// Two implementations must exist and must agree:
-//   - AnalyticSolver: exact closed form via complete elliptic integrals (default)
-//   - DiscreteSolver: direct numerical Biot-Savart summation over segments
+// 必须存在两种实现, 并且它们必须一致:
+//   - AnalyticSolver: 通过完全椭圆积分的精确闭式解 (默认)
+//   - DiscreteSolver: 对线段直接做 Biot-Savart 求和
 //
-// They share no code path, which is exactly why the second one is the
-// independent check on the first (see cmd/forge verify).
+// 它们不共享任何代码路径, 这正是第二个能作为第一个的独立检验的原因
+// (见 cmd/forge verify)。
 type Solver interface {
 	Name() string
 	Magnitude(coils []Coil, r, z []float64) []float64
 }
 
-// AnalyticSolver is the exact circular-filament solver (elliptic integrals).
+// AnalyticSolver 是精确的圆环丝求解器 (椭圆积分)。
 type AnalyticSolver struct{}
 
-// DiscreteSolver sums Biot-Savart over NSeg straight segments per loop.
+// DiscreteSolver 对每个环的 NSeg 条直线段做 Biot-Savart 求和。
 type DiscreteSolver struct{ NSeg int }
 
-// EllipticKE returns the complete elliptic integrals of the first and second
-// kind, K(m) and E(m), for parameter m = k^2 in [0, 1).
+// EllipticKE 返回第一类与第二类完全椭圆积分 K(m) 和 E(m), 参数
+// m = k^2 属于 [0, 1)。
 //
-// Required algorithm (AGM, arithmetic-geometric mean) — use this, do not
-// approximate:
+// 要求的算法 (AGM, 算术-几何平均) —— 用它, 不要近似:
 //
 //	a0 = 1, b0 = sqrt(1-m), c0 = sqrt(m)
 //	a_{n+1} = (a_n + b_n)/2
@@ -51,81 +50,87 @@ type DiscreteSolver struct{ NSeg int }
 //	K(m) = pi / (2 * a_N)
 //	E(m) = K(m) * (1 - sum_{n=0..N} 2^(n-1) * c_n^2)
 //
-// with the n = 0 term of the sum being c_0^2 / 2. Iterate until c_n ~ 0
-// (typically 5-10 iterations to machine precision).
+// 其中求和式的 n = 0 项为 c_0^2 / 2。迭代至 c_n ~ 0 (通常 5-10 次迭代到机器精度)。
 func EllipticKE(m float64) (k, e float64) { return ellipticKE(m) }
 
-// LoopField returns (B_r, B_z) of one circular filament loop of the given
-// radius and current at the point (r, z), the loop lying in the plane z = 0.
+// LoopField 返回给定半径与电流的单个圆形丝环在点 (r, z) 处的 (B_r, B_z), 该环位于
+// 平面 z = 0 内。
 //
-// Closed form (Simpson et al., NASA/TM-2001-211135), with
+// 闭式解 (Simpson et al., NASA/TM-2001-211135), 其中
 //
 //	alpha2 = a^2 + r^2 + z^2 - 2*a*r
 //	beta2  = a^2 + r^2 + z^2 + 2*a*r
 //	m      = 1 - alpha2/beta2
 //	C      = mu0*I/pi
 //
-//	B_r = C*z/(2*alpha2*beta) * [ (a^2 + r^2 + z^2)*E(m) - alpha2*K(m) ]
+//	B_r = C*z/(2*alpha2*beta*r) * [ (a^2 + r^2 + z^2)*E(m) - alpha2*K(m) ]
 //	B_z =   C  /(2*alpha2*beta) * [ (a^2 - r^2 - z^2)*E(m) + alpha2*K(m) ]
 //
-// On the axis (r -> 0) the exact limit must be used to avoid 0/0:
+// B_r 的分母含 1/r 因子。本行注释此前遗漏了它 (实现里一直在), 这一缺陷已由三方独立
+// 确认: golden 场样本 (testdata/) + 直接数值积分 + Python oracle。缺了 1/r, 每个离轴
+// B_r 都会差一个 r 因子。
+//
+// 在轴上 (r -> 0) 必须使用精确极限以避免 0/0:
 //
 //	B_r = 0,  B_z = mu0*I*a^2 / (2*(a^2 + z^2)^1.5)
 //
-// The on-axis branch is exercised by the golden field samples in testdata/.
+// 轴上分支由 testdata/ 中的 golden 场样本覆盖。
+//
+// 采样点到最近导线点的距离小于 5e-3 m 时, alpha2 会被钳到那个下限 (见
+// ProximityFloor): 该钳制对**任意**采样点生效, 不只是线圈中心, 所以与 Python 参考实现
+// 做跨语言场比较时必须带 `--proximity-floor 0.005`。
 func LoopField(radius, current, r, z float64) (br, bz float64) {
 	return loopField(radius, current, r, z)
 }
 
-// LoopFieldDiscrete is the independent implementation: a direct Biot-Savart sum
-// over nSeg straight segments approximating the loop. It must agree with
-// LoopField to < 1e-9 relative for nSeg >= 512 at points away from the wire.
+// LoopFieldDiscrete 是独立实现: 对 nSeg 条近似该环的直线段直接做 Biot-Savart 求和。
+// 在离导线较远的点上, nSeg >= 512 时它必须与 LoopField 相对一致到 < 1e-9。
 func LoopFieldDiscrete(radius, current, r, z float64, nSeg int) (br, bz float64) {
 	return loopFieldDiscrete(radius, current, r, z, nSeg)
 }
 
-// CoilsetField superposes the field of every coil (each shifted to its own z).
+// CoilsetField 叠加每个线圈的场 (每个平移到它自己的 z)。
 func CoilsetField(coils []Coil, r, z []float64) (br, bz []float64) {
 	return coilsetField(coils, r, z)
 }
 
-// OnAxisField returns |B| on the axis (r = 0). Exact and cheaper than the
-// general evaluation: only the on-axis branch of LoopField is needed.
+// OnAxisField 返回轴上的 |B| (r = 0)。精确, 且比一般求值更省: 只需要 LoopField 的
+// 轴上分支。
 func OnAxisField(coils []Coil, z []float64) []float64 {
 	return onAxisField(coils, z)
 }
 
-// Grids are the stacked evaluation sample points:
-// [axis (r=0) | midplane volume | cell volume].
+// Grids 是堆叠起来的求值采样点:
+// [轴上 (r=0) | 中平面体积 | 元胞体积]。
 type Grids struct {
-	StackR     []float64 // cylindrical radius of every sample
-	StackZ     []float64 // axial coordinate of every sample
-	NAxis      int       // axis samples occupy Stack[0:NAxis]
-	NMid       int       // midplane volume occupies Stack[NAxis : NAxis+NMid]
-	AxisZ      []float64 // on-axis sample positions, for reporting
+	StackR     []float64 // 每个采样点的柱坐标半径
+	StackZ     []float64 // 每个采样点的轴向坐标
+	NAxis      int       // 轴上采样点占据 Stack[0:NAxis]
+	NMid       int       // 中平面体积占据 Stack[NAxis : NAxis+NMid]
+	AxisZ      []float64 // 轴上采样位置, 供报告用
 	AxisInCell []bool    // |AxisZ[i]| <= spec.ZCell
 	MidR       []float64
 	CellR      []float64
 	CellZ      []float64
 }
 
-// BuildGrids mirrors the Python reference (forge/physics/geometry.py) exactly,
-// including the order of the concatenated samples:
+// BuildGrids 精确镜像 Python 参考实现 (forge/physics/geometry.py), 包括拼接采样点的
+// 次序:
 //
 //	axis   : linspace(-ZAxisMax, +ZAxisMax, NAxis), r = 0
 //	mid    : meshgrid(linspace(0, RPlasma, NVolR), linspace(-ZMid, ZMid, 5), "ij")
 //	cell   : meshgrid(linspace(0, RPlasma, NVolR), linspace(-ZCell, ZCell, NVolZ), "ij")
 //
-// Note the midplane volume uses a fixed 5 axial samples. Sample order matters:
-// golden comparisons slice the stacked array by [NAxis, NMid].
+// 注意中平面体积使用固定的 5 个轴向采样点。采样次序很重要: golden 比较按
+// [NAxis, NMid] 切分这个堆叠数组。
 func BuildGrids(spec config.Spec) Grids {
 	return buildGrids(spec)
 }
 
-// Metrics are the objective-relevant field metrics of one coil set.
+// Metrics 是一组线圈中与目标函数相关的场度量。
 //
-// JSON tags are FROZEN: they are the cross-language interchange format and must
-// match forge/physics/plasma_model.py key for key.
+// JSON tag 是 FROZEN 的: 它们是跨语言交换格式, 必须与
+// forge/physics/plasma_model.py 逐键一致。
 type Metrics struct {
 	BMidT                 float64 `json:"B_mid_T"`
 	BThroatT              float64 `json:"B_throat_T"`
@@ -141,52 +146,55 @@ type Metrics struct {
 	MU0                   float64 `json:"mu0"`
 }
 
-// MetricsFor computes every metric from a single field pass over g.StackR/StackZ.
+// MetricsFor 在一次对 g.StackR/StackZ 的场遍历中计算每一个度量。
 //
-// Definitions (must match the Python reference exactly):
+// 定义 (必须与 Python 参考实现完全一致):
 //
-//	B_mid    = mean(|B|) over the midplane volume samples
-//	B_throat = max(|B|) on the axis over the whole sampled span
+//	B_mid    = 中平面体积采样点上 |B| 的平均值
+//	B_throat = 整个采样跨度上轴上 |B| 的最大值
 //	R        = B_throat / B_mid
-//	V_good   = fraction of cell-volume samples with |B| <= ConfineFactor*B_mid
-//	ripple   = AxisRipple(axis samples inside the cell, B_mid, 0.05)
-//	B_coil   = max over coils of (field from all *other* coils at that coil's
-//	           location + spec.SelfField())
+//	V_good   = 元胞体积采样点中 |B| <= ConfineFactor*B_mid 的比例
+//	ripple   = AxisRipple(元胞内的轴上采样点, B_mid, 0.05)
+//	B_coil   = 对每个线圈 k, 取该线圈位置上全部*其它*线圈场强的**模之和**
+//	           Σ_{j≠k} |B_j(r_k,z_k)|, 再加 spec.SelfField(),
+//	           然后对 k 取最大值: max_k( Σ_{j≠k} |B_j(r_k,z_k)| + SelfField() )。
+//	           注意这是模之和, 而不是先按矢量求和再取模的 |Σ_j B_j|。
 //	cost     = sum_k I_k^2 * r_k
-//	min_gap  = smallest 3-D distance between two coil centres
+//	min_gap  = 两个线圈中心之间最小的 3-D 距离
 //
-// If another coil sits closer than 5e-3 m, the closed form is singular: floor it
-// and set CoilProximityFloorHit = true (the objective penalises that geometry;
-// a finite number must still reach the record instead of a NaN).
+// 如果有另一个线圈位于 5e-3 m 之内, 闭式解是奇异的: 把它钳住 (floor) 并置
+// CoilProximityFloorHit = true (目标函数会惩罚这种几何; 但有限数值仍必须进入记录,
+// 而不是 NaN)。
+//
+// 注意这个 5e-3 m 钳制对**任意**采样点生效, 不只是线圈中心 (见 ProximityFloor):
+// 与 Python 参考实现做跨语言场比较时必须带 `--proximity-floor 0.005`, 否则 1e-2 量级
+// 的分歧会周期性出现, 那是约定不一致而不是 bug (Phase 0 已实测)。
 func MetricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 	return metricsFor(coils, spec, g, s)
 }
 
-// AxisRipple is the normalised amplitude of NON-monotonic structure on the axis.
+// AxisRipple 是轴上非单调结构的归一化幅度。
 //
-// Sum |B_peak - B_adjacent_valley| over consecutive interior extrema that
-// alternate (max, min), keeping only structures deeper than prominence*BMid,
-// then divide by BMid. A monotonic or single-peaked profile returns exactly 0.
-// Interior extrema are found by 3-point comparison B[i-1] < B[i] > B[i+1].
+// 对相间的连续内部极值 (max, min) 求 |B_peak - B_adjacent_valley| 之和, 只保留比
+// prominence*BMid 更深的那些结构, 然后除以 BMid。单调或单峰剖面精确返回 0。
+// 内部极值通过三点比较 B[i-1] < B[i] > B[i+1] 找到。
 func AxisRipple(bAxisCell []float64, bMid, prominence float64) float64 {
 	return axisRipple(bAxisCell, bMid, prominence)
 }
 
-// MinCoilGap is the smallest distance between two coil centres; +Inf if fewer
-// than two coils are given.
+// MinCoilGap 是两个线圈中心之间的最小距离; 少于两个线圈时返回 +Inf。
 func MinCoilGap(coils []Coil) float64 { return minCoilGap(coils) }
 
-// VectorToCoils decodes a design vector, clipping to the spec bounds and
-// sorting by z (canonical form: kills the K! permutation degeneracy).
-// An error is returned if len(x) != spec.NParams().
+// VectorToCoils 解码一个设计向量, 裁剪到 spec 边界并按 z 排序 (规范形式: 消除 K! 排列
+// 简并)。若 len(x) != spec.NParams() 则返回错误。
 func VectorToCoils(x []float64, spec config.Spec) ([]Coil, error) {
 	return vectorToCoils(x, spec)
 }
 
-// CoilsToVector encodes coils (any order) into the canonical design vector.
+// CoilsToVector 把线圈 (任意顺序) 编码成规范设计向量。
 func CoilsToVector(coils []Coil) []float64 { return coilsToVector(coils) }
 
-// RandomDesign draws a uniform sample of the search box in canonical order.
+// RandomDesign 在规范次序下对搜索盒子做均匀采样。
 func RandomDesign(rng *rand.Rand, spec config.Spec) []float64 {
 	return randomDesign(rng, spec)
 }

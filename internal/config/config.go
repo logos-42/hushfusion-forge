@@ -1,79 +1,72 @@
-// Package config is the single source of truth for every physical constant,
-// bound and weight used by the Forge engine.
+// Package config 是 Forge 引擎所用的每一个物理常量、边界与权重的唯一真源。
 //
-// Rule of the house: no number that affects a score may be hard-coded anywhere
-// else in the tree. If a number matters, it lives here together with its
-// physical meaning and its provenance.
+// 本项目的规矩: 任何会影响 score 的数字都不得在树的其它地方硬编码。一个数字只要重要,
+// 就住在这里, 连同它的物理含义与其出处。
 //
-// FROZEN INTERFACE (v0.1). The JSON tags are the interchange format shared with
-// the Python reference implementation (python/forge). Changing a tag is a
-// schema migration, not an edit: it breaks the cross-language golden
-// comparisons in testdata/ and must be done in both implementations at once.
+// FROZEN INTERFACE (v0.1)。JSON tag 是与 Python 参考实现 (python/forge) 共享的交换
+// 格式。改一个 tag 是一次 schema 迁移, 而不是一次编辑: 它会破坏 testdata/ 里的跨语言
+// golden 比较, 必须两个实现同时改。
 package config
 
 import "math"
 
-// MU0 is the vacuum permeability [H/m].
+// MU0 是真空磁导率 [H/m]。
 const MU0 = 4.0e-7 * math.Pi
 
-// Bounds is the search box for a single coil [SI].
+// Bounds 是单个线圈的搜索盒子 [SI]。
 type Bounds struct {
-	Radius  [2]float64 `json:"radius"`  // [m]  loop radius
-	Z       [2]float64 `json:"z"`       // [m]  axial position
-	Current [2]float64 `json:"current"` // [A]  ampere-turns
+	Radius  [2]float64 `json:"radius"`  // [m]  线圈半径
+	Z       [2]float64 `json:"z"`       // [m]  轴向位置
+	Current [2]float64 `json:"current"` // [A]  安匝数
 }
 
-// Weights are an engineering operating judgement, not physics. The raw
-// (unweighted) terms are always stored alongside the score so any weighting can
-// be re-derived after the fact.
+// Weights 是工程上的运行判断, 不是物理。未加权的原始项总是与 score 一起存储, 以便
+// 事后重新推导任何加权。
 type Weights struct {
 	Field   float64 `json:"field"`   // log10(B_mid / B_ref)
 	Mirror  float64 `json:"mirror"`  // log10(R / R_ref)
-	Volume  float64 `json:"volume"`  // good-field volume fraction
-	Ripple  float64 `json:"ripple"`  // non-monotonic in-cell field structure
-	Cost    float64 `json:"cost"`    // ohmic cost proxy, normalised by the baseline
-	Penalty float64 `json:"penalty"` // multiplier on normalised constraint violation
+	Volume  float64 `json:"volume"`  // 好场体积分数
+	Ripple  float64 `json:"ripple"`  // 元胞内非单调的场结构
+	Cost    float64 `json:"cost"`    // 欧姆成本代理, 由基线归一化
+	Penalty float64 `json:"penalty"` // 归一化约束违反量上的乘子
 }
 
-// Spec is the device under design + the evaluation window + engineering limits.
+// Spec 是待设计的装置 + 评估窗口 + 工程极限。
 //
-// Fidelity statement (v0.1): the field model is exact magnetostatics for
-// circular filament currents in vacuum. There is NO plasma: no pressure, no
-// diamagnetic response, no equilibrium, no finite-beta correction, no eddy
-// currents, no conductor current sharing. Those are Phase-2 items (see PLAN.md).
+// 保真度声明 (v0.1): 场模型是真空圆环丝电流的精确静磁学。这里没有 plasma: 无压强、
+// 无抗磁响应、无平衡、无有限 beta 修正、无涡流、无导体电流共享。那些是 Phase-2 的
+// 事项 (见 PLAN.md)。
 type Spec struct {
 	NCoils int    `json:"n_coils"`
 	Bounds Bounds `json:"bounds"`
 
-	BRef      float64 `json:"b_ref"`      // [T] field-term reference
-	MirrorRef float64 `json:"mirror_ref"` // [-] mirror-ratio reference
+	BRef      float64 `json:"b_ref"`      // [T] 场项参考值
+	MirrorRef float64 `json:"mirror_ref"` // [-] 镜像比参考值
 
-	CoilFieldLimit float64 `json:"coil_field_limit"` // [T]   peak conductor field (HTS @20 K, conservative)
-	JEng           float64 `json:"j_eng"`            // [A/m^2] winding-pack current density
-	TPack          float64 `json:"t_pack"`           // [m]   winding-pack thickness
+	CoilFieldLimit float64 `json:"coil_field_limit"` // [T]   峰值导体场 (HTS @20 K, 保守取值)
+	JEng           float64 `json:"j_eng"`            // [A/m^2] 绕组包电流密度
+	TPack          float64 `json:"t_pack"`           // [m]   绕组包厚度
 
-	RPlasma  float64 `json:"r_plasma"`   // [m] plasma radius (central cell)
-	ZMid     float64 `json:"z_mid"`      // [m] half-height of the midplane sampling volume
-	ZCell    float64 `json:"z_cell"`     // [m] half-length of the central cell
-	ZAxisMax float64 `json:"z_axis_max"` // [m] axial extent sampled for the throat
-	NAxis    int     `json:"n_axis"`     // axial sample count
-	NVolR    int     `json:"n_vol_r"`    // radial sample count over the cell volume
-	NVolZ    int     `json:"n_vol_z"`    // axial sample count over the cell volume
+	RPlasma  float64 `json:"r_plasma"`   // [m] 等离子体半径 (中心元胞)
+	ZMid     float64 `json:"z_mid"`      // [m] 中平面采样体积的半高
+	ZCell    float64 `json:"z_cell"`     // [m] 中心元胞的半长
+	ZAxisMax float64 `json:"z_axis_max"` // [m] 为求 throat 而采样的轴向范围
+	NAxis    int     `json:"n_axis"`     // 轴向采样点数
+	NVolR    int     `json:"n_vol_r"`    // 元胞体积上的径向采样点数
+	NVolZ    int     `json:"n_vol_z"`    // 元胞体积上的轴向采样点数
 
-	ConfineFactor float64 `json:"confine_factor"` // |B| <= factor * B_mid counts as "good field"
-	MinCoilSep    float64 `json:"min_coil_sep"`   // [m] minimum coil-centre separation
+	ConfineFactor float64 `json:"confine_factor"` // |B| <= factor * B_mid 即算作 "好场"
+	MinCoilSep    float64 `json:"min_coil_sep"`   // [m] 线圈中心的最小间距
 
 	Weights Weights `json:"weights"`
 }
 
-// DefaultSpec returns the v0.1 reference device and evaluation window.
+// DefaultSpec 返回 v0.1 的参考装置与评估窗口。
 //
-// The current ceiling is set so the hand-designed reference
-// (internal/baseline.TextbookMirror, throat current ~1.62 MA) is strictly
-// *inside* the box. A baseline that gets clipped when re-encoded as a design
-// vector would be scored as a different machine, and "machine beats human"
-// would be measured against a design nobody proposed. Enforced by
-// TestBaselineInsideSearchBox.
+// 电流上限的设置使得手工设计的参考装置 (internal/baseline.TextbookMirror, throat 电流
+// ~1.62 MA) 严格落在盒子*内部*。一个在重新编码成设计向量时被裁剪的基线会被当成另一
+// 台机器来打分, 于是 "机器胜过人类" 就变成了对着一个没有人提出过的设计来测量。由
+// TestBaselineInsideSearchBox 强制。
 func DefaultSpec() Spec {
 	return Spec{
 		NCoils: 4,
@@ -107,19 +100,17 @@ func DefaultSpec() Spec {
 	}
 }
 
-// NParams is the design-vector length: [r_0..r_K, z_0..z_K, I_0..I_K].
+// NParams 是设计向量长度: [r_0..r_K, z_0..z_K, I_0..I_K]。
 func (s Spec) NParams() int { return 3 * s.NCoils }
 
-// SelfField is the field on the conductor from the coil's own winding pack [T].
+// SelfField 是线圈自身绕组包作用在导体上的场 [T]。
 //
-// Model: a solenoid-like pack of thickness TPack carrying uniform current
-// density JEng has B ~ mu0*j*t/2 at the winding face (exact for an infinite
-// slab). It is the documented anchor for "a pack at the current-density limit
-// already sits in this much field", replaced by a winding-pack/FEM model in
-// Phase 2.
+// 模型: 一个厚度为 TPack、载有均匀电流密度 JEng 的类螺线管绕组包, 在绕组面上有
+// B ~ mu0*j*t/2 (对无限大平板是精确的)。它是 "一个处在电流密度极限的绕组包本身就
+// 已经坐在这么大的场里" 的文档化锚点, Phase 2 会被绕组包/FEM 模型取代。
 func (s Spec) SelfField() float64 { return MU0 * s.JEng * s.TPack / 2.0 }
 
-// Lower is the design-vector lower bound, shape (NParams).
+// Lower 是设计向量的下界, 形状 (NParams)。
 func (s Spec) Lower() []float64 {
 	out := make([]float64, 0, s.NParams())
 	for i := 0; i < s.NCoils; i++ {
@@ -134,7 +125,7 @@ func (s Spec) Lower() []float64 {
 	return out
 }
 
-// Upper is the design-vector upper bound, shape (NParams).
+// Upper 是设计向量的上界, 形状 (NParams)。
 func (s Spec) Upper() []float64 {
 	out := make([]float64, 0, s.NParams())
 	for i := 0; i < s.NCoils; i++ {
@@ -149,9 +140,8 @@ func (s Spec) Upper() []float64 {
 	return out
 }
 
-// AsMap renders the spec with the same keys as the Python reference
-// (python/forge/config.py: Spec.as_dict), including the two derived fields.
-// This is what the schema-parity gate compares.
+// AsMap 用与 Python 参考实现 (python/forge/config.py: Spec.as_dict) 相同的键渲染
+// spec, 包括两个派生字段。schema 对等门比较的就是它。
 func (s Spec) AsMap() map[string]any {
 	return map[string]any{
 		"n_coils":          s.NCoils,

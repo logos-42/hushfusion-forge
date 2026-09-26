@@ -1,8 +1,8 @@
-// Field-structure metrics of a coil set (stage A).
+// 一组线圈的场结构度量 (stage A)。
 //
-// Implementation of metricsFor / axisRipple / minCoilGap from api.go, matching
-// forge/physics/plasma_model.py key for key. Everything here is a vacuum-field
-// property: no plasma, no pressure, no equilibrium.
+// api.go 中 metricsFor / axisRipple / minCoilGap 的实现, 与
+// forge/physics/plasma_model.py 逐键一致。这里的一切都是真空场性质: 无 plasma、
+// 无压强、无平衡。
 package physics
 
 import (
@@ -11,37 +11,34 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/config"
 )
 
-// RippleProminence is the relative prominence (in units of B_mid) below which
-// an axis structure does not count as ripple. Frozen: the Python reference
-// calls axisRipple(..., prominence=0.05) as a default argument, and api.go's
-// metricsFor definition names the same 0.05.
+// RippleProminence 是轴上结构不算作 ripple 的相对 prominence 阈值 (以 B_mid 为单位)。
+// 冻结: Python 参考实现以默认参数调用 axisRipple(..., prominence=0.05), api.go 的
+// metricsFor 定义也点明同一个 0.05。
 const RippleProminence = 0.05
 
-// bMidFloor keeps B_mid out of the denominator of mirror_ratio and out of the
-// volume_good threshold when a degenerated design produces a zero midplane
-// field. Same 1e-9 floor as the reference.
+// bMidFloor 在退化设计产生零中平面场时, 把 B_mid 挡在 mirror_ratio 的分母与
+// volume_good 的阈值之外。与参考实现同一个 1e-9 下限。
 const bMidFloor = 1e-9
 
-// metricsFor computes every metric from a single pass over g.StackR/g.StackZ
-// (plus K auxiliary single-coil calls for the conductor field, exactly as the
-// reference does). The stacked arrays are sampled once and then sliced by
-// [NAxis, NMid].
+// metricsFor 在一次对 g.StackR/g.StackZ 的遍历中计算每一个度量 (另外还有 K 次单线圈
+// 辅助调用来取导体场, 与参考实现完全一样)。堆叠数组只采样一次, 然后按
+// [NAxis, NMid] 切片。
 func metricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 	m := Metrics{
 		NCoils: len(coils),
 		MU0:    config.MU0,
-		// Set below; declared here so a bail-out still carries a finite gap.
+		// 在下面会被覆盖; 在这里声明是为了即使提前退出也仍带着一个有限的间距。
 		MinCoilGapM: minCoilGap(coils),
 	}
 	if s == nil || len(g.StackR) == 0 || len(g.StackR) != len(g.StackZ) {
 		return m
 	}
 
-	// Single field pass over the stacked samples.
+	// 对堆叠采样点的单次场遍历。
 	bAll := s.Magnitude(coils, g.StackR, g.StackZ)
 
-	// Slice by the frozen layout, clamped so a misbehaving solver cannot panic
-	// the metric path (a finite record beats a crash).
+	// 按冻结布局切片, 并做钳制, 使行为异常的 solver 无法让度量路径 panic (有限的记录
+	// 胜过崩溃)。
 	n := len(bAll)
 	nAxis := g.NAxis
 	if nAxis > n {
@@ -55,7 +52,7 @@ func metricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 	bMidSamples := bAll[nAxis : nAxis+nMid]
 	bCell := bAll[nAxis+nMid:]
 
-	// B_mid = mean |B| over the midplane volume.
+	// B_mid = 中平面体积上 |B| 的平均值。
 	bMid := 0.0
 	for _, v := range bMidSamples {
 		bMid += v
@@ -64,8 +61,8 @@ func metricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 		bMid /= float64(len(bMidSamples))
 	}
 
-	// B_throat = max |B| on the axis over the whole sampled span (first index
-	// wins a tie, like numpy.argmax).
+	// B_throat = 整个采样跨度上轴上 |B| 的最大值 (并列时第一个索引胜出, 同
+	// numpy.argmax)。
 	bThroat := 0.0
 	iThroat := 0
 	for i, v := range bAxis {
@@ -83,7 +80,7 @@ func metricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 		m.ZThroatM = g.AxisZ[iThroat]
 	}
 
-	// volume_good = fraction of the cell volume with |B| <= ConfineFactor*B_mid.
+	// volume_good = 元胞体积中 |B| <= ConfineFactor*B_mid 的比例。
 	good := 0
 	for _, v := range bCell {
 		if v <= spec.ConfineFactor*floor {
@@ -94,7 +91,7 @@ func metricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 		m.VolumeGood = float64(good) / float64(len(bCell))
 	}
 
-	// ripple over the axis samples that sit inside the cell.
+	// ripple 只取落在元胞内部的轴上采样点。
 	axisCell := make([]float64, 0, len(bAxis))
 	for i := range bAxis {
 		if i < len(g.AxisInCell) && g.AxisInCell[i] {
@@ -103,7 +100,7 @@ func metricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 	}
 	m.Ripple = axisRipple(axisCell, bMid, RippleProminence)
 
-	// B_coil_max and the proximity flag.
+	// B_coil_max 与 proximity 标志。
 	bOthers, floorHit := conductorField(coils, spec, s)
 	m.CoilProximityFloorHit = floorHit
 	if len(coils) > 0 {
@@ -116,7 +113,7 @@ func metricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 		m.BCoilMaxT = peak + spec.SelfField()
 	}
 
-	// cost_proxy = sum_k I_k^2 r_k.
+	// cost_proxy = sum_k I_k^2 r_k。
 	cost := 0.0
 	for _, c := range coils {
 		cost += c.Current * c.Current * c.Radius
@@ -125,15 +122,13 @@ func metricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 	return m
 }
 
-// conductorField returns, for every coil, the summed magnitude of the fields
-// produced by all *other* coils at that coil's location, plus whether any coil
-// pair sat closer than ProximityFloor.
+// conductorField 为每一个线圈返回所有*其它*线圈在该线圈位置产生的场的模之和, 外加
+// 是否存在任一线圈对靠得比 ProximityFloor 更近。
 //
-// Two details are frozen by the reference and matter numerically:
-//   - the magnitudes are summed (not the vectors): sum_j |B_j(x_i)|;
-//   - one field call per *source* coil evaluates that source at every other
-//     coil's location, which is K calls instead of K*(K-1) single-point calls
-//     and the same physics.
+// 有两个细节被参考实现冻结, 并且有数值影响:
+//   - 求和的是模 (不是矢量): sum_j |B_j(x_i)|;
+//   - 每个*源*线圈一次场调用, 用它在所有其它线圈的位置上求值; 这是 K 次调用而不是
+//     K*(K-1) 次单点调用, 物理完全相同。
 func conductorField(coils []Coil, spec config.Spec, s Solver) ([]float64, bool) {
 	bOthers := make([]float64, len(coils))
 	floorHit := false
@@ -170,11 +165,9 @@ func conductorField(coils []Coil, spec config.Spec, s Solver) ([]float64, bool) 
 	return bOthers, floorHit
 }
 
-// axisRipple is the normalised amplitude of the non-monotonic structure on the
-// axis, per the frozen definition: interior extrema are found by 3-point
-// comparison, only structures deeper than prominence*bMid count, only
-// consecutive extrema that alternate (max, min) are summed, and the result is
-// divided by bMid. A monotonic or single-peaked profile gives exactly 0.
+// axisRipple 是轴上非单调结构的归一化幅度, 按冻结定义: 内部极值用三点比较找到,
+// 只有比 prominence*bMid 更深的结构才算, 只有相间的连续极值 (max, min) 才被求和,
+// 最后结果除以 bMid。单调或单峰剖面精确给出 0。
 func axisRipple(bAxisCell []float64, bMid, prominence float64) float64 {
 	n := len(bAxisCell)
 	if n < 5 || bMid <= 0 {
@@ -199,7 +192,7 @@ func axisRipple(bAxisCell []float64, bMid, prominence float64) float64 {
 	total := 0.0
 	for k := 0; k+1 < len(exts); k++ {
 		if exts[k].isMax == exts[k+1].isMax {
-			continue // not an alternating (max, min) / (min, max) pair
+			continue // 不是相间的 (max, min) / (min, max) 极值对
 		}
 		amp := math.Abs(exts[k].value - exts[k+1].value)
 		if amp > prominence*bMid {
@@ -209,9 +202,8 @@ func axisRipple(bAxisCell []float64, bMid, prominence float64) float64 {
 	return total / bMid
 }
 
-// minCoilGap is the smallest 3-D distance between two coil centres, +Inf for
-// fewer than two coils. The (r, z) pair is the natural 3-D distance between
-// axisymmetric coil centres, since both sit on the same azimuth.
+// minCoilGap 是两个线圈中心之间最小的 3-D 距离, 少于两个线圈时为 +Inf。(r, z) 这一对
+// 就是轴对称线圈中心之间的自然 3-D 距离, 因为两者处在同一个方位角上。
 func minCoilGap(coils []Coil) float64 {
 	best := math.Inf(1)
 	for i := range coils {
