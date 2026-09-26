@@ -26,9 +26,33 @@
 package search
 
 import (
+	"fmt"
+	"math/rand"
+	"sort"
+	"strings"
+
 	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 	"github.com/logos-42/hushfusion-forge/internal/runner"
+)
+
+// Algorithm names. FROZEN: they are written into every registry record as
+// Meta.Algorithm and into Result.Algorithm.
+const (
+	AlgorithmRandom        = "random"
+	AlgorithmLHS           = "lhs"
+	AlgorithmEvolution     = "evolution"
+	AlgorithmEvolutionWarm = "evolution_warm"
+)
+
+// Documented defaults (mirrored by DefaultOptions).
+const (
+	DefaultBudget     = 1000
+	DefaultMu         = 16
+	DefaultLam        = 48
+	DefaultSigma0     = 0.25
+	DefaultSigmaFloor = 0.03
+	DefaultWorkers    = 1
 )
 
 // Options fully specifies one run. Seed and Budget are the only knobs a caller
@@ -49,8 +73,24 @@ type Options struct {
 
 // DefaultOptions mirrors the Python reference and the report's stated settings:
 // budget 1000, mu 16, lambda 48, sigma0 0.25, sigmaFloor 0.03, 1 worker.
+//
+// Seed is 0 and BaselineScore is 0 (unset) on purpose: the seed is a run
+// argument, and the baseline score belongs to whoever ran the human baseline.
+// Algorithm is the primary method, "evolution"; each algorithm stamps its own
+// canonical name on the records it writes, so a mis-set field cannot mislabel a
+// registry record.
 func DefaultOptions(spec config.Spec) Options {
-	panic("TODO(stage D): implement DefaultOptions")
+	return Options{
+		Spec:       spec,
+		Seed:       0,
+		Budget:     DefaultBudget,
+		Mu:         DefaultMu,
+		Lam:        DefaultLam,
+		Sigma0:     DefaultSigma0,
+		SigmaFloor: DefaultSigmaFloor,
+		Workers:    DefaultWorkers,
+		Algorithm:  AlgorithmEvolution,
+	}
 }
 
 // Result is the outcome of one algorithm run.
@@ -76,12 +116,55 @@ type Result struct {
 //
 // (Go's RNG stream differs from numpy's by design; only the physics is
 // cross-language anchored, not the random path.)
-func Random(sc runner.Scorer, opt Options) Result { panic("TODO(stage D): implement random search") }
+func Random(sc runner.Scorer, opt Options) Result {
+	rng := rand.New(rand.NewSource(int64(opt.Seed)))
+	st := newRunState(sc, AlgorithmRandom, opt)
+	batch := make([][]float64, 0, evalChunk)
+	for i, n := 0, budgetOf(opt); i < n; i++ {
+		batch = append(batch, SampleDesign(rng, opt.Spec))
+		if len(batch) == evalChunk {
+			st.evalAll(batch, 0, nil)
+			batch = batch[:0]
+		}
+	}
+	if len(batch) > 0 {
+		st.evalAll(batch, 0, nil)
+	}
+	return st.result(opt)
+}
 
 // LHS: one design per stratum per dimension; stratum order permuted per
 // dimension from the same seeded RNG, then mapped into the box and canonicalised.
+//
+// Point i uses stratum perm_j[i] in dimension j and samples uniformly inside
+// that stratum; RNG draws are taken dimension-major (dimension j, then all n
+// strata) so the stream is fixed by (seed, budget, spec) alone.
 func LHS(sc runner.Scorer, opt Options) Result {
-	panic("TODO(stage D): implement latin hypercube search")
+	spec := opt.Spec
+	rng := rand.New(rand.NewSource(int64(opt.Seed)))
+	n := budgetOf(opt)
+	d := spec.NParams()
+	lo, hi := spec.Lower(), spec.Upper()
+
+	xs := make([][]float64, n)
+	for i := range xs {
+		xs[i] = make([]float64, d)
+	}
+	for j := 0; j < d; j++ {
+		perm := rng.Perm(n)
+		width := (hi[j] - lo[j]) / float64(n)
+		for i := 0; i < n; i++ {
+			u := float64(perm[i]) + rng.Float64() // one draw per (dimension, stratum)
+			xs[i][j] = lo[j] + u*width
+		}
+	}
+	for i := range xs {
+		xs[i] = Canonicalise(xs[i], spec)
+	}
+
+	st := newRunState(sc, AlgorithmLHS, opt)
+	st.evalAll(xs, 0, nil)
+	return st.result(opt)
 }
 
 // Evolution: elitist (mu+lambda) evolution strategy.
@@ -95,19 +178,47 @@ func LHS(sc runner.Scorer, opt Options) Result {
 //
 // The budget is exact: nEvals never exceeds Budget.
 func Evolution(sc runner.Scorer, opt Options) Result {
-	panic("TODO(stage D): implement evolution strategy")
+	return evolutionRun(sc, opt, AlgorithmEvolution, opt.WarmStart)
 }
 
 // EvolutionWarm is Evolution with opt.WarmStart defaulting to the textbook
 // mirror design when none is supplied. Algorithm name: "evolution_warm".
 func EvolutionWarm(sc runner.Scorer, opt Options) Result {
-	panic("TODO(stage D): implement warm-started evolution")
+	warm := opt.WarmStart
+	if len(warm) == 0 {
+		warm = WarmStartDesign(opt.Spec)
+	}
+	return evolutionRun(sc, opt, AlgorithmEvolutionWarm, warm)
 }
 
 // Methods maps a method name to its implementation.
-var Methods = map[string]func(runner.Scorer, Options) Result{}
+var Methods = map[string]func(runner.Scorer, Options) Result{
+	AlgorithmRandom:        Random,
+	AlgorithmLHS:           LHS,
+	AlgorithmEvolution:     Evolution,
+	AlgorithmEvolutionWarm: EvolutionWarm,
+}
+
+// MethodNames returns the known method names, sorted (for CLI help and error
+// messages). Additive helper — no frozen signature was touched.
+func MethodNames() []string {
+	out := make([]string, 0, len(Methods))
+	for name := range Methods {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // Run dispatches by name and errors on an unknown method.
+//
+// An unknown name is a hard error and never falls back to a default algorithm:
+// a run must not be recorded under a method that does not exist.
 func Run(method string, sc runner.Scorer, opt Options) (Result, error) {
-	panic("TODO(stage D): implement method dispatch")
+	fn, ok := Methods[method]
+	if !ok {
+		return Result{}, fmt.Errorf("search: unknown method %q (known: %s)", method, strings.Join(MethodNames(), ", "))
+	}
+	opt.Algorithm = method
+	return fn(sc, opt), nil
 }
