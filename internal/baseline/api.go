@@ -5,6 +5,8 @@
 package baseline
 
 import (
+	"fmt"
+
 	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 )
@@ -35,7 +37,11 @@ type Baseline struct {
 
 // HelmholtzPair is two identical loops separated by their own radius.
 func HelmholtzPair(radius, current float64) []physics.Coil {
-	panic("TODO(stage B): implement Helmholtz pair")
+	// Spacing = radius, centred on z = 0 (the textbook uniform-field pair).
+	return []physics.Coil{
+		{Radius: radius, Z: -radius / 2.0, Current: current},
+		{Radius: radius, Z: radius / 2.0, Current: current},
+	}
 }
 
 // TextbookMirror is the hand-designed mirror the machine is asked to beat:
@@ -49,5 +55,12 @@ func HelmholtzPair(radius, current float64) []physics.Coil {
 // Golden values live in testdata/golden_baseline.json (score -0.2905708...):
 // the Go implementation must reproduce that file within 1e-6.
 func TextbookMirror(spec config.Spec) (Baseline, error) {
-	panic("TODO(stage B): implement textbook mirror with solved cell current")
+	// The reference implementation solves against its default closed-form
+	// solver; same here (see analyticSolver for why this is not a literal
+	// physics.AnalyticSolver{} yet).
+	solver, err := analyticSolver()
+	if err != nil {
+		return Baseline{}, fmt.Errorf("baseline.TextbookMirror: %w", err)
+	}
+	return textbookMirror(spec, solver, physics.BuildGrids(spec))
 }
