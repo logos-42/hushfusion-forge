@@ -385,6 +385,99 @@ func TestEmitScoredRegistryFixture(t *testing.T) {
 	t.Logf("emitted %d scored records to %s", reg.Len(), reg.Path)
 }
 
+// TestScoreIsConcurrencySafe tests the frozen doc comment's promise for real:
+// "Evaluation may be called from several goroutines (parallel search); recording
+// must stay serialised through the registry." It skips (with the upstream panic as
+// its reason) while stage A/B are skeletons, and fails loudly if a goroutine panics
+// once they are ready.
+func TestScoreIsConcurrencySafe(t *testing.T) {
+	spec := config.DefaultSpec()
+	var (
+		grids physics.Grids
+		ev    *objective.Evaluator
+	)
+	if p, ok := capture(func() {
+		grids = physics.BuildGrids(spec)
+		ev = objective.NewEvaluator(spec, physics.AnalyticSolver{}, goldenCostRef, grids)
+	}); !ok {
+		t.Skipf("dependency not ready: stage A/B is still a skeleton, building the evaluator panicked: %v", p)
+	}
+	lo, hi := spec.Lower(), spec.Upper()
+	designAt := func(i int) []float64 {
+		x := make([]float64, spec.NParams())
+		for j := range x {
+			x[j] = lo[j] + (hi[j]-lo[j])*(0.2+0.6*float64((i*7+j*3)%100)/100)
+		}
+		return x
+	}
+	// One probe evaluation against a throwaway registry: a panic here means the
+	// upstream path is not usable yet, and a panic inside a goroutine could not be
+	// recovered (it would take the test binary down with it).
+	probe := New(openRegistry(t), ev, "probe")
+	if p, ok := capture(func() { probe.Score(designAt(0), Meta{Algorithm: "probe", Seed: 7}) }); !ok {
+		t.Skipf("dependency not ready: scoring panicked upstream: %v", p)
+	}
+
+	reg := openRegistry(t)
+	r := New(reg, ev, "phase0")
+	const n = 100
+	results := make([]objective.EvalResult, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = r.Score(designAt(i), Meta{Algorithm: "evolution", Seed: 7, EvalIndex: i})
+		}(i)
+	}
+	wg.Wait()
+
+	recs, err := reg.Records()
+	if err != nil {
+		t.Fatalf("Records: %v", err)
+	}
+	if len(recs) != n {
+		t.Fatalf("registry holds %d records, want %d", len(recs), n)
+	}
+	byID := map[int]registry.Record{}
+	byDesign := map[string]registry.Record{}
+	for _, rec := range recs {
+		if _, dup := byID[rec.ExperimentID]; dup {
+			t.Fatalf("experiment_id %d was written twice", rec.ExperimentID)
+		}
+		byID[rec.ExperimentID] = rec
+		byDesign[rec.DesignID] = rec
+	}
+	for i := 0; i < n; i++ {
+		if byID[i+1].DesignID == "" {
+			t.Fatalf("experiment_id %d is missing: the ids are not gap-free under parallel scoring", i+1)
+		}
+	}
+	for i, res := range results {
+		rec, ok := byDesign[res.DesignID]
+		if !ok {
+			t.Fatalf("goroutine %d reported design_id %q which is not in the registry", i, res.DesignID)
+		}
+		if rec.ExperimentID != res.ExperimentID {
+			t.Fatalf("design %s: runner reported experiment_id %d, registry says %d",
+				res.DesignID, res.ExperimentID, rec.ExperimentID)
+		}
+		if rec.Score != res.Score {
+			t.Fatalf("design %s: registry score %v, runner score %v", res.DesignID, rec.Score, res.Score)
+		}
+		// The raw terms of the evaluation reached the record unchanged.
+		for k, v := range res.Terms {
+			if rec.Terms[k] != v {
+				t.Fatalf("design %s: terms[%s] = %v in the registry, %v in the result",
+					res.DesignID, k, rec.Terms[k], v)
+			}
+		}
+	}
+	if problems, err := reg.Check(); err != nil || len(problems) != 0 {
+		t.Fatalf("Check = %v, %v; want a clean registry", problems, err)
+	}
+}
+
 // TestScoreEndToEnd exercises the real path runner.Score owns — evaluate, assign
 // ids, write the record, back-fill DesignID/ExperimentID — against the real
 // objective.Evaluator and physics.Solver.
