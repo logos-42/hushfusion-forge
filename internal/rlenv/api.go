@@ -214,10 +214,11 @@ func (e *Env) Step(action []float64) (obs []float64, reward float64, terminated,
 		}
 	}
 
-	next := make([]float64, len(e.x))
+	// Move the state: an action is a delta in normalised units, scaled per
+	// parameter and clipped both in action space and in the design box.
 	for i := range e.x {
 		a := clip(action[i], -1, 1)
-		next[i] = clip(e.x[i]+a*e.DeltaScale*(e.upper[i]-e.lower[i]), e.lower[i], e.upper[i])
+		e.x[i] = clip(e.x[i]+a*e.DeltaScale*(e.upper[i]-e.lower[i]), e.lower[i], e.upper[i])
 	}
 
 	parent := e.lastDesignID

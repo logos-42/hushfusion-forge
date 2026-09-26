@@ -190,6 +190,9 @@ func TestRewardTelescopes(t *testing.T) {
 	rng := rand.New(rand.NewSource(20260926))
 	action := make([]float64, env.ActionDim())
 	sum := 0.0
+	nonZeroRewards := 0
+	prevEval := append([]float64(nil), sc.lastEval...)
+	moved := 0
 	for i := 0; i < steps; i++ {
 		for j := range action {
 			action[j] = 2*rng.Float64() - 1
@@ -205,7 +208,26 @@ func TestRewardTelescopes(t *testing.T) {
 		if math.Abs(reward-info.DeltaScore) > 1e-12 {
 			t.Fatalf("step %d: returned reward %v != info.DeltaScore %v", i, reward, info.DeltaScore)
 		}
+		if reward != 0 {
+			nonZeroRewards++
+		}
+		for j := range prevEval {
+			if sc.lastEval[j] != prevEval[j] {
+				moved++
+				break
+			}
+		}
+		prevEval = append(prevEval[:0], sc.lastEval...)
 		sum += reward
+	}
+
+	// The episode must actually move: a "reward telescopes" test that passes on a
+	// frozen design proves nothing.
+	if moved == 0 {
+		t.Fatal("no step changed the design: the action had no effect on the state")
+	}
+	if nonZeroRewards == 0 {
+		t.Fatal("every step returned reward 0: the episode is a fixed point, so telescoping is vacuous")
 	}
 
 	finalDesign := sc.lastEval
@@ -234,6 +256,67 @@ func TestRewardTelescopes(t *testing.T) {
 // Shapes, bounds, and clipping.
 // ---------------------------------------------------------------------------
 
+// TestActionSemantics pins what an action does: a normalised delta of exactly
+// DeltaScale*(upper-lower) per parameter, clipped to [-1,1] in action space and
+// to the box in design space, with the reward of the moved design.
+func TestActionSemantics(t *testing.T) {
+	spec := config.DefaultSpec()
+	sc := newToy(spec)
+	lo, hi := spec.Lower(), spec.Upper()
+	const scale = 0.15
+
+	env := NewEnv(sc, spec, 4, scale)
+	x0 := midDesign(spec) // box centre: a +1 action cannot be clipped
+	env.Reset(x0)
+
+	action := make([]float64, env.ActionDim())
+	for i := range action {
+		action[i] = 1
+	}
+	obs, reward, _, _, _ := env.Step(action)
+
+	for i := range x0 {
+		want := x0[i] + 1*scale*(hi[i]-lo[i])
+		if math.Abs(sc.lastEval[i]-want) > 1e-12 {
+			t.Fatalf("parameter %d after a +1 action = %v, want %v (span %v)",
+				i, sc.lastEval[i], want, hi[i]-lo[i])
+		}
+		// 2*scale in normalised observation units, since the box centre is 0
+		wantObs := 2 * scale
+		if math.Abs(obs[i]-wantObs) > 1e-12 {
+			t.Fatalf("normalised slot %d after a +1 action = %v, want %v", i, obs[i], wantObs)
+		}
+	}
+	wantReward := toyScore(spec, sc.lastEval) - toyScore(spec, x0)
+	if math.Abs(reward-wantReward) > 1e-12 {
+		t.Fatalf("reward %v != score(after)-score(before) = %v", reward, wantReward)
+	}
+	if reward == 0 {
+		t.Fatal("a design-changing action returned reward 0")
+	}
+
+	// An out-of-range action must behave exactly like the clipped one (the delta
+	// is bounded by DeltaScale, not by the caller's idea of magnitude).
+	for i := range action {
+		action[i] = 1e9
+	}
+	obsHuge, rewardHuge, _, _, _ := env.Step(action)
+	for i := range x0 {
+		want := midDesign(spec)[i] + 2*scale*(hi[i]-lo[i]) // two +1 steps from centre
+		if math.Abs(sc.lastEval[i]-want) > 1e-12 {
+			t.Fatalf("parameter %d after a +1e9 action = %v, want %v (clip to +1)", i, sc.lastEval[i], want)
+		}
+		if math.Abs(obsHuge[i]-(2*2*scale)) > 1e-12 {
+			t.Fatalf("normalised slot %d after a +1e9 action = %v, want %v", i, obsHuge[i], 4*scale)
+		}
+	}
+	if rewardHuge == 0 {
+		t.Fatal("a clipped-but-nonzero action returned reward 0")
+	}
+}
+
+// TestObsDimAndBounds checks shapes, the normalised design mapping, metric-slot
+// scaling and the invariant that no action can push a design out of the box.
 func TestObsDimAndBounds(t *testing.T) {
 	spec := config.DefaultSpec()
 	sc := newToy(spec)
