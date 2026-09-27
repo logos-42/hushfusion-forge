@@ -2055,12 +2055,19 @@ func cmdWorld(args []string) int {
 }
 
 func worldUsage(w *os.File) {
-	fmt.Fprint(w, `usage: forge world serve [--protocol 1] [--max-steps n] [--delta-scale s] [--record FILE] [--replay FILE]
+	fmt.Fprint(w, `usage: forge world serve [--world params|mu] [--protocol 1] [--max-steps n] [--delta-scale s] [--record FILE] [--replay FILE]
 
-Serve the design world over the JSONL line protocol frozen in docs/world-protocol.md,
+Serve a design world over the JSONL line protocol frozen in docs/world-protocol.md,
 or replay a recorded trace byte for byte against a fresh world.
 
-The world is internal/rlenv: this command adds no physics, no shaping and no learning.
+--world params (default) is the design-parameter world: internal/rlenv for protocol 1
+and the §8 sequence semantics for protocol 2. This command adds no physics, no shaping
+and no learning.
+
+--world mu is the commutator world (protocol 3, candidate — docs/world-commutator-candidates.md):
+state = (field vector, region family, mu, eta, window margin, budget, source);
+actions = the declared finite set {flatten:<region>} ∪ {update_mu}; score reads mu AND
+the field. Its only field sources are the same two material classes.
 stdout carries protocol lines only; every human log goes to stderr.
 
 Two protocol versions are served. Protocol 1 is the original single-step semantics
@@ -2079,7 +2086,8 @@ flags:
   --delta-scale s  normalised action scale (default: internal/config.DefaultDeltaScale)
   --source S       protocol 2 default field source (overridable per reset by regime.source)
   --budget n       protocol 2 default step budget (default: internal/config.DefaultBudget)
-  --target x       protocol 2 default termination target (default: internal/config.DefaultTarget)
+  --target x       protocol 2 default termination target; for --world mu the default is the world's
+                   own solved score (mu.TargetScore), not internal/config.DefaultTarget
   --record FILE    append every request/response pair to FILE as a trace (one object per line)
   --replay FILE    feed the trace's requests to a fresh world and compare byte for byte
 
@@ -2091,10 +2099,12 @@ exit codes: 0 close/EOF, 1 a fatal error (already replied ok:false), 2 usage err
 }
 
 func cmdWorldServe(args []string) int {
-	fs := newFlagSet("world serve", "world serve [--protocol n] [--max-steps n] [--delta-scale s] [--source S] [--budget n] [--target x] [--record FILE] [--replay FILE]",
+	fs := newFlagSet("world serve", "world serve [--world params|mu] [--protocol n] [--max-steps n] [--delta-scale s] [--source S] [--budget n] [--target x] [--record FILE] [--replay FILE]",
 		"Serve the design world (internal/rlenv) over the frozen JSONL line protocol, or\n"+
 			"replay a recorded trace byte for byte. stdout carries protocol lines only;\n"+
 			"any human log goes to stderr.")
+	worldKind := fs.String("world", world.WorldParams,
+		"world to serve: params (design parameters, protocols 1/2) or mu (commutator world, protocol 3)")
 	protocol := fs.Int("protocol", world.ProtocolVersion, "protocol version to serve (1 or 2)")
 	maxSteps := fs.Int("max-steps", config.DefaultMaxSteps, "protocol 1 episode length (steps to truncation)")
 	deltaScale := fs.Float64("delta-scale", config.DefaultDeltaScale, "normalised action scale")
@@ -2109,9 +2119,16 @@ func cmdWorldServe(args []string) int {
 	if *record != "" && *replay != "" {
 		return fail("--record and --replay cannot be combined: a replay is not a session to record")
 	}
+	if !world.WorldKindSupported(*worldKind) {
+		return fail("--world %s is not a known world (known: %s, %s)",
+			*worldKind, world.WorldParams, world.WorldMu)
+	}
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 
 	// §8.1: --replay 忽略 --protocol, 以 trace 自己的 hello 响应里的 protocol 字段为准。
 	// 猜错版本不是"回放失败", 而是"回放的是另一套语义" —— 那样报出来的差异一行都不可信。
+	// 同一条纪律现在也管 --world: 一条协议 3 的 trace 必须在协议 3 的世界里回放。
 	if *replay != "" {
 		traced, err := world.TraceProtocol(*replay)
 		if err != nil {
@@ -2122,6 +2139,65 @@ func cmdWorldServe(args []string) int {
 				*protocol, traced)
 		}
 		*protocol = traced
+		tracedKind := world.WorldParams
+		if traced == world.ProtocolV3 {
+			tracedKind = world.WorldMu
+		}
+		if explicit["world"] && *worldKind != tracedKind {
+			return fail("--world %s contradicts the trace: its protocol %d is the %s world",
+				*worldKind, traced, tracedKind)
+		}
+		*worldKind = tracedKind
+	}
+
+	// 世界与协议版本是一对一绑定的: 选错了不是"参数不对", 而是把两个世界混为一谈。
+	// 所以这里**大声拒绝**并且不动默认值(默认世界仍是设计参数世界 v2)。
+	muWorld := *worldKind == world.WorldMu
+	if muWorld && explicit["protocol"] && *protocol != world.ProtocolV3 {
+		return fail("--world mu speaks protocol %d only (got --protocol %d)", world.ProtocolV3, *protocol)
+	}
+	if !muWorld && *protocol == world.ProtocolV3 {
+		return fail("protocol %d belongs to the mu world: run with --world mu (or drop --protocol)", world.ProtocolV3)
+	}
+	if muWorld {
+		// 交换子世界不打设计分: 它没有 spec、不建注册表、不建求值器 —— 它的目标函数是
+		// internal/mu 的纯代数(声明在 hello.declaration.score 里)。世界报的 score 就是
+		// 那个函数的值, 这里不许再包一层 reward。
+		*protocol = world.ProtocolV3
+		// --target 的缺省是**世界自己的解分数**(0 = 由世界解析, 见 mu.TargetScore):
+		// 参数世界的 1.0 在 μ 世界里是一次部分解, 会在两步测量走完之前终止 episode。
+		muTarget := *target
+		if !explicit["target"] {
+			muTarget = 0
+		}
+		mw := world.NewMuWorld(world.Options{
+			Protocol: world.ProtocolV3,
+			Source:   *source,
+			Budget:   *budget,
+			Target:   muTarget,
+			Engine:   Version,
+		})
+		nCells, actionDim, obsDim, _ := mw.MuConfExport()
+		fmt.Fprintf(os.Stderr, "forge world serve: world=mu protocol=%d cells=%d action_dim=%d observation_dim=%d "+
+			"source=%s budget=%d target=%v engine=%s\n",
+			*protocol, nCells, actionDim, obsDim, mw.Source(), mw.Budget(), mw.Target(), Version)
+		srv := world.NewServer(mw, *protocol, os.Stderr)
+		if *replay != "" {
+			return srv.Replay(*replay, os.Stderr)
+		}
+		if *record == "" {
+			return srv.Serve(os.Stdin, os.Stdout, nil)
+		}
+		rec, err := world.NewRecorder(*record)
+		if err != nil {
+			return fail("%v", err)
+		}
+		code := srv.Serve(os.Stdin, os.Stdout, rec)
+		if err := rec.Close(); err != nil {
+			return fail("cannot close the trace %s: %v", *record, err)
+		}
+		fmt.Fprintf(os.Stderr, "forge world: recorded %s\n", *record)
+		return code
 	}
 
 	spec := defaultSpec()

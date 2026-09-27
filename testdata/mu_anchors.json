@@ -1,0 +1,1037 @@
+{
+  "provenance": {
+    "generator": "scripts/emit_mu_anchors.py",
+    "upstream_root": "/Users/apple/Downloads/lean/ProjectionPhysics",
+    "upstream_commit": "7f47cd0e98bbe1914ff781e85031dfa6bf73a3cf",
+    "upstream_commit_subject": "docs(wiki): 判决漏斗对外公开(改档 self→public)+ 修正 1.29% 口径",
+    "upstream_artifacts_tracked_by_git": 0,
+    "generated_at_utc": "2026-09-27T07:28:05Z",
+    "generated_at_local": "2026-09-27T15:28:05.818999+08:00",
+    "read_from": [
+      "artifacts/mudynamics/report.json",
+      "artifacts/gravitycontrol/report.json",
+      "ProjectionPhysics/PlasmaDynamics.lean",
+      "ProjectionPhysics/MuFieldCoupling.lean",
+      "ProjectionPhysics/GravityControl.lean"
+    ],
+    "skipped_fields": [],
+    "source_of_truth": "上游仓库 commit 7f47cd0e98bbe1914ff781e85031dfa6bf73a3cf 的工作区：两份 report.json 由上游 scripts/verify_gravity_control.py / verify_mu_field_coupling.py 重跑得到（上游 artifacts/ 不入上游 git：同一 commit 的 `git ls-files artifacts/` = 0 个文件）；Lean 条目名直读三个 .lean 源文件。锚点里的数字要么是上游字段原文，要么由本脚本反推并自证（带 inferred 标记）。",
+    "check_note": "上游是**活的**（leo 会持续在里面计算），所以 --check 分两级：数值/判决值/键集合变了 → 红（FAIL，必须重发锚点并复核）；只有 provenance（commit/时间/路径）或 Lean 条目名集合变了 → 黄（WARN，不拦门）。这样「上游 HEAD 前进但数字没动」不会造成假红。",
+    "tolerance_note": "上游字段是逐位拷贝；Go 侧**复算**的派生量（μ 轨道、交换子见证、闭式解）与上游差~2e-15 相对（递推 vs 闭式、求和次序的差别），因此 anchor_test.go 用 rel 1e-12 锚定。"
+  },
+  "mudynamics": {
+    "report_json": "artifacts/mudynamics/report.json",
+    "title": "μ 动力学（TD1–TD21）数值验证",
+    "state_equation": "μ(t+Δt) = μ(t) + η·(1 − μ(t))",
+    "closed_form": "μ_n = 1 − (1 − η)^n (1 − μ₀)",
+    "bridge": "η = 1 − Q_A(v)/Q_A(v₀)（增益 = 抹平进展）",
+    "n1_bounded": {
+      "网格 μ×η ∈ [0,1]²（21×21）": 441,
+      "max 下界违反 −min(μ')": 0.0,
+      "max 上界违反 max(μ')−1": 0.0,
+      "有界不超调": true
+    },
+    "n2_strict_mono": {
+      "样本数": 2000,
+      "违反数": 0,
+      "最小增量": 6.351066004262051e-05,
+      "严格递增": true
+    },
+    "n3_n4_reachable_overshoot": {
+      "η<1 且 μ<1 ⟹ μ'<1（400 点扫描）": true,
+      "η>1 且 μ<1 ⟹ μ'>1（400 点扫描，超调）": true,
+      "稳定区 = η ≤ 1": true
+    },
+    "n5_closed_form": {
+      "max|递推 − 闭式|（60 组 (μ₀,η,n)）": 7.771561172376096e-16,
+      "闭式解成立": true
+    },
+    "n10_convergence_scan": [
+      {
+        "eta": 0.05,
+        "mu_300_upstream": 0.9999998132226988,
+        "overshoot": false,
+        "converges": true,
+        "verdict": "稳定（无超调）",
+        "params": {
+          "hypothesis_mu0": 0.1,
+          "hypothesis_n": 300,
+          "iteration_value": 0.9999998132226988,
+          "iteration_residual": 0.0,
+          "iteration_bit_exact": true,
+          "closed_form_value": 0.9999998132226987,
+          "closed_form_residual": 1.1102232319896555e-16,
+          "closed_form_saturated": false,
+          "source": "本脚本提出的参数假设：report.json 的 N10 行只给 (η, μ_300)，没给 μ₀/n。假设 (μ₀=0.1, n=300) 由 TD1 的递推逐行撞击上游字段（撞不上就报错）；闭式解残差另记，两者不同是「递推 vs 闭式」的次序差。"
+        }
+      },
+      {
+        "eta": 0.3,
+        "mu_300_upstream": 0.9999999999999999,
+        "overshoot": false,
+        "converges": true,
+        "verdict": "稳定（无超调）",
+        "params": {
+          "hypothesis_mu0": 0.1,
+          "hypothesis_n": 300,
+          "iteration_value": 0.9999999999999999,
+          "iteration_residual": 0.0,
+          "iteration_bit_exact": true,
+          "closed_form_value": 1.0,
+          "closed_form_residual": 1.1102230246251568e-16,
+          "closed_form_saturated": true,
+          "source": "本脚本提出的参数假设：report.json 的 N10 行只给 (η, μ_300)，没给 μ₀/n。假设 (μ₀=0.1, n=300) 由 TD1 的递推逐行撞击上游字段（撞不上就报错）；闭式解残差另记，两者不同是「递推 vs 闭式」的次序差。"
+        }
+      },
+      {
+        "eta": 0.6,
+        "mu_300_upstream": 1.0,
+        "overshoot": false,
+        "converges": true,
+        "verdict": "稳定（无超调）",
+        "params": {
+          "hypothesis_mu0": 0.1,
+          "hypothesis_n": 300,
+          "iteration_value": 1.0,
+          "iteration_residual": 0.0,
+          "iteration_bit_exact": true,
+          "closed_form_value": 1.0,
+          "closed_form_residual": 0.0,
+          "closed_form_saturated": true,
+          "source": "本脚本提出的参数假设：report.json 的 N10 行只给 (η, μ_300)，没给 μ₀/n。假设 (μ₀=0.1, n=300) 由 TD1 的递推逐行撞击上游字段（撞不上就报错）；闭式解残差另记，两者不同是「递推 vs 闭式」的次序差。"
+        }
+      },
+      {
+        "eta": 1.0,
+        "mu_300_upstream": 1.0,
+        "overshoot": false,
+        "converges": true,
+        "verdict": "稳定（无超调）",
+        "params": {
+          "hypothesis_mu0": 0.1,
+          "hypothesis_n": 300,
+          "iteration_value": 1.0,
+          "iteration_residual": 0.0,
+          "iteration_bit_exact": true,
+          "closed_form_value": 1.0,
+          "closed_form_residual": 0.0,
+          "closed_form_saturated": true,
+          "source": "本脚本提出的参数假设：report.json 的 N10 行只给 (η, μ_300)，没给 μ₀/n。假设 (μ₀=0.1, n=300) 由 TD1 的递推逐行撞击上游字段（撞不上就报错）；闭式解残差另记，两者不同是「递推 vs 闭式」的次序差。"
+        }
+      },
+      {
+        "eta": 1.4,
+        "mu_300_upstream": 1.0,
+        "overshoot": true,
+        "converges": true,
+        "verdict": "超调但收敛",
+        "params": {
+          "hypothesis_mu0": 0.1,
+          "hypothesis_n": 300,
+          "iteration_value": 1.0,
+          "iteration_residual": 0.0,
+          "iteration_bit_exact": true,
+          "closed_form_value": 1.0,
+          "closed_form_residual": 0.0,
+          "closed_form_saturated": true,
+          "source": "本脚本提出的参数假设：report.json 的 N10 行只给 (η, μ_300)，没给 μ₀/n。假设 (μ₀=0.1, n=300) 由 TD1 的递推逐行撞击上游字段（撞不上就报错）；闭式解残差另记，两者不同是「递推 vs 闭式」的次序差。"
+        }
+      },
+      {
+        "eta": 1.8,
+        "mu_300_upstream": 0.9999999999999998,
+        "overshoot": true,
+        "converges": true,
+        "verdict": "超调但收敛",
+        "params": {
+          "hypothesis_mu0": 0.1,
+          "hypothesis_n": 300,
+          "iteration_value": 0.9999999999999998,
+          "iteration_residual": 0.0,
+          "iteration_bit_exact": true,
+          "closed_form_value": 1.0,
+          "closed_form_residual": 2.2204460492503136e-16,
+          "closed_form_saturated": true,
+          "source": "本脚本提出的参数假设：report.json 的 N10 行只给 (η, μ_300)，没给 μ₀/n。假设 (μ₀=0.1, n=300) 由 TD1 的递推逐行撞击上游字段（撞不上就报错）；闭式解残差另记，两者不同是「递推 vs 闭式」的次序差。"
+        }
+      },
+      {
+        "eta": 2.0,
+        "mu_300_upstream": 0.09999999999999987,
+        "overshoot": true,
+        "converges": false,
+        "verdict": "不收敛（振荡）",
+        "params": {
+          "hypothesis_mu0": 0.1,
+          "hypothesis_n": 300,
+          "iteration_value": 0.09999999999999987,
+          "iteration_residual": 0.0,
+          "iteration_bit_exact": true,
+          "closed_form_value": 0.09999999999999998,
+          "closed_form_residual": 1.1102230246251581e-15,
+          "closed_form_saturated": false,
+          "source": "本脚本提出的参数假设：report.json 的 N10 行只给 (η, μ_300)，没给 μ₀/n。假设 (μ₀=0.1, n=300) 由 TD1 的递推逐行撞击上游字段（撞不上就报错）；闭式解残差另记，两者不同是「递推 vs 闭式」的次序差。"
+        }
+      },
+      {
+        "eta": 2.2,
+        "mu_300_upstream": -5.112299912407042e+23,
+        "overshoot": true,
+        "converges": false,
+        "verdict": "不收敛（振荡）",
+        "params": {
+          "hypothesis_mu0": 0.1,
+          "hypothesis_n": 300,
+          "iteration_value": -5.112299912407042e+23,
+          "iteration_residual": 0.0,
+          "iteration_bit_exact": true,
+          "closed_form_value": -5.112299912407057e+23,
+          "closed_form_residual": 2.8879272212041718e-15,
+          "closed_form_saturated": true,
+          "source": "本脚本提出的参数假设：report.json 的 N10 行只给 (η, μ_300)，没给 μ₀/n。假设 (μ₀=0.1, n=300) 由 TD1 的递推逐行撞击上游字段（撞不上就报错）；闭式解残差另记，两者不同是「递推 vs 闭式」的次序差。"
+        }
+      },
+      {
+        "eta": 3.0,
+        "mu_300_upstream": -1.8333323787010375e+90,
+        "overshoot": true,
+        "converges": false,
+        "verdict": "不收敛（振荡）",
+        "params": {
+          "hypothesis_mu0": 0.1,
+          "hypothesis_n": 300,
+          "iteration_value": -1.8333323787010375e+90,
+          "iteration_residual": 0.0,
+          "iteration_bit_exact": true,
+          "closed_form_value": -1.8333323787010375e+90,
+          "closed_form_residual": 0.0,
+          "closed_form_saturated": true,
+          "source": "本脚本提出的参数假设：report.json 的 N10 行只给 (η, μ_300)，没给 μ₀/n。假设 (μ₀=0.1, n=300) 由 TD1 的递推逐行撞击上游字段（撞不上就报错）；闭式解残差另记，两者不同是「递推 vs 闭式」的次序差。"
+        }
+      }
+    ],
+    "n6_never_reach": {
+      "raw": {
+        "严格性检查步数": 300,
+        "终值 μ_N": 0.9999997924696653,
+        "1 − μ_N": 2.0753033469489424e-07,
+        "轨道最大值 < 1": true,
+        "单调递增": true,
+        "min m_eff²": 4.306883981857482e-14,
+        "质量永不归零": true,
+        "浮点饱和步（5000 步轨道首次 μ≥1）": -1,
+        "浮点饱和说明": "双精度下 (1−η)^n 下溢令 μ 在机器精度内=1；实数域结论仍为 μ_n<1（TD8）"
+      },
+      "track_hypothesis": {
+        "mu0": 0.0,
+        "eta": 0.05,
+        "n": 300,
+        "iteration_value": 0.9999997924696653,
+        "closed_form_value": 0.9999997924696652
+      },
+      "iteration_residual": 0.0,
+      "iteration_bit_exact": true,
+      "source": "本脚本提出的参数假设：report.json 的 N6 只给终值 μ_N 与步数，没给 (μ₀, η)。假设 (μ₀=0, η=0.05, n=300) 由 TD1 的递推撞击上游字段（撞不上就报错）；η=0.05 与本报告 N10/N11 出现的 η 同族。",
+      "float_saturation_note": "双精度下 (1−η)^n 下溢令 μ 在机器精度内=1；实数域结论仍为 μ_n<1（TD8）"
+    },
+    "n9_full_gain": {
+      "η=1 ⟹ μ'=1（100 点）": true
+    },
+    "n11_n12_bridge": {
+      "抹平一次后 max|η − 1|（200 场）": 0.0,
+      "抹平 ⟹ η = 1": true,
+      "Q 小 ⟹ η 大（单调反向，200 对）": true
+    },
+    "n13_order_witness": {
+      "先抹平再更新 μ（时序 A）": 1.0,
+      "先更新 μ 再抹平（时序 B）": 0.0,
+      "顺序改变 μ 演化": true
+    },
+    "n14_gap_and_cost": {
+      "顺序差公式 max 残差（300 组）": 0.0,
+      "顺序差 = (1−μ)(1−η_before)": true,
+      "满增益 ⟺ 零代价（200 场）": true
+    },
+    "n15_frc_interface": {
+      "窗口余量 m_i(1−μ_n) 严格递减": true,
+      "锁定因子 1/√(1−μ_n) 分母恒正（良定义）": true,
+      "锁定因子严格递增（逼近发散点）": true,
+      "D-T 窗口关闭步 n*（阈值 μ ≥ 0.99978）": 165,
+      "总步数（400 步内恒 μ_n<1）": 401,
+      "阈值判据等价（逐点，闭式 ⟺ FC11b 阈值）": true
+    },
+    "honesty": [
+      "状态方程是模型选择，不是物理定律",
+      "η 的物理来源仍是第二输入缺口（缺口从 'η 是哪来的' 移到 '抹平功率是哪来的'）",
+      "收敛域分析（η vs 2）在数值层给出；Lean 侧只形式化超调边界（η vs 1）",
+      "FRC 接缝（TD19–TD21）是把 μ 轨道代入 FC11b/FC5b 的单调性/良定义性结论，不是新的物理机制",
+      "全部为代数/序关系/有限维见证；无新物理预言"
+    ],
+    "honesty_note": "上游报告自写的诚实边界，原文照录（上游口径，不是本仓库的结论）",
+    "recompute_note": "上游把「抹平一次后 max|η − 1|」与「P² = P」的残差记成逐位 0.0。本仓用朴素左到右求和复算时它们是 1 ULP 量级（对一串相同的数再取均值，朴素求和一般不等于那个数）。这不是矛盾，是**求和次序**的差别；本仓的代数判据因此用尺子自己的零带（与 G19a 的控制组同口径），而不是逐位相等。"
+  },
+  "gravitycontrol": {
+    "report_json": "artifacts/gravitycontrol/report.json",
+    "title": "控制引力场的代数系统（GCA0–GCA7）数值验证",
+    "primitive": "起伏能量 Q_A(v) = Σ_{i∈A}(v_i − v̄_A)²（非负二次型）",
+    "derivation": "二次型 --极化--> 内积 --正交--> 正交投影 --投影族--> 逻辑；布尔 = 层状区域族（不交或嵌套）",
+    "n1_idempotent": {
+      "max|P_A(P_A v) − P_A v| (200 随机场)": 0.0,
+      "P² = P（幂等）": true
+    },
+    "n2_decision_functional": {
+      "min Q_A(v) over 500 随机场": 12.82602136246657,
+      "Q ≥ 0": true,
+      "Q = 0 ⟺ 区域常值（200/200 常值场 vs 200/200 非常值场）": true,
+      "抹平后 Q_A(P_A v) 最大残差": 0.0,
+      "抹平 ⟹ Q = 0": true
+    },
+    "n3_polarization": {
+      "max 相对误差 Q_A(u+v) = Q_A(u)+Q_A(v)+2⟨u,v⟩（200 对）": 3.6747393232255946e-16,
+      "极化恒等式成立": true
+    },
+    "n5_complementary_projection": {
+      "幂等 P²=P": 0.0,
+      "幂等 (I−P)²=I−P": 4.440892098500626e-16,
+      "正交 P(I−P)=0": 8.326672684688674e-17,
+      "完备 P+(I−P)=I": 4.440892098500626e-16,
+      "互补投影对成立": true
+    },
+    "n6_commutator_scan": {
+      "scan": [
+        {
+          "region_b_start": 16,
+          "overlap_degree": 1.0,
+          "commutator_norm_upstream": 1.3877787807814457e-17
+        },
+        {
+          "region_b_start": 18,
+          "overlap_degree": 0.875,
+          "commutator_norm_upstream": 0.32435877635675275
+        },
+        {
+          "region_b_start": 20,
+          "overlap_degree": 0.75,
+          "commutator_norm_upstream": 0.3785060026164784
+        },
+        {
+          "region_b_start": 24,
+          "overlap_degree": 0.5,
+          "commutator_norm_upstream": 0.2520781023791223
+        },
+        {
+          "region_b_start": 28,
+          "overlap_degree": 0.25,
+          "commutator_norm_upstream": 0.4472446305437331
+        },
+        {
+          "region_b_start": 32,
+          "overlap_degree": 0.0,
+          "commutator_norm_upstream": 0.0
+        },
+        {
+          "region_b_start": 36,
+          "overlap_degree": 0.0,
+          "commutator_norm_upstream": 0.0
+        },
+        {
+          "region_b_start": 40,
+          "overlap_degree": 0.0,
+          "commutator_norm_upstream": 0.0
+        },
+        {
+          "region_b_start": 44,
+          "overlap_degree": 0.0,
+          "commutator_norm_upstream": 0.0
+        },
+        {
+          "region_b_start": 48,
+          "overlap_degree": 0.0,
+          "commutator_norm_upstream": 0.0
+        }
+      ],
+      "lamellar_is_zero": true,
+      "overlap_is_positive": true,
+      "geometry_inferred": {
+        "region_a": "16..31 (16 格)",
+        "region_b": "环上从 s 起的 16 格",
+        "ring_min_cells": 64,
+        "source": "从重叠度列反推（1.0, 0.875, 0.75, 0.5, 0.25, 0.0 ⟺ |A∩B|/16）"
+      }
+    },
+    "n7_boolean_vs_not": {
+      "不交族: P∧(Q∨R) − (P∧Q)∨(P∧R)": 0.0,
+      "不交族: (P∨Q)² − (P∨Q)（幂等）": 2.220446049250313e-16,
+      "交叠族: 交换子 ‖[P_A,P_B]v‖": 0.256441404602215,
+      "交叠族: (P∨Q)² − (P∨Q)（幂等）": 0.21687456848202735,
+      "不交族 = 布尔子代数（分配律 + 格并幂等成立）": true,
+      "交叠族：布尔运算失效（交换子≠0 + 格并非投影）": true
+    },
+    "n8_quadratic_signature": {
+      "max 相对误差 Q(t·v) = t²Q(v)（200 随机 (t,v)）": 3.739842045353567e-16,
+      "基元是二次型（2 次齐次）": true
+    },
+    "n9_witnesses": {
+      "raw": {
+        "部分重叠 A={0,1},B={1,2} v=[1,0,0]：先A后B": [
+          0.5,
+          0.5,
+          0.0
+        ],
+        "部分重叠：先B后A": [
+          0.5,
+          0.25,
+          0.25
+        ],
+        "部分重叠 ⟹ 次序不同结果不同": true,
+        "嵌套 A={0}⊂B={0,1} v=[1,1]：先A后B": [
+          1.0,
+          1.0
+        ],
+        "嵌套：先B后A": [
+          1.0,
+          1.0
+        ],
+        "嵌套 ⟹ 吸收（次序无关，同结果）": true
+      },
+      "partial_overlap_ab": [
+        0.5,
+        0.5,
+        0.0
+      ],
+      "partial_overlap_ba": [
+        0.5,
+        0.25,
+        0.25
+      ],
+      "nested_ab": [
+        1.0,
+        1.0
+      ],
+      "nested_ba": [
+        1.0,
+        1.0
+      ],
+      "key_naming_note": "上游键名「先A后B」对应组合式 flatten(A, flatten(B, v))（B 先作用、A 后作用）。本仓不用键名推语义：锚点同时记键名原文与该组合式，判据只看组合式。"
+    },
+    "honesty": [
+      "全部为代数恒等/序关系/有限维见证（真但平凡）",
+      "抹平 = 引力关闭属解释层（与弱场 GR 数值不可区分），且只关内部、边界跳变保留",
+      "基元选择由四条判据支撑，不是从公理推出",
+      "控制器的物理实现（μ 主动产生）= 第二输入缺口未变",
+      "无新物理预言"
+    ],
+    "honesty_note": "上游报告自写的诚实边界，原文照录（上游口径，不是本仓库的结论）"
+  },
+  "lean": {
+    "repo_rel_dir": "ProjectionPhysics",
+    "files": {
+      "PlasmaDynamics.lean": {
+        "family": "TD1–TD10：μ 状态方程与轨道（muStep / muChain）",
+        "repo_rel": "ProjectionPhysics/PlasmaDynamics.lean",
+        "n_entries": 37,
+        "entries": [
+          {
+            "kind": "def",
+            "name": "ringPotential",
+            "tag": "",
+            "doc": "环势（引用 MassCancellation AMC6 同款）：Φ = ½v²（保守势）。"
+          },
+          {
+            "kind": "def",
+            "name": "ringCirculation",
+            "tag": "",
+            "doc": "环量（引用 AMC6 同款）：Γ = v·L（环周长 × 流速）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "closed_loop_potential_zero",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "dual_ring_circulation_linear",
+            "tag": "",
+            "doc": "DR2a：双环环量线性——叠加流的总环量 = 各环环量之和（环量是流场线性泛函）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "counter_rotating_rings_cancel",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "helixCirculation",
+            "tag": "",
+            "doc": "螺旋环量（引用 SpaceFold SF6 同款）：vx·vy（两方向参与才非零）。"
+          },
+          {
+            "kind": "def",
+            "name": "hasHelicalBoundary",
+            "tag": "",
+            "doc": "螺旋边界条件（引用 SF6 同款）：两方向都参与（动态非静态墙）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "helical_boundary_iff_circulation_nonzero",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "tangent_flow_no_radial_drift",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "dual_ring_total_potential_zero",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "anchorMassSq",
+            "tag": "",
+            "doc": "锚定质量平方（引用 MinimalCore MC1 / AMC1 同款）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "two_step_average_bounded",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "mass_zero_at_mu_one",
+            "tag": "",
+            "doc": "TM2a：μ=1 ⟹ 任意时刻质量归零（时变反引力到达满强度 ⟹ 完全取消）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "mass_positive_below_one",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "smoothCost",
+            "tag": "",
+            "doc": "抹平成本（引用 AMC3 同款）：∝ 梯度²。"
+          },
+          {
+            "kind": "def",
+            "name": "rotInput",
+            "tag": "",
+            "doc": "旋转输入能量（引用 SpaceExtensibility SE5 同款）：E_rot = ½νB²。"
+          },
+          {
+            "kind": "theorem",
+            "name": "sustain_condition",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "rot_energy_grows_with_B",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "relaxationTime",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "relaxation_ratio_eq_mass_ratio",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "relaxation_time_mono_mass",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "relaxation_rate_antitone",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "tempGapStep",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "decay_slower_for_larger_q",
+            "tag": "",
+            "doc": "TE5b：q 大 ⟹ 衰减慢（同一步温差更大）。"
+          },
+          {
+            "kind": "def",
+            "name": "muStep",
+            "tag": "TD1",
+            "doc": "★ TD1（状态更新，最小形式）：μ ↦ μ + η(1 − μ)。"
+          },
+          {
+            "kind": "theorem",
+            "name": "muStep_bounded",
+            "tag": "TD1a",
+            "doc": "TD1a：有界性——μ ∈ [0,1] 且 η ∈ [0,1] ⟹ 更新后仍在 [0,1]（不超调）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "muStep_strict_mono",
+            "tag": "TD2",
+            "doc": "TD2★：严格推进——μ < 1 且 η > 0 ⟹ μ 严格增大（TM1 的\"持续变化\"）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "muStep_lt_one",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "muStep_fixed_one",
+            "tag": "TD4",
+            "doc": "TD4：μ = 1 是不动点（已达成的状态保持不动）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "muStep_full_gain",
+            "tag": "TD5",
+            "doc": "TD5：满增益 η = 1 ⟹ 一步到 1（与 TD3 对照：有限增益永远差一步）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "muStep_overshoot_of_gain_gt_one",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "muChain",
+            "tag": "TD6",
+            "doc": "★ TD6：n 步迭代（状态方程的轨道）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "muChain_closed_form",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "muChain_lt_one",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "muChain_strict_mono",
+            "tag": "TD9",
+            "doc": "★ TD9：轨道单调递增（每一步都严格更大）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "muChain_mass_never_zero",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "PLASMA_DYNAMICS_SCOPE",
+            "tag": "",
+            "doc": ""
+          }
+        ]
+      },
+      "MuFieldCoupling.lean": {
+        "family": "TD11–TD21：增益=抹平进展 + 顺序差 + FRC 接缝",
+        "repo_rel": "ProjectionPhysics/MuFieldCoupling.lean",
+        "n_entries": 17,
+        "entries": [
+          {
+            "kind": "def",
+            "name": "flattenProgress",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "flattenProgress_self",
+            "tag": "TD11a",
+            "doc": "TD11a：未抹平（v = v₀）⟹ 进展为零（η = 0，μ 原地不动）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "flattenProgress_flat",
+            "tag": "TD11b",
+            "doc": "TD11b：已平坦（Q_A v = 0）⟹ 进展 = 1（满增益 η = 1）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "flattenProgress_after_flatten",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "flattenProgress_antitone",
+            "tag": "TD13",
+            "doc": "★ TD13（单调）：起伏越小，进展越大（Q 与 η 反向）。"
+          },
+          {
+            "kind": "def",
+            "name": "muAfterFlatten",
+            "tag": "",
+            "doc": "时序 A：先抹平场，再按**抹平后**的场更新 μ。"
+          },
+          {
+            "kind": "def",
+            "name": "muBeforeFlatten",
+            "tag": "",
+            "doc": "时序 B：先按**当前**场更新 μ（μ 的结果不受之后抹平的影响）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "muAfterFlatten_eq_one",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "mu_order_gap",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "mu_order_difference",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "mu_order_matters",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "full_gain_iff_zero_cost",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "rmf_margin_strictly_decreasing",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "mu_scaling_well_defined",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "mu_scaling_strictly_increasing",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "rmf_window_threshold_iff",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "MU_FIELD_COUPLING_SCOPE",
+            "tag": "",
+            "doc": ""
+          }
+        ]
+      },
+      "GravityControl.lean": {
+        "family": "GCA0–GCA7：抹平算子族与布尔边界",
+        "repo_rel": "ProjectionPhysics/GravityControl.lean",
+        "n_entries": 36,
+        "entries": [
+          {
+            "kind": "def",
+            "name": "regionMean",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "flatten",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "fluctuation",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "fluctuationEnergy",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "regionInner",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "commutes",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "lemma",
+            "name": "flatten_apply_mem",
+            "tag": "",
+            "doc": "单点展开（属于 A）。"
+          },
+          {
+            "kind": "lemma",
+            "name": "flatten_apply_not_mem",
+            "tag": "",
+            "doc": "单点展开（不属于 A）。"
+          },
+          {
+            "kind": "lemma",
+            "name": "card_cast_ne_zero",
+            "tag": "",
+            "doc": "区域非空 ⟹ 基数（作为实数）非零。"
+          },
+          {
+            "kind": "lemma",
+            "name": "regionMean_congr",
+            "tag": "",
+            "doc": "均值对区域上逐点相等的场一致。"
+          },
+          {
+            "kind": "lemma",
+            "name": "regionMean_eq_of_const",
+            "tag": "",
+            "doc": "区域上恒等于 c 的场，其区域均值 = c。"
+          },
+          {
+            "kind": "theorem",
+            "name": "flatten_idempotent",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "fluctuation_sum_zero",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "lemma",
+            "name": "flatten_add",
+            "tag": "",
+            "doc": "抹平算子的线性：P_A(u+v) = P_A u + P_A v（控制叠加在代数上闭合）。"
+          },
+          {
+            "kind": "lemma",
+            "name": "flatten_sub",
+            "tag": "",
+            "doc": "抹平算子的线性：P_A(u−v) = P_A u − P_A v。"
+          },
+          {
+            "kind": "theorem",
+            "name": "fluctuationEnergy_nonneg",
+            "tag": "GCA2a",
+            "doc": "★ GCA2a（非负）：Q_A(v) ≥ 0——平方和。逻辑值不会\"负\"。"
+          },
+          {
+            "kind": "theorem",
+            "name": "fluctuationEnergy_eq_zero_iff",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "flatten_kills_energy",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "flat_flow_zero_potential_gradient",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "polarization",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "energy_eq_inner_self",
+            "tag": "",
+            "doc": "Q_A(v) = ⟨v,v⟩_A——二次型是内积的对角线（自内积非负）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "fluctuation_orthogonal_constant",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "lemma",
+            "name": "flatten_sub_eq_zero",
+            "tag": "",
+            "doc": "抹平已经平坦的场 ⟹ 零（正交性内核）：P_A(I − P_A) = 0。"
+          },
+          {
+            "kind": "def",
+            "name": "flattenComplementary",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "flatten_isProjection",
+            "tag": "",
+            "doc": "抹平算子是投影（PA1 的 `IsProjection` 结构，物理实例）。"
+          },
+          {
+            "kind": "lemma",
+            "name": "sum_flatten_of_subset",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "lemma",
+            "name": "regionMean_flatten_of_subset",
+            "tag": "",
+            "doc": "B ⊆ A 时，P_B 不改变 A 上的均值。"
+          },
+          {
+            "kind": "theorem",
+            "name": "flatten_commute_of_disjoint",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "flatten_commute_of_subset",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "flatten_absorb_of_subset",
+            "tag": "GCA6b",
+            "doc": "GCA6b 的算子形式：嵌套时的复合 = 大区域的控制（吸收律）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "flatten_commute_self",
+            "tag": "",
+            "doc": "同一个控制与自己可交换（平凡情形）。"
+          },
+          {
+            "kind": "theorem",
+            "name": "flatten_not_commute_overlap",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "flattenCost",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "theorem",
+            "name": "flattenCost_nonneg",
+            "tag": "GCA7a",
+            "doc": "★ GCA7a（代价非负）：κ > 0 ⟹ 代价 ≥ 0。"
+          },
+          {
+            "kind": "theorem",
+            "name": "flattenCost_eq_zero_iff",
+            "tag": "",
+            "doc": ""
+          },
+          {
+            "kind": "def",
+            "name": "GRAVITY_CONTROL_SCOPE",
+            "tag": "",
+            "doc": ""
+          }
+        ]
+      }
+    },
+    "required_entries": {
+      "PlasmaDynamics.lean": [
+        "def muStep",
+        "theorem muStep_bounded",
+        "theorem muStep_strict_mono",
+        "theorem muStep_lt_one",
+        "theorem muStep_fixed_one",
+        "theorem muStep_full_gain",
+        "def muChain",
+        "theorem muChain_closed_form",
+        "theorem muChain_lt_one"
+      ],
+      "MuFieldCoupling.lean": [
+        "def flattenProgress",
+        "theorem flattenProgress_self",
+        "theorem flattenProgress_flat",
+        "theorem flattenProgress_after_flatten",
+        "def muAfterFlatten",
+        "def muBeforeFlatten",
+        "theorem muAfterFlatten_eq_one",
+        "theorem mu_order_gap",
+        "theorem mu_order_difference",
+        "theorem mu_order_matters",
+        "theorem rmf_margin_strictly_decreasing",
+        "theorem mu_scaling_well_defined",
+        "theorem rmf_window_threshold_iff"
+      ],
+      "GravityControl.lean": [
+        "def regionMean",
+        "def flatten",
+        "def fluctuationEnergy",
+        "def commutes",
+        "theorem flatten_idempotent",
+        "theorem fluctuationEnergy_nonneg",
+        "theorem fluctuationEnergy_eq_zero_iff",
+        "theorem flatten_kills_energy",
+        "theorem flatten_isProjection",
+        "theorem flatten_commute_of_disjoint",
+        "theorem flatten_commute_of_subset",
+        "theorem flatten_absorb_of_subset",
+        "theorem flatten_commute_self",
+        "theorem flatten_not_commute_overlap"
+      ]
+    },
+    "note": "条目名是本仓 internal/mu 的每条定义在上游的对应物；名字集合变了只在 --check 里警告（出处漂移），数值变了才红。"
+  }
+}

@@ -97,7 +97,9 @@ var Stages = []Stage{
 		// internal/world/ 是同一轮的所有权: 世界协议(docs/world-protocol.md)只是把
 		// rlenv 的语义搬到进程边界之外, 它和 rlenv、CLI 接线是同一段工作。
 		// 新增路径 = 合同变更, 已在 CONTRACT.md §2 同步(2026-09-27)。
-		Paths: []string{"internal/rlenv/", "cmd/", "internal/world/"},
+		// internal/mu/ 同属这一轮: 交换子世界的算子与控制代数(上游 GCA/TD 的 Go 移植),
+		// 它是 --world mu 的语义底座, 与 internal/world/ 是同一段工作。
+		Paths: []string{"internal/rlenv/", "cmd/", "internal/world/", "internal/mu/"},
 	},
 	{
 		ID:    "G",

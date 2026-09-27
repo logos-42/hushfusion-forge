@@ -39,17 +39,20 @@ import (
 
 // 已知的协议版本。ProtocolVersion 是 `forge world serve --protocol` 与交互服务的缺省值
 // (§8.1: 交互服务默认 2), 也是"当前版本"的意思; v1 仍然按自己的语义服务(旧 trace 与
-// G18 继续有效, §8.1)。
+// G18 继续有效, §8.1); v3 是**另一条世界**(交换子世界, docs/world-commutator-candidates.md),
+// 它有自己的状态/动作空间/目标函数, 不是旧世界的新模式。
 const (
 	ProtocolV1 = 1
 	ProtocolV2 = 2
+	ProtocolV3 = 3
 
-	// ProtocolVersion 是当前版本(= 默认服务的那一个)。
+	// ProtocolVersion 是当前版本(= 默认服务的那一个)。默认世界仍是设计参数世界(v2):
+	// 换默认值会让所有既有客户端对同一行字节产生不同理解, 那不在本片的范围里。
 	ProtocolVersion = ProtocolV2
 )
 
 // ProtocolSupported 报告一个协议版本是否被本 build 支持。
-func ProtocolSupported(p int) bool { return p == ProtocolV1 || p == ProtocolV2 }
+func ProtocolSupported(p int) bool { return p == ProtocolV1 || p == ProtocolV2 || p == ProtocolV3 }
 
 // 冻结的错误码(契约 §3.5)。它们是协议的一部分: 客户端按码分支, 不按 message 分支。
 const (
@@ -100,12 +103,18 @@ type Options struct {
 type World struct {
 	spec       config.Spec
 	engine     string
+	kind       string // "" 或 "params" = 旧世界; "mu" = 交换子世界
 	protocol   int
 	maxSteps   int
 	deltaScale float64
 	source     string
 	budget     int
 	target     float64
+
+	// muCfg/muEp 只有交换子世界用: 它的状态与目标函数与旧世界毫无共同之处, 所以不硬塞进
+	// ep/env 那些字段里(那些字段的语义是"设计参数世界")。isMu() 是分流开关。
+	muCfg muConf
+	muEp  *muEpisode
 
 	// obs 是 scorer 的接缝: rlenv.Reset 只返回观测, 不返回 reset 那个 design 的
 	// score / feasible / design_id, 而契约 §3.2 要求 reset 的 info 与 step 的 info
@@ -151,8 +160,13 @@ func New(scorer runner.Scorer, spec config.Spec, opts Options) *World {
 		opts.Protocol = ProtocolVersion
 	}
 	if !ProtocolSupported(opts.Protocol) {
-		panic(fmt.Sprintf("world: unknown protocol %d (this build serves %d and %d)",
-			opts.Protocol, ProtocolV1, ProtocolV2))
+		panic(fmt.Sprintf("world: unknown protocol %d (this build serves %d, %d and %d)",
+			opts.Protocol, ProtocolV1, ProtocolV2, ProtocolV3))
+	}
+	if opts.Protocol == ProtocolV3 {
+		// 协议 3 是**另一条世界**(交换子世界)的语义: 把它安在参数世界上会造出一个
+		// "报 μ 世界观测、用的是设计参数状态"的东西 —— 那正是本仓最反对的假接口。
+		panic("world: protocol 3 belongs to the mu world; build it with NewMuWorld")
 	}
 	if opts.MaxSteps <= 0 {
 		opts.MaxSteps = config.DefaultMaxSteps
@@ -285,6 +299,9 @@ func (w *World) hello(top map[string]json.RawMessage) []byte {
 				fmt.Sprintf("client asked for protocol %d, this world speaks %d", proto, w.protocol))
 		}
 	}
+	if w.protocol == ProtocolV3 {
+		return w.helloV3()
+	}
 	if w.protocol == ProtocolV2 {
 		return w.helloV2()
 	}
@@ -307,6 +324,9 @@ func (w *World) hello(top map[string]json.RawMessage) []byte {
 //	协议 1: x0 优先于 seed; 先夹进 spec 盒子再求值(与 rlenv.Env.Reset 一致);
 //	协议 2: 多一个可选的 regime 对象(§8.3), 见 resetV2。
 func (w *World) reset(top map[string]json.RawMessage) []byte {
+	if w.protocol == ProtocolV3 {
+		return w.resetMu(top)
+	}
 	if w.protocol == ProtocolV2 {
 		return w.resetV2(top)
 	}
@@ -364,6 +384,9 @@ func (w *World) reset(top map[string]json.RawMessage) []byte {
 //	已结束之后再 step 不是错误: rlenv 回 terminated=true, truncated=true, reward=0, 且
 //	不再消耗求值。本层原样转发, 好让客户端能区分"又走了一步"和"世界已经结束了"。
 func (w *World) step(top map[string]json.RawMessage) []byte {
+	if w.protocol == ProtocolV3 {
+		return w.stepMu(top)
+	}
 	if w.protocol == ProtocolV2 {
 		return w.stepV2(top)
 	}

@@ -3,7 +3,7 @@
 **中文** | [English](README.en.md)
 
 [![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
-[![Phase 0](https://img.shields.io/badge/Phase%200-18%2F18%20gates-brightgreen)](scripts/verify.sh)
+[![Phase 0](https://img.shields.io/badge/Phase%200-22%20gates-brightgreen)](scripts/verify.sh)
 
 > 不是造一台装置，而是造一个**能不断产生、验证、淘汰下一代装置设计的工程系统**。
 > Forge 是这个系统的第一版：电磁线圈设计的设计—评分—记录—学习闭环。
@@ -113,6 +113,7 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 
 ## 版本与 License
 
-`v0.1.0` —— Phase 0：设计 → 评分 → 记录 → 学习闭环可跑，18 道门全绿（`bash scripts/verify.sh phase0`）。
+`v0.1.0` —— Phase 0：设计 → 评分 → 记录 → 学习闭环可跑。`bash scripts/verify.sh phase0` → **22 道门 / 21 绿 / 1 红**；
+那 1 红是 **G19 世界结构门**，它红着是**设计所许**的诚实记录（旧设计空间的目标函数层里，顺序依赖只有夹取一档，量级 ~3%）。
 
 MIT — Copyright (c) 2026 LIU YUANJIE（刘元杰）

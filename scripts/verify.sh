@@ -235,6 +235,56 @@ echo '  G20.4 版本隔离: v1 trace 不能被 v2 语义回放 / v1 世界不认
 go test ./internal/world/ -count=1"
 
 echo
+# G21: 交换子世界门 —— 判据是**实测 A 与定理一致**, 不是"A 够大"。
+#   抓的失败模式:
+#     (1) 尺子坏: 控制组(旧世界参数盒语义, 无夹取)必须读出 A ≡ 0 —— 它不零, G21b/c 的数字一律不算;
+#     (2) 结构只进了观测没进目标(上一轮实测栽在这里): 那时四档 A 分布逐位相同 ——
+#         这里用"实测 vs 闭式"逐对比对, 只要目标函数漏读了 μ 或场, 这一条立刻红;
+#     (3) 定理与读数不一致: 该为零的层状对(不交/嵌套)必须精确为 0, 该非零的部分重叠对必须 > 0,
+#         任何一对不一致都红 —— 这一条把"结构与定理"钉在一起, 不给人挑动作集合的空间。
+WORLD_STRUCTURE_MU="testdata/world_structure_mu.json"
+_opt "G21 交换子世界门（实测 A 对定理：控制组 ≡ 0 + A_meas==A_pred + 两世界可分辨）" \
+  "[ -f \"$WORLD_STRUCTURE_MU\" ] && [ -f python/aux/world_structure.py ]" \
+  bash -c "set -e
+tmp=\$(mktemp -d)
+trap 'rm -rf \"\$tmp\"' EXIT
+echo '  G21: 现场跑一份新计量（动作从世界自己声明的动作空间取；控制组在旧世界上）'
+WORLD_CLIENT_QUIET=1 python3 python/aux/world_structure.py --write --world mu --out \"\$tmp/fresh.json\"
+echo '  G21a/b/c: 从原始数字重推三条子门, 并核对提交的证据没有漂移'
+WORLD_CLIENT_QUIET=1 python3 python/aux/world_structure.py --check --world mu --out \"\$tmp/fresh.json\" --against \"$WORLD_STRUCTURE_MU\""
+
+# G22: 世界协议 v3 门（mu 世界）—— 与 G18/G20 同形状, 换的是 mu 的黄金 trace。
+#   抓的失败模式:
+#     (1) mu 世界的响应字节不可复现（含非 ASCII 的 hello: 这里刚好是"字节 vs 字符"的试金石）;
+#     (2) 跨语言分歧: Python 客户端看到的与 Go 写下的不是同一个;
+#     (3) 版本隔离: mu 世界不得接受 protocol 2 的握手（它是另一条世界, 不是 v2 的别名）;
+#     (4) 改坏的 hello（declaration.sha256 改一位）必须让回放非零退出。
+MU_TRACE="testdata/world_trace_golden_mu.jsonl"
+_opt "G22 世界协议 v3 门（mu 世界: Go/Python 逐字节回放 + 握手反向断言 + 版本隔离）" \
+  "[ -f \"$MU_TRACE\" ] && [ -f cmd/forge/main.go ] && [ -f python/aux/world_client.py ]" \
+  bash -c "set -e
+tmp=\$(mktemp -d)
+trap 'rm -rf \"\$tmp\"' EXIT
+
+echo '  G22.1 Go 逐字节回放 mu trace'
+go run ./cmd/forge world serve --replay \"$MU_TRACE\"
+
+echo '  G22.2 Python 客户端逐字节回放 mu trace（跨语言证据, 按字节比）'
+python3 python/aux/world_client.py --replay \"$MU_TRACE\"
+
+echo '  G22.3 版本隔离: mu 世界必须拒绝 protocol 2 的 hello'
+out=\$(printf '{\"op\":\"hello\",\"protocol\":2}\n' | go run ./cmd/forge world serve --world mu || true)
+case \"\$out\" in
+  *'\"ok\":false'*) echo '        → 已拒绝 ✓' ;;
+  *) echo \"        → 期望 ok:false, 实得: \$out\"; exit 1 ;;
+esac
+
+echo '  G22.4 反向断言: 改坏的 mu hello（declaration.sha256 改一位）必须非零退出'
+python3 scripts/world_hello_tamper.py "$MU_TRACE" "\$tmp/broken.jsonl"
+if python3 python/aux/world_client.py --replay \"\$tmp/broken.jsonl\" >/dev/null 2>&1; then
+  echo '        → 客户端接受了改坏的 hello: 这就是握手没在看的证据'; exit 1
+fi
+echo '        → 已非零退出 ✓'"
 echo "=== 汇总: $pass 通过, $fail 失败, $skip 跳过 ==="
 if [ "$fail" -ne 0 ]; then
   printf 'failed: %s\n' "${failed_names[*]}"

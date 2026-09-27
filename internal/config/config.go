@@ -96,6 +96,33 @@ const (
 	LambdaCost = 1.0
 )
 
+// 窗口余量与关闭步**复用 internal/design**, 不重算 —— 那是同一批上游条目的唯一实现点.
+
+// 交换子世界 (docs/world-commutator-candidates.md) 的世界配置。它是一条**候选**世界的
+// 参数, 不是契约: 判据(实测 A 与闭式预测一致)与这些数字的取值无关 —— 换一组权重,
+// 闭式预测跟着一起换, 比较仍然成立。
+const (
+	// MuFieldCells 是场向量的格点数(离散环上的格点)。区域族由它派生(见 mu.DeclaredRegions)。
+	MuFieldCells = 16
+
+	// MuInitialMu 是 episode 起点的 μ。0 = 桌面 μ(与 internal/design 的缺省 Mu0 同口径):
+	// 起点必须远离 FC11 天花板, 否则"抹平把 μ 推到 1"这条构造就没有余地。
+	MuInitialMu = 0.0
+)
+
+// μ 世界目标函数的三项相对权重。它们与 Spec.Weights 同一性质: **工程判断, 不是物理**。
+//
+//	score = W_mu·(μ/MuCeiling) + W_gain·η(v) + W_closed·1[μ ≥ MuCeiling]
+//
+// 三项都读**状态**(前两项读 μ 与场, 第三项读 μ 与 FC11 天花板), 因此 score 对 μ 严格
+// 单调(internal/mu 有一条单测钉住它) —— 单调是"构造性 A>0"的前提:
+// 顺序差只改变 μ, 不改变场, 所以 score 必须随 μ 严格增长, 那个顺序差才会读成 A ≠ 0。
+const (
+	MuScoreWeightMu     = 1.0  // μ 进展项: μ / design.MuCeiling
+	MuScoreWeightGain   = 0.5  // 抹平增益项: η = 1 − Q_Ω(v)/Q_Ω(v₀) (上游 TD11 的桥)
+	MuScoreWeightClosed = 0.25 // 窗口已关闭的加项: 1[μ ≥ design.MuCeiling] (FC11 硬天花板)
+)
+
 // DefaultSpec 返回 v0.1 的参考装置与评估窗口。
 //
 // 电流上限的设置使得手工设计的参考装置 (internal/baseline.TextbookMirror, throat 电流
