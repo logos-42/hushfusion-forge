@@ -1,7 +1,13 @@
 // Package world: 把 internal/rlenv 的语义原样搬到进程边界之外。
 //
-// 冻结契约: docs/world-protocol.md (protocol v1)。本包**不定义物理、不新增 shaping、
-// 不含学习** —— 语义的唯一权威是 internal/rlenv/api.go; 协议层只做搬运与校验。
+// 冻结契约: docs/world-protocol.md (正文 = protocol v1; **§8 = protocol v2 的全部增补**,
+// 与正文冲突时以 §8 为准)。本包**不定义物理、不新增 shaping、不含学习** —— 语义的唯一
+// 权威是 internal/rlenv/api.go 与它上面的设计判决层; 协议层只做搬运与校验。
+//
+// 两个协议版本共存:
+//
+//	protocol 1  逐字节等于 P0 的实现(rlenv.Env 原样搬运), 供 G18 与旧 trace;
+//	protocol 2  v2 的顺序依赖(夹取 / 前提门 / 换源), 见 v2.go 与 docs/world-structure.md。
 //
 // 为什么存在: 引擎在 Go, agent 在 Python(headless)。本仓纪律既禁止 Python import Go,
 // 也禁止"用一个 Go 二进制去验证 Go", 所以剩下唯一诚实的形状就是进程间协议: 一行请求、
@@ -19,6 +25,7 @@ package world
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -30,9 +37,19 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/runner"
 )
 
-// ProtocolVersion 是本版本唯一已知的协议版本, 也是 `forge world serve --protocol` 的
-// 默认值。
-const ProtocolVersion = 1
+// 已知的协议版本。ProtocolVersion 是 `forge world serve --protocol` 与交互服务的缺省值
+// (§8.1: 交互服务默认 2), 也是"当前版本"的意思; v1 仍然按自己的语义服务(旧 trace 与
+// G18 继续有效, §8.1)。
+const (
+	ProtocolV1 = 1
+	ProtocolV2 = 2
+
+	// ProtocolVersion 是当前版本(= 默认服务的那一个)。
+	ProtocolVersion = ProtocolV2
+)
+
+// ProtocolSupported 报告一个协议版本是否被本 build 支持。
+func ProtocolSupported(p int) bool { return p == ProtocolV1 || p == ProtocolV2 }
 
 // 冻结的错误码(契约 §3.5)。它们是协议的一部分: 客户端按码分支, 不按 message 分支。
 const (
@@ -45,32 +62,67 @@ const (
 	CodeInternal            = "internal"
 )
 
-// 冻结的 op 名。
+// 冻结的 op 名。SetSource 是 v2 新增的消息(§8.5); 在协议 1 里它是 unknown_op。
 const (
-	OpHello = "hello"
-	OpReset = "reset"
-	OpStep  = "step"
-	OpClose = "close"
+	OpHello     = "hello"
+	OpReset     = "reset"
+	OpStep      = "step"
+	OpSetSource = "set_source"
+	OpClose     = "close"
 )
+
+// OpKey 是承载 op 的字段名。
+const OpKey = "op"
+
+// Options 是构建一个世界的全部输入。
+//
+// Protocol 决定语义(见包注释); MaxSteps/DeltaScale 是 v1 的截断与步长口径(协议 2 仍然
+// 报它们, 但截断由 Budget 决定, §8.4); Source/Budget/Target 是 v2 的 regime 缺省值
+// (§8.1: 三者也都可以由 reset 的 regime 字段逐个覆盖)。
+//
+// 留零表示"用 internal/config 的缺省值" —— 这是房规: 任何会被写进响应字节的数字只有
+// 一个家, 协议层不许自己再发明一份 20 / 0.15 / 24 / 1.0。
+type Options struct {
+	Protocol   int
+	MaxSteps   int
+	DeltaScale float64
+	Source     string
+	Budget     int
+	Target     float64
+	Engine     string
+}
 
 // World 是一条协议会话背后的设计世界。
 //
-// 它自己保存的只有协议层状态("有没有 reset 过"); 观测布局、动作缩放、奖励定义、
-// 终止条件与裁剪顺序全部由 rlenv 决定, 本层一个都不复制。
+// protocol 1 走 rlenv.Env(与 P0 逐字节相同的路径); protocol 2 走 v2.go 的 episodeState。
+// 两条路共用同一个 scorer, 因此"score 就是真目标函数"对两个协议同时成立 —— 这是
+// docs/world-structure.md §1 对 A 的要求(不许拿整形过的 reward 当效果量)。
 type World struct {
 	spec       config.Spec
 	engine     string
+	protocol   int
 	maxSteps   int
 	deltaScale float64
+	source     string
+	budget     int
+	target     float64
 
 	// obs 是 scorer 的接缝: rlenv.Reset 只返回观测, 不返回 reset 那个 design 的
 	// score / feasible / design_id, 而契约 §3.2 要求 reset 的 info 与 step 的 info
 	// 用同一批来源。为同一个 design 再求一次值会拿另一个 design_id(并写第二条
 	// record), 把这次 episode 的 lineage 弄断; 因此在 scorer 上观察才是诚实的做法。
 	obs *observedScorer
+
+	// env 是协议 1 的转移(冻结语义), ep 是协议 2 的转移(§8)。
 	env *rlenv.Env
+	ep  *episodeState
 
 	started bool
+
+	// gridR/gridZ 是打分点(physics.BuildGrids 的堆叠采样点 = solver 真正求值的那些点),
+	// v2 的区判定(近导线 5 mm 的 alpha2 钳位)用它。
+	gridR []float64
+	gridZ []float64
 }
 
 // observedScorer 记录求值器最后交给世界的 EvalResult。
@@ -90,35 +142,69 @@ func (o *observedScorer) Score(x []float64, meta runner.Meta) objective.EvalResu
 
 // New 构建一个世界。engine 是写进 hello 的引擎版本串(由 CLI 注入: 协议层不猜版本)。
 //
-// maxSteps/deltaScale 留零时用 internal/config 的默认值 —— 这是房规: 任何影响分数的
-// 数字只有一个家, 协议层不许自己再发明一份 20 / 0.15。
-func New(scorer runner.Scorer, spec config.Spec, maxSteps int, deltaScale float64, engine string) *World {
+// Protocol 留零时用 ProtocolVersion(v2)。
+func New(scorer runner.Scorer, spec config.Spec, opts Options) *World {
 	if scorer == nil {
 		panic("world: New needs a runner.Scorer — refusing to build a world that cannot score")
 	}
-	if maxSteps <= 0 {
-		maxSteps = config.DefaultMaxSteps
+	if opts.Protocol == 0 {
+		opts.Protocol = ProtocolVersion
 	}
-	if deltaScale <= 0 {
-		deltaScale = config.DefaultDeltaScale
+	if !ProtocolSupported(opts.Protocol) {
+		panic(fmt.Sprintf("world: unknown protocol %d (this build serves %d and %d)",
+			opts.Protocol, ProtocolV1, ProtocolV2))
+	}
+	if opts.MaxSteps <= 0 {
+		opts.MaxSteps = config.DefaultMaxSteps
+	}
+	if opts.DeltaScale <= 0 {
+		opts.DeltaScale = config.DefaultDeltaScale
+	}
+	if opts.Source == "" {
+		opts.Source = DefaultSource
+	}
+	if !isV2Source(opts.Source) {
+		panic(fmt.Sprintf("world: unknown source %q (known: %s)", opts.Source, joinQuoted(V2Sources)))
+	}
+	if opts.Budget <= 0 {
+		opts.Budget = config.DefaultBudget
+	}
+	if opts.Target == 0 {
+		opts.Target = config.DefaultTarget
 	}
 	w := &World{
 		spec:       spec,
-		engine:     engine,
-		maxSteps:   maxSteps,
-		deltaScale: deltaScale,
+		engine:     opts.Engine,
+		protocol:   opts.Protocol,
+		maxSteps:   opts.MaxSteps,
+		deltaScale: opts.DeltaScale,
+		source:     opts.Source,
+		budget:     opts.Budget,
+		target:     opts.Target,
 	}
 	w.obs = &observedScorer{sc: scorer}
-	w.env = rlenv.NewEnv(w.obs, spec, maxSteps, deltaScale)
+	w.env = rlenv.NewEnv(w.obs, spec, opts.MaxSteps, opts.DeltaScale)
+
+	grids := physics.BuildGrids(spec)
+	w.gridR, w.gridZ = grids.StackR, grids.StackZ
 	return w
 }
 
 // Spec 返回本世界正在服务的 spec。
 func (w *World) Spec() config.Spec { return w.spec }
 
+// Protocol 是本世界按哪个协议语义服务(Server 与回放都用它, 见 §8.1)。
+func (w *World) Protocol() int { return w.protocol }
+
 // MaxSteps / DeltaScale 是**实际生效**的值(hello 报的就是它们, 不是 flag 的原文)。
 func (w *World) MaxSteps() int       { return w.env.MaxSteps }
 func (w *World) DeltaScale() float64 { return w.env.DeltaScale }
+
+// Budget / Target / Source 是 v2 实际生效的 regime 缺省值(hello 报的就是它们)。
+func (w *World) Budget() int       { return w.budget }
+func (w *World) Target() float64   { return w.target }
+func (w *World) Source() string    { return w.source }
+func (w *World) Sources() []string { return append([]string(nil), V2Sources...) }
 
 // Handle 把一行请求变成一行响应(不含换行)。
 //
@@ -153,6 +239,15 @@ func (w *World) Handle(line []byte) (resp []byte, closed, fatal bool) {
 		return w.reset(top), false, false
 	case OpStep:
 		return w.step(top), false, false
+	case OpSetSource:
+		// set_source 是 v2 的消息(§8.5)。协议 1 不认识它 —— 那是 unknown_op,
+		// 而不是"顺手也支持一下": 一个 v1 会话里出现换源, 说明客户端以为自己在
+		// 跟另一个世界说话。
+		if w.protocol != ProtocolV2 {
+			return errLine(CodeUnknownOp, fmt.Sprintf("unknown op %q (protocol %d knows: %s)",
+				op, w.protocol, w.knownOps())), false, false
+		}
+		return w.setSourceV2(top), false, false
 	case OpClose:
 		if code, msg := rejectUnknown(top, OpKey); code != "" {
 			return errLine(code, msg), false, false
@@ -164,10 +259,16 @@ func (w *World) Handle(line []byte) (resp []byte, closed, fatal bool) {
 	}
 }
 
-// OpKey 是承载 op 的字段名。
-const OpKey = "op"
+// knownOps 是本协议版本认识的 op 列表(错误消息里报出来, 且**逐字节稳定**:
+// 消息是响应字节的一部分, 同一行畸形请求必须永远得到同一行响应)。
+func (w *World) knownOps() string {
+	if w.protocol == ProtocolV2 {
+		return fmt.Sprintf("%s, %s, %s, %s, %s", OpHello, OpReset, OpStep, OpSetSource, OpClose)
+	}
+	return fmt.Sprintf("%s, %s, %s, %s", OpHello, OpReset, OpStep, OpClose)
+}
 
-// hello 处理握手。客户端可以在 hello 里声明它要的协议版本; 声明了不支持的版本时,
+// hello 处理握手。客户端可以在 hello 里声明它要的协议版本; 声明了本世界不服务的版本时,
 // 世界立刻以 unsupported_protocol 大声拒绝, 而不是按自己的版本继续跑(那会让两边对
 // 同一行字节的理解不同)。
 func (w *World) hello(top map[string]json.RawMessage) []byte {
@@ -179,14 +280,17 @@ func (w *World) hello(top map[string]json.RawMessage) []byte {
 		if err := json.Unmarshal(rawProto, &proto); err != nil {
 			return errLine(CodeBadField, fmt.Sprintf("field protocol must be an integer, got %s", clipLine(rawProto)))
 		}
-		if proto != ProtocolVersion {
+		if proto != w.protocol {
 			return errLine(CodeUnsupportedProtocol,
-				fmt.Sprintf("client asked for protocol %d, this world speaks %d", proto, ProtocolVersion))
+				fmt.Sprintf("client asked for protocol %d, this world speaks %d", proto, w.protocol))
 		}
+	}
+	if w.protocol == ProtocolV2 {
+		return w.helloV2()
 	}
 	return []byte(obj(
 		kv{"ok", boolean(true)},
-		kv{"protocol", itg(ProtocolVersion)},
+		kv{"protocol", itg(ProtocolV1)},
 		kv{"action_dim", itg(w.env.ActionDim())},
 		kv{"observation_dim", itg(w.env.ObservationDim())},
 		kv{"obs_metric_keys", strArr(rlenv.ObsMetricKeys)},
@@ -200,12 +304,12 @@ func (w *World) hello(top map[string]json.RawMessage) []byte {
 
 // reset 开始一条新 episode。重复 reset 是合法的。
 //
-//	x0 显式给出 → 先夹进 spec 盒子再求值(与 rlenv.Env.Reset 一致);
-//	seed 给出    → 用**显式播种**的生成器在盒子内均匀取点, 绝不碰进程全局随机源
-//	               (契约 §2: 未播种的随机源会让"逐字节复现"直接不成立)。
-//
-// 两个字段都给时以 x0 为准(冻结的错误码只覆盖"两个都缺")。
+//	协议 1: x0 优先于 seed; 先夹进 spec 盒子再求值(与 rlenv.Env.Reset 一致);
+//	协议 2: 多一个可选的 regime 对象(§8.3), 见 resetV2。
 func (w *World) reset(top map[string]json.RawMessage) []byte {
+	if w.protocol == ProtocolV2 {
+		return w.resetV2(top)
+	}
 	if code, msg := rejectUnknown(top, OpKey, "x0", "seed"); code != "" {
 		return errLine(code, msg)
 	}
@@ -253,13 +357,16 @@ func (w *World) reset(top map[string]json.RawMessage) []byte {
 	))
 }
 
-// step 施加一个归一化增量动作。语义 = rlenv.Env.Step, 本层不加任何东西:
+// step 施加一个归一化增量动作。协议 1 的语义 = rlenv.Env.Step, 本层不加任何东西:
 //
 //	dx[i] = clip(a[i],-1,1) * DeltaScale * (upper[i]-lower[i]), 结果再夹进盒子;
 //	reward = score(之后) − score(之前); terminated 恒为 false; truncated = (step >= max_steps);
 //	已结束之后再 step 不是错误: rlenv 回 terminated=true, truncated=true, reward=0, 且
 //	不再消耗求值。本层原样转发, 好让客户端能区分"又走了一步"和"世界已经结束了"。
 func (w *World) step(top map[string]json.RawMessage) []byte {
+	if w.protocol == ProtocolV2 {
+		return w.stepV2(top)
+	}
 	if code, msg := rejectUnknown(top, OpKey, "action"); code != "" {
 		return errLine(code, msg)
 	}
@@ -337,6 +444,68 @@ func decodeVector(rawVal json.RawMessage, field string) ([]float64, string, stri
 	}
 	return out, "", ""
 }
+
+// decodeObject 解一个嵌套对象字段(v2 的 regime)。
+func decodeObject(rawVal json.RawMessage, field string) (map[string]json.RawMessage, string, string) {
+	var out map[string]json.RawMessage
+	if err := json.Unmarshal(rawVal, &out); err != nil {
+		return nil, CodeBadField, fmt.Sprintf("field %s must be a JSON object: %v", field, err)
+	}
+	if out == nil {
+		return nil, CodeBadField, fmt.Sprintf("field %s must be a JSON object (got null)", field)
+	}
+	return out, "", ""
+}
+
+// decodeString 解一个字符串字段。
+func decodeString(rawVal json.RawMessage, field string) (string, string, string) {
+	var out string
+	if err := json.Unmarshal(rawVal, &out); err != nil {
+		return "", CodeBadField, fmt.Sprintf("field %s must be a string, got %s", field, clipLine(rawVal))
+	}
+	return out, "", ""
+}
+
+// decodeInt 解一个整数字段。1.5 与 "3" 都是类型错(契约只接受整数)。
+func decodeInt(rawVal json.RawMessage, field string) (int, string, string) {
+	var out int
+	if err := json.Unmarshal(rawVal, &out); err != nil {
+		return 0, CodeBadField, fmt.Sprintf("field %s must be an integer, got %s", field, clipLine(rawVal))
+	}
+	return out, "", ""
+}
+
+// decodeFloat 解一个浮点字段。
+func decodeFloat(rawVal json.RawMessage, field string) (float64, string, string) {
+	var out float64
+	if err := json.Unmarshal(rawVal, &out); err != nil {
+		return 0, CodeBadField, fmt.Sprintf("field %s must be a number, got %s", field, clipLine(rawVal))
+	}
+	return out, "", ""
+}
+
+// --- 小辅助函数(v1 与 v2 共用) ---
+
+// clip 把 v 夹进 [lo, hi]。
+func clip(v, lo, hi float64) float64 {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
+// copyOf 复制一个向量(状态不许与调用方的切片共享内存)。
+func copyOf(x []float64) []float64 {
+	out := make([]float64, len(x))
+	copy(out, x)
+	return out
+}
+
+// isFinite 报告 v 是不是一个有限数(非有限的数不许被写进响应: 见 json.go 的 flt)。
+func isFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
 // rejectUnknown 拒绝协议未定义的字段。
 //

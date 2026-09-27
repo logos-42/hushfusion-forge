@@ -54,7 +54,14 @@ func testSpec() config.Spec { return config.DefaultSpec() }
 
 func newTestWorld(t *testing.T, sc runner.Scorer, maxSteps int) *World {
 	t.Helper()
-	return New(sc, testSpec(), maxSteps, config.DefaultDeltaScale, "test-engine")
+	// 这些用例盯着 **协议 1** 的语义(冻结的 v1 行为、19 维观测、v1 黄金 trace 的回放),
+	// 所以这里显式构建一个 v1 世界。协议 2 的用例在 v2_test.go, 用 NewV2TestWorld。
+	return New(sc, testSpec(), Options{
+		Protocol:   ProtocolV1,
+		MaxSteps:   maxSteps,
+		DeltaScale: config.DefaultDeltaScale,
+		Engine:     "test-engine",
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -107,12 +114,27 @@ func zeroAction(spec config.Spec) []float64 { return make([]float64, spec.NParam
 // 引用那两个常量, 所以这条断言盯的是**接线**(零值是否走到 config), 而不是两个数字
 // 碰巧相等。
 func TestDefaultsComeFromConfig(t *testing.T) {
-	w := New(&toyScorer{}, testSpec(), 0, 0, "test-engine")
+	w := New(&toyScorer{}, testSpec(), Options{Engine: "test-engine"})
 	if w.MaxSteps() != config.DefaultMaxSteps {
 		t.Errorf("max_steps default = %d, want config.DefaultMaxSteps = %d", w.MaxSteps(), config.DefaultMaxSteps)
 	}
 	if w.DeltaScale() != config.DefaultDeltaScale {
 		t.Errorf("delta_scale default = %v, want config.DefaultDeltaScale = %v", w.DeltaScale(), config.DefaultDeltaScale)
+	}
+
+	// v2 的三个 regime 缺省值同理: 零值必须走到 config(协议层不许自己有第二份 24/1.0)。
+	if w.Budget() != config.DefaultBudget {
+		t.Errorf("budget default = %d, want config.DefaultBudget = %d", w.Budget(), config.DefaultBudget)
+	}
+	if w.Target() != config.DefaultTarget {
+		t.Errorf("target default = %v, want config.DefaultTarget = %v", w.Target(), config.DefaultTarget)
+	}
+	if w.Protocol() != ProtocolVersion {
+		t.Errorf("protocol default = %d, want ProtocolVersion = %d", w.Protocol(), ProtocolVersion)
+	}
+	if ProtocolVersion != ProtocolV2 {
+		t.Errorf("ProtocolVersion = %d, want %d: the interactive default is protocol 2 (protocol section 8.1)",
+			ProtocolVersion, ProtocolV2)
 	}
 
 	// rlenv 用零值表示"用默认": 它的默认值必须与 config 逐位相同。
@@ -194,8 +216,8 @@ func TestHelloDescribesTheEnvironment(t *testing.T) {
 			t.Errorf("hello is missing %q", key)
 		}
 	}
-	if got := obj["protocol"].(float64); got != float64(ProtocolVersion) {
-		t.Errorf("protocol = %v, want %v", got, ProtocolVersion)
+	if got := obj["protocol"].(float64); got != float64(ProtocolV1) {
+		t.Errorf("protocol = %v, want %v", got, ProtocolV1)
 	}
 	if got := obj["max_steps"].(float64); got != 7 {
 		t.Errorf("max_steps = %v, want 7 (the value this world was built with)", got)
@@ -605,7 +627,7 @@ func TestServeExitCodes(t *testing.T) {
 	}, "\n") + "\n"
 
 	var out strings.Builder
-	code := NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolVersion, io.Discard).Serve(
+	code := NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolV1, io.Discard).Serve(
 		strings.NewReader(session), &out, nil)
 	if code != 0 {
 		t.Errorf("a close-terminated session exited %d, want 0", code)
@@ -616,7 +638,7 @@ func TestServeExitCodes(t *testing.T) {
 
 	// stdin EOF 等价于 close。
 	out.Reset()
-	code = NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolVersion, io.Discard).Serve(
+	code = NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolV1, io.Discard).Serve(
 		strings.NewReader(`{"op":"hello"}`), &out, nil)
 	if code != 0 {
 		t.Errorf("EOF-terminated session exited %d, want 0", code)
@@ -639,7 +661,7 @@ func TestServeExitCodes(t *testing.T) {
 
 	// 内部 panic: 也已回过 ok:false, 然后必须非零退出。
 	out.Reset()
-	code = NewServer(newTestWorld(t, &toyScorer{panic: true}, 4), ProtocolVersion, io.Discard).Serve(
+	code = NewServer(newTestWorld(t, &toyScorer{panic: true}, 4), ProtocolV1, io.Discard).Serve(
 		strings.NewReader(`{"op":"reset","seed":1}`), &out, nil)
 	if code != 1 {
 		t.Errorf("an internal panic exited %d, want 1", code)
@@ -660,7 +682,7 @@ func TestStdoutCarriesProtocolLinesOnly(t *testing.T) {
 		`{"op":"close"}`,
 	}
 	var out strings.Builder
-	code := NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolVersion, io.Discard).Serve(
+	code := NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolV1, io.Discard).Serve(
 		strings.NewReader(strings.Join(reqs, "\n")+"\n"), &out, nil)
 	if code != 0 {
 		t.Fatalf("session exited %d, want 0", code)
@@ -699,7 +721,7 @@ func TestTraceRoundTripIsByteExact(t *testing.T) {
 		t.Fatalf("NewRecorder: %v", err)
 	}
 	var out strings.Builder
-	code := NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolVersion, io.Discard).Serve(
+	code := NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolV1, io.Discard).Serve(
 		strings.NewReader(strings.Join(reqs, "\n")+"\n"), &out, rec)
 	if code != 0 {
 		t.Fatalf("recording session exited %d, want 0", code)
@@ -744,7 +766,7 @@ func TestTraceRoundTripIsByteExact(t *testing.T) {
 
 	// 回放一份新的世界: 必须逐字节相同。
 	var log strings.Builder
-	if got := NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolVersion, &log).Replay(path, &log); got != 0 {
+	if got := NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolV1, &log).Replay(path, &log); got != 0 {
 		t.Fatalf("replaying a trace recorded from the same world exited %d, want 0:\n%s", got, log.String())
 	}
 
@@ -760,7 +782,7 @@ func TestTraceRoundTripIsByteExact(t *testing.T) {
 		t.Fatalf("write broken trace: %v", err)
 	}
 	log.Reset()
-	if got := NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolVersion, &log).Replay(broken, &log); got == 0 {
+	if got := NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolV1, &log).Replay(broken, &log); got == 0 {
 		t.Fatalf("a corrupted trace replayed green:\n%s", log.String())
 	}
 	if !strings.Contains(log.String(), "line 1") {
@@ -780,7 +802,7 @@ func TestSessionsDoNotDependOnLeftoverState(t *testing.T) {
 			`{"op":"step","action":` + floatList(zeroAction(testSpec())) + `}`,
 			`{"op":"close"}`,
 		}, "\n") + "\n"
-		NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolVersion, io.Discard).Serve(
+		NewServer(newTestWorld(t, &toyScorer{}, 4), ProtocolV1, io.Discard).Serve(
 			strings.NewReader(reqs), &out, nil)
 		return out.String()
 	}

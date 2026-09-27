@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -42,9 +43,30 @@ from pathlib import Path
 # 冻结常量（抄自 docs/world-protocol.md 与 internal/world/world.go，不从 Go 导入）
 # ---------------------------------------------------------------------------
 
-PROTOCOL_VERSION = 1
+#: 协议 1 = 参考的单步语义（docs/world-protocol.md 正文）；协议 2 = §8 的顺序语义。
+#: 客户端按 hello 里的 protocol 选维度表，绝不"先跑再看"（§8.2）。
+PROTOCOL_V1 = 1
+PROTOCOL_V2 = 2
+SUPPORTED_PROTOCOLS = (PROTOCOL_V1, PROTOCOL_V2)
+
+#: 兼容旧名字：v1 是参考语义。
+PROTOCOL_VERSION = PROTOCOL_V1
+
+#: hello 的冻结键（§3.1）；协议 2 在此之上还要有 §8.2 的五个键。
 HELLO_KEYS = ("action_dim", "observation_dim", "obs_metric_keys", "obs_metric_refs",
               "max_steps", "delta_scale", "spec", "engine", "protocol")
+HELLO_KEYS_V2 = HELLO_KEYS + ("obs_keys_v2", "budget", "target", "sources", "clamp_zones")
+
+#: 协议 2 观测尾部 7 个槽位的冻结键名（§8.2）。
+V2_TAIL_KEYS = ("budget_remaining_norm", "depth_norm",
+                "resid_death", "resid_mu_window", "resid_coil_ceiling",
+                "source_onehot_perp", "source_onehot_par")
+
+#: 协议 2 的两个场源，顺序 = hello.sources 的顺序 = source_onehot 的位序（§8.2）。
+V2_SOURCES = ("MATBG_N2_perp", "MATBG_N2_par")
+
+#: 近导线钳位半径（§8.2 的 clamp_zones.coil_proximity_floor_m）。
+COIL_PROXIMITY_FLOOR_M = 0.005
 
 # 世界命令：默认用 go run（与 scripts/verify.sh 的 G9/G10 同一做法）。
 DEFAULT_WORLD = "go run ./cmd/forge world serve"
@@ -162,14 +184,17 @@ def check_handshake(hello: dict, label: str) -> list[str]:
     if hello.get("ok") is not True:
         return [f"{label}: hello is not ok: {json.dumps(hello)[:200]}"]
 
-    for key in HELLO_KEYS:
+    protocol = hello.get("protocol")
+    if protocol not in SUPPORTED_PROTOCOLS:
+        return [f"{label}: protocol {protocol!r} is not one this client supports {SUPPORTED_PROTOCOLS}"]
+
+    # 维度表按协议版本选（§8.2）：协议 2 的 hello 少一个 §8.2 键就是"说不清自己是几维"。
+    wanted = HELLO_KEYS_V2 if protocol == PROTOCOL_V2 else HELLO_KEYS
+    for key in wanted:
         if key not in hello:
-            errs.append(f"{label}: hello is missing {key!r}")
+            errs.append(f"{label}: hello is missing {key!r} (protocol {protocol})")
     if errs:
         return errs
-
-    if hello["protocol"] != PROTOCOL_VERSION:
-        errs.append(f"{label}: protocol {hello['protocol']!r}, this client speaks {PROTOCOL_VERSION}")
 
     spec = hello["spec"]
     if not isinstance(spec, dict):
@@ -187,7 +212,39 @@ def check_handshake(hello: dict, label: str) -> list[str]:
     if any((not isinstance(r, (int, float))) or r == 0 for r in refs):
         errs.append(f"{label}: obs_metric_refs contains a zero (the observation divides by it): {refs}")
 
-    if obs_dim != action_dim + len(keys):
+    if protocol == PROTOCOL_V2:
+        # 26 = v1 的 19 + §8.2 的 7。尾部键名必须逐字对上 —— 观测的**语义**就是这份列表。
+        if obs_dim != action_dim + len(keys) + len(V2_TAIL_KEYS):
+            errs.append(f"{label}: observation_dim {obs_dim} != action_dim {action_dim} + {len(keys)} metric slots "
+                        f"+ {len(V2_TAIL_KEYS)} v2 slots")
+        obs_keys = hello.get("obs_keys_v2")
+        if not isinstance(obs_keys, list):
+            errs.append(f"{label}: obs_keys_v2 must be an array")
+        else:
+            if len(obs_keys) != obs_dim:
+                errs.append(f"{label}: obs_keys_v2 has {len(obs_keys)} entries, observation_dim is {obs_dim}")
+            tail = obs_keys[len(obs_keys) - len(V2_TAIL_KEYS):]
+            if tuple(tail) != V2_TAIL_KEYS:
+                errs.append(f"{label}: obs_keys_v2 tail {tail} != the frozen {list(V2_TAIL_KEYS)}")
+            if tuple(obs_keys[action_dim:action_dim + len(keys)]) != tuple(keys):
+                errs.append(f"{label}: obs_keys_v2 does not carry the v1 metric keys at the v1 offsets "
+                            f"({obs_keys[action_dim:action_dim + len(keys)]} vs {keys})")
+        sources = hello.get("sources")
+        if not isinstance(sources, list) or tuple(sources) != V2_SOURCES:
+            errs.append(f"{label}: sources {sources!r} != the frozen {list(V2_SOURCES)}")
+        budget = hello.get("budget")
+        if not isinstance(budget, int) or isinstance(budget, bool) or budget <= 0:
+            errs.append(f"{label}: budget {budget!r} is not a positive integer")
+        target = hello.get("target")
+        if not isinstance(target, (int, float)) or isinstance(target, bool) or target != target:
+            errs.append(f"{label}: target {target!r} is not a number")
+        zones = hello.get("clamp_zones")
+        if not isinstance(zones, dict):
+            errs.append(f"{label}: clamp_zones must be an object")
+        elif zones.get("coil_proximity_floor_m") != COIL_PROXIMITY_FLOOR_M:
+            errs.append(f"{label}: clamp_zones.coil_proximity_floor_m "
+                        f"{zones.get('coil_proximity_floor_m')!r} != {COIL_PROXIMITY_FLOOR_M}")
+    elif obs_dim != action_dim + len(keys):
         errs.append(f"{label}: observation_dim {obs_dim} != action_dim {action_dim} + {len(keys)} metric slots")
 
     n_params = spec.get("n_params")
@@ -269,6 +326,121 @@ def read_trace(path: str | Path) -> list[TraceLine]:
     return out
 
 
+def trace_protocol(lines: list[TraceLine]) -> int:
+    """读出 trace 里那条 hello 的**响应**声明的协议版本（§8.1）。
+
+    ``--replay`` 忽略命令行/默认版本，以 trace 自己的 hello 响应为准 —— trace 是那段
+    历史的权威。一条说不清版本的 trace 不是"回放失败"，而是没法判断该按哪套语义回放。
+    """
+    hello = _hello_of_trace(lines)
+    if hello is None:
+        raise SystemExit("world_client: the trace has no hello request (a session must start with one)")
+    try:
+        obj = json.loads(hello.resp)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"world_client: trace line {hello.no}: the hello response is not JSON: {exc}")
+    protocol = obj.get("protocol")
+    if protocol not in SUPPORTED_PROTOCOLS:
+        raise SystemExit(f"world_client: trace line {hello.no} declares protocol {protocol!r}, "
+                         f"which this client does not support {SUPPORTED_PROTOCOLS}")
+    return protocol
+
+
+class Session:
+    """一个已经握手过的新世界：一行请求换一行响应，外加维度表。
+
+    计量脚本（``python/aux/world_structure.py``）用它驱动真的世界转移；它也把"协议版本
+    决定维度表"这件事钉在唯一一个地方。
+    """
+
+    def __init__(self, world: "World", hello: dict) -> None:
+        self.world = world
+        self.hello = hello
+        self.protocol = hello["protocol"]
+        self.action_dim = hello["action_dim"]
+        self.observation_dim = hello["observation_dim"]
+        self.spec = hello["spec"]
+        self.lower = list(hello["spec"]["lower"])
+        self.upper = list(hello["spec"]["upper"])
+        self.delta_scale = float(hello["delta_scale"])
+        self.sources = tuple(hello.get("sources", ()))
+
+    def request(self, line: str) -> dict:
+        """发一行请求，返回解析后的响应对象（ok 不是 true 时大声失败）。"""
+        raw = self.world.request(line)
+        try:
+            resp = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"world_client: the world answered non-JSON ({exc}): {raw[:200]}")
+        if resp.get("ok") is not True:
+            raise SystemExit(f"world_client: the world refused {line}: {raw[:300]}")
+        return resp
+
+    def reset(self, seed: int | None = None, regime: dict | None = None,
+              x0: list[float] | None = None) -> dict:
+        body = {"op": "reset"}
+        if x0 is not None:
+            body["x0"] = list(x0)
+        if seed is not None:
+            body["seed"] = seed
+        if regime is not None:
+            body["regime"] = regime
+        return self.request(json.dumps(body, separators=(",", ":")))
+
+    def step(self, action) -> dict:
+        return self.request(json.dumps({"op": "step", "action": list(action)}, separators=(",", ":")))
+
+    def set_source(self, source: str) -> dict:
+        return self.request(json.dumps({"op": "set_source", "source": source}, separators=(",", ":")))
+
+    def close(self) -> int:
+        code, err = self.world.finish()
+        # WORLD_CLIENT_QUIET=1 时不再回显世界的启动横幅（world stderr 的前几行），
+        # 供计量/门这类会打印长报告的场景用 —— 世界**真出错**时客户端是抛异常并把
+        # stderr 带在异常里的，所以静音不会把失败吞掉。默认仍然回显。
+        if err.strip() and not os.environ.get("WORLD_CLIENT_QUIET"):
+            print("world_client: world stderr:", file=sys.stderr)
+            for line in err.strip().splitlines():
+                print(f"  {line}", file=sys.stderr)
+        return code
+
+    def metric(self, obs: list[float], key: str) -> float:
+        """按 hello 的 obs_metric_keys/refs 从观测里取一个真 metric（不硬编码下标）。"""
+        idx = list(self.hello["obs_metric_keys"]).index(key)
+        return float(obs[self.action_dim + idx]) * float(self.hello["obs_metric_refs"][idx])
+
+    def design_of(self, obs: list[float]) -> list[float]:
+        """从观测的前 action_dim 维反解出**盒内**的设计向量（观测是归一化的）。"""
+        out = []
+        for i in range(self.action_dim):
+            lo, hi = self.lower[i], self.upper[i]
+            out.append((float(obs[i]) + 1.0) / 2.0 * (hi - lo) + lo)
+        return out
+
+
+def connect(command: str = DEFAULT_WORLD, extra: list[str] | None = None, protocol: int | None = None) -> Session:
+    """起一个新世界、握手、自校验，返回一个 Session。
+
+    握手不过就**不返回**：拿一个说不清维度的世界去做计量，得到的数字没有意义。
+    """
+    argv = list(extra or [])
+    if protocol is not None:
+        argv += ["--protocol", str(protocol)]
+    world = World(command, argv)
+    try:
+        hello = json.loads(world.request('{"op":"hello"}'))
+    except EOFError as exc:
+        raise SystemExit(f"world_client: {exc}")
+    errors = check_handshake(hello, "live hello")
+    if errors:
+        print("world_client: HANDSHAKE MISMATCH — refusing to use this world:", file=sys.stderr)
+        for e in errors:
+            print(f"  - {e}", file=sys.stderr)
+        world.finish()
+        raise SystemExit(1)
+    return Session(world, hello)
+
+
 def first_diff(got: str, want: str) -> int:
     for i, (a, b) in enumerate(zip(got, want)):
         if a != b:
@@ -319,12 +491,22 @@ class World:
 # 三种模式
 # ---------------------------------------------------------------------------
 
-def _world_from_args(args) -> World:
+def _world_from_args(args, protocol: int | None = None) -> World:
     extra = list(args.world_arg or [])
+    if protocol is not None:
+        extra += ["--protocol", str(protocol)]
+    elif getattr(args, "protocol", None) is not None:
+        extra += ["--protocol", str(args.protocol)]
     if args.max_steps is not None:
         extra += ["--max-steps", str(args.max_steps)]
     if args.delta_scale is not None:
         extra += ["--delta-scale", repr(args.delta_scale)]
+    if getattr(args, "source", None) is not None:
+        extra += ["--source", args.source]
+    if getattr(args, "budget", None) is not None:
+        extra += ["--budget", str(args.budget)]
+    if getattr(args, "target", None) is not None:
+        extra += ["--target", repr(args.target)]
     return World(args.world, extra)
 
 
@@ -365,10 +547,15 @@ def mode_replay(args) -> int:
             print(f"  - {e}", file=sys.stderr)
         return 1
 
-    # 2) 驱动一个新世界，逐行逐字节比对。
-    print(f"world_client: replaying {args.replay} ({len(lines)} requests) byte for byte",
-          file=sys.stderr)
-    world = _world_from_args(args)
+    # 2) 驱动一个新世界（协议 = trace 自己声明的那一个），逐行逐字节比对。
+    traced = trace_protocol(lines)
+    if hello_obj.get("protocol") != traced:
+        print(f"world_client: {args.replay} line {hello.no}: the handshake passed, but it declares "
+              f"protocol {hello_obj.get('protocol')!r} while the trace protocol is {traced}", file=sys.stderr)
+        return 1
+    print(f"world_client: replaying {args.replay} ({len(lines)} requests) byte for byte "
+          f"(protocol {traced}, the trace's own)", file=sys.stderr)
+    world = _world_from_args(args, protocol=traced)
     bad = 0
     bytes_compared = 0
     fatal = None
@@ -481,6 +668,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"the world command to drive (default: {DEFAULT_WORLD!r})")
     p.add_argument("--world-arg", action="append", metavar="ARG",
                    help="extra argument appended to the world command (repeatable)")
+    p.add_argument("--protocol", type=int, choices=list(SUPPORTED_PROTOCOLS),
+                   help="pass --protocol to the world (ignored by --replay: a trace is replayed "
+                        "under the protocol its own hello response declares)")
+    p.add_argument("--source", help="pass --source to the world (protocol 2's starting field source)")
+    p.add_argument("--budget", type=int, help="pass --budget to the world (protocol 2's step budget)")
+    p.add_argument("--target", type=float, help="pass --target to the world (protocol 2's termination target)")
     p.add_argument("--max-steps", type=int, help="pass --max-steps to the world (must match the trace)")
     p.add_argument("--delta-scale", type=float, help="pass --delta-scale to the world (must match the trace)")
     return p

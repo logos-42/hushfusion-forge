@@ -168,6 +168,72 @@ if ! grep -q 'HANDSHAKE MISMATCH' \"\$tmp/err\"; then
 fi
 echo '  G18.3: the broken hello was refused with a handshake mismatch (non-zero exit)'"
 
+# G19: 世界结构门 (docs/world-structure.md §5) —— 三条子门**一起**判, 缺一条不算过。
+#   抓的失败模式:
+#     (a) 尺子坏 —— 控制组(§4: 绝对参数 / 无前提门 / 不换源 / 无夹取的单步语义)读不出 0;
+#         那时实验组的数字一律不算(§5), 所以这里先判它;
+#     (b) 世界仍可交换 —— 四档 regime 按 §4 的**预注册阈值**给出"零档"判定;
+#         黑名单第 1 条: 在 A ≡ 0 的世界上对 option 下任何结论;
+#     (c) regime 参数没进动力学 —— 四档只换常数(§3: 四档全同即红);
+#     (d) 证据漂移 —— 提交的 testdata/world_structure_v2.json 与现场重跑的计量不一致。
+#   判据的数字全部写死在 python/aux/world_structure.py 里(§4 的预注册值), 门不传任何
+#   覆盖参数: 能靠命令行调绿的门不是门。G19 的颜色**就是**这次计量的结论 ——
+#   零档/弱档时它必须是红的, 那是一个真结果, 不是待修的 bug。
+WORLD_STRUCTURE="testdata/world_structure_v2.json"
+_opt "G19 世界结构门（§5 三条 + 证据漂移）" \
+  "[ -f \"$WORLD_STRUCTURE\" ] && [ -f python/aux/world_structure.py ]" \
+  bash -c "set -e
+tmp=\$(mktemp -d)
+trap 'rm -rf \"\$tmp\"' EXIT
+echo '  G19: 现场跑一份新计量（K 个动作 / ≥5 seed / 四档 regime 全部由脚本里的预注册值决定）'
+WORLD_CLIENT_QUIET=1 python3 python/aux/world_structure.py --write --out \"\$tmp/fresh.json\"
+echo '  G19a/b/c: 从原始数字重新推导三条子门, 并核对提交的证据没有漂移'
+WORLD_CLIENT_QUIET=1 python3 python/aux/world_structure.py --check --out \"\$tmp/fresh.json\" --against \"$WORLD_STRUCTURE\""
+
+# G20: 世界协议 v2 门 (docs/world-protocol.md §8) —— 与 G18 同一个形状, 换的是 v2 的黄金 trace。
+#   抓的失败模式:
+#     (1) v2 的响应字节不可复现(v2 的 26 维观测、新增 info 键、换源都进了字节, 任何一处
+#         非最短往返 / 遍历顺序不稳都会在这里出现);
+#     (2) 跨语言分歧: Python 客户端看到的 v2 世界与 Go 写下的不是同一个(只跑 Go 证明不了);
+#     (3) 客户端不按 protocol 选维度表: 一个把 observation_dim 改坏的 v2 hello 必须被拒;
+#     (4) 版本隔离: v1 trace 不能被 v2 语义回放、v1 世界不认识 set_source、v2 世界不收 protocol 1
+#         (由 internal/world 的用例钉住)。
+V2_TRACE="testdata/world_trace_golden_v2.jsonl"
+_opt "G20 世界协议 v2 门（§8: Go/Python 回放 + 维度表反向断言 + 版本隔离）" \
+  "[ -f \"$V2_TRACE\" ] && [ -f cmd/forge/main.go ] && [ -f python/aux/world_client.py ]" \
+  bash -c "set -e
+tmp=\$(mktemp -d)
+trap 'rm -rf \"\$tmp\"' EXIT
+
+echo '  G20.1 Go 按 trace 自己的协议逐字节回放 v2 trace'
+go run ./cmd/forge world serve --replay \"$V2_TRACE\"
+
+echo '  G20.2 Python 客户端逐字节回放 v2 trace（跨语言证据）'
+python3 python/aux/world_client.py --replay \"$V2_TRACE\"
+
+echo '  G20.3 反向断言: 改坏的 v2 hello（observation_dim 26→25）必须让客户端非零退出'
+python3 - \"$V2_TRACE\" \"\$tmp/broken.jsonl\" <<'PY'
+import sys
+src = open(sys.argv[1]).read()
+broken = src.replace('\"observation_dim\":26', '\"observation_dim\":25', 1)
+if broken == src:
+    sys.exit('the probe changed nothing: the recorded v2 hello no longer has observation_dim:26')
+open(sys.argv[2], 'w').write(broken)
+PY
+if python3 python/aux/world_client.py --replay \"\$tmp/broken.jsonl\" >\"\$tmp/out\" 2>\"\$tmp/err\"; then
+  echo 'G20.3: the client accepted a v2 hello whose observation_dim contradicts its own obs_keys_v2 (exit 0)'
+  exit 1
+fi
+if ! grep -q 'HANDSHAKE MISMATCH' \"\$tmp/err\"; then
+  echo 'G20.3: the client failed, but not because of the handshake — green for the wrong reason:'
+  sed 's/^/        /' \"\$tmp/err\"
+  exit 1
+fi
+echo '  G20.3: the broken v2 hello was refused with a handshake mismatch (non-zero exit)'
+
+echo '  G20.4 版本隔离: v1 trace 不能被 v2 语义回放 / v1 世界不认识 set_source / v2 世界不收 protocol 1'
+go test ./internal/world/ -count=1"
+
 echo
 echo "=== 汇总: $pass 通过, $fail 失败, $skip 跳过 ==="
 if [ "$fail" -ne 0 ]; then

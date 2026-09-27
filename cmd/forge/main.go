@@ -2063,30 +2063,44 @@ or replay a recorded trace byte for byte against a fresh world.
 The world is internal/rlenv: this command adds no physics, no shaping and no learning.
 stdout carries protocol lines only; every human log goes to stderr.
 
+Two protocol versions are served. Protocol 1 is the original single-step semantics
+(frozen, kept for old traces and G18). Protocol 2 adds the ordering rules of the
+protocol's section 8: the boundary clamp, the precondition gate and the source switch
+(see docs/world-structure.md). The interactive default is 2.
+
 Every process starts from an empty scratch registry (runs/scratch/worldtrace/), because
 design_id is assigned by the registry and a leftover record would turn D0001 into D0042 —
 the same request sequence must give the same response bytes (contract section 2).
 The submitted evidence is the trace file, not that runs/ directory (contract section 4).
 
 flags:
-  --protocol 1     protocol version to serve (an unknown version is refused)
-  --max-steps n    episode length (default: internal/config.DefaultMaxSteps)
+  --protocol n     protocol version to serve, 1 or 2 (default 2; an unknown version is refused)
+  --max-steps n    protocol 1 episode length (default: internal/config.DefaultMaxSteps)
   --delta-scale s  normalised action scale (default: internal/config.DefaultDeltaScale)
+  --source S       protocol 2 default field source (overridable per reset by regime.source)
+  --budget n       protocol 2 default step budget (default: internal/config.DefaultBudget)
+  --target x       protocol 2 default termination target (default: internal/config.DefaultTarget)
   --record FILE    append every request/response pair to FILE as a trace (one object per line)
   --replay FILE    feed the trace's requests to a fresh world and compare byte for byte
+
+--replay ignores --protocol: a trace is replayed under the protocol its own hello
+response declares, so a v1 trace keeps verifying v1 semantics.
 
 exit codes: 0 close/EOF, 1 a fatal error (already replied ok:false), 2 usage error.
 `)
 }
 
 func cmdWorldServe(args []string) int {
-	fs := newFlagSet("world serve", "world serve [--protocol 1] [--max-steps n] [--delta-scale s] [--record FILE] [--replay FILE]",
+	fs := newFlagSet("world serve", "world serve [--protocol n] [--max-steps n] [--delta-scale s] [--source S] [--budget n] [--target x] [--record FILE] [--replay FILE]",
 		"Serve the design world (internal/rlenv) over the frozen JSONL line protocol, or\n"+
 			"replay a recorded trace byte for byte. stdout carries protocol lines only;\n"+
 			"any human log goes to stderr.")
-	protocol := fs.Int("protocol", world.ProtocolVersion, "protocol version to serve")
-	maxSteps := fs.Int("max-steps", config.DefaultMaxSteps, "episode length (steps to truncation)")
+	protocol := fs.Int("protocol", world.ProtocolVersion, "protocol version to serve (1 or 2)")
+	maxSteps := fs.Int("max-steps", config.DefaultMaxSteps, "protocol 1 episode length (steps to truncation)")
 	deltaScale := fs.Float64("delta-scale", config.DefaultDeltaScale, "normalised action scale")
+	source := fs.String("source", world.DefaultSource, "protocol 2 default field source")
+	budget := fs.Int("budget", config.DefaultBudget, "protocol 2 default step budget")
+	target := fs.Float64("target", config.DefaultTarget, "protocol 2 default termination target")
 	record := fs.String("record", "", "trace file to record (one {\"req\":..,\"resp\":..} object per line)")
 	replay := fs.String("replay", "", "trace file to replay and verify byte for byte")
 	if code := parseFlags(fs, args); code >= 0 {
@@ -2094,6 +2108,20 @@ func cmdWorldServe(args []string) int {
 	}
 	if *record != "" && *replay != "" {
 		return fail("--record and --replay cannot be combined: a replay is not a session to record")
+	}
+
+	// §8.1: --replay 忽略 --protocol, 以 trace 自己的 hello 响应里的 protocol 字段为准。
+	// 猜错版本不是"回放失败", 而是"回放的是另一套语义" —— 那样报出来的差异一行都不可信。
+	if *replay != "" {
+		traced, err := world.TraceProtocol(*replay)
+		if err != nil {
+			return fail("%v", err)
+		}
+		if traced != *protocol {
+			fmt.Fprintf(os.Stderr, "forge world: --replay overrides --protocol %d with the trace's own protocol %d\n",
+				*protocol, traced)
+		}
+		*protocol = traced
 	}
 
 	spec := defaultSpec()
@@ -2125,14 +2153,33 @@ func cmdWorldServe(args []string) int {
 		fmt.Fprintf(os.Stderr, "forge world: non-positive --max-steps/--delta-scale fall back to the "+
 			"internal/config defaults (%d / %v)\n", config.DefaultMaxSteps, config.DefaultDeltaScale)
 	}
-	w := world.New(rn, spec, *maxSteps, *deltaScale, Version)
-	srv := world.NewServer(w, *protocol, os.Stderr)
-	fmt.Fprintf(os.Stderr, "forge world serve: protocol=%d max_steps=%d delta_scale=%v registry=%s\n",
-		*protocol, w.MaxSteps(), w.DeltaScale(), defWorldRegistry)
-	if !srv.Supported() {
-		fmt.Fprintf(os.Stderr, "forge world: protocol %d is not a known version (this build serves %d); "+
-			"the first request will be refused with %s\n", *protocol, world.ProtocolVersion, world.CodeUnsupportedProtocol)
+	if *budget <= 0 || *target != config.DefaultTarget {
+		fmt.Fprintf(os.Stderr, "forge world: --budget/--target are the protocol 2 regime defaults (%d / %v)\n",
+			config.DefaultBudget, config.DefaultTarget)
 	}
+	// 未知版本**不在启动时拒绝**: 契约 §3.5 把"refuse"定义成协议层的一行响应
+	// (unsupported_protocol) + 非零退出, 所以这里仍然建一个世界, 只是让 Server 带着
+	// 那个未知号 —— 它会拒掉第一行请求。那种情况下的世界语义永远不会被用到, 于是按
+	// v1(参考的单步语义)建, 免得给一个不存在的版本编一套语义。
+	buildProtocol := *protocol
+	if !world.ProtocolSupported(buildProtocol) {
+		fmt.Fprintf(os.Stderr, "forge world: protocol %d is not a known version (this build serves %d and %d); "+
+			"the first request will be refused with %s\n",
+			*protocol, world.ProtocolV1, world.ProtocolV2, world.CodeUnsupportedProtocol)
+		buildProtocol = world.ProtocolV1
+	}
+	w := world.New(rn, spec, world.Options{
+		Protocol:   buildProtocol,
+		MaxSteps:   *maxSteps,
+		DeltaScale: *deltaScale,
+		Source:     *source,
+		Budget:     *budget,
+		Target:     *target,
+		Engine:     Version,
+	})
+	srv := world.NewServer(w, *protocol, os.Stderr)
+	fmt.Fprintf(os.Stderr, "forge world serve: protocol=%d max_steps=%d delta_scale=%v source=%s budget=%d target=%v registry=%s\n",
+		*protocol, w.MaxSteps(), w.DeltaScale(), w.Source(), w.Budget(), w.Target(), defWorldRegistry)
 
 	if *replay != "" {
 		// 报告走 stderr: stdout 只放协议行。回放不下发任何协议行, 退出码才是判据。

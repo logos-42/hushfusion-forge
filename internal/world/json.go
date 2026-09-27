@@ -111,6 +111,15 @@ func strArr(vs []string) raw {
 	return arr(items)
 }
 
+// intArr 渲染一个整数数组(info.clamped 用它报"哪些参数撞到了盒子/钳位")。
+func intArr(vs []int) raw {
+	items := make([]raw, 0, len(vs))
+	for _, v := range vs {
+		items = append(items, itg(v))
+	}
+	return arr(items)
+}
+
 // SpecCanonicalJSON 是 spec 的**规范 JSON**: 键排序 + 最短往返浮点(契约 §3.1)。
 //
 // sha256 字段不参与它自己的哈希(那是循环的), 因此规范 JSON 里没有这个键 —— 被哈希的

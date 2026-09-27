@@ -72,6 +72,30 @@ const (
 	DefaultDeltaScale = 0.15
 )
 
+// 世界协议 v2 (docs/world-protocol.md §8) 的三条游戏规则数字。它们住在这里(而不是
+// 协议层或 CLI)是同一条房规: 任何会被写进**响应字节**的数字只有一个家。
+//
+// 前两个是 regime 的缺省值(docs/world-structure.md §3 的四档表: 步数预算 8/24、
+// 终止目标 1.0), 第三个是 R1 里那一项真代价的权重。三条都**不是**时序结构的来源
+// (§2 的 R1/R5 一栏两处都写明"不是"), 所以它们的取值不参与 G19 的判定 —— 这也是
+// 它们可以是一个"看起来合理"的值、而不需要标定的原因: 它们只改变走多远与终止原因,
+// 不改变顺序, 也不改变 A(§1 的 A 只读真目标函数 score)。
+const (
+	// DefaultBudget 是 v2 episode 的整数步数预算(§3: tight=8 / loose=24, 缺省取 loose)。
+	DefaultBudget = 24
+
+	// DefaultTarget 是 v2 的终止目标分(§3 四档的 target 都是 1.0)。
+	DefaultTarget = 1.0
+
+	// LambdaCost 是 R1 奖励里那一项真代价的权重 λ_cost:
+	//
+	//	reward = Δscore − λ_cost · max(0, Δcost_proxy) / cost(episode 初始设计)
+	//
+	// 取 1.0 = 不额外缩放: cost 已经用 episode 初始设计的真 cost 归一化过了
+	// (§8.4: cost_ref 不用常数)。这个值不参与 G19(A 只读 score), 见上面的说明。
+	LambdaCost = 1.0
+)
+
 // DefaultSpec 返回 v0.1 的参考装置与评估窗口。
 //
 // 电流上限的设置使得手工设计的参考装置 (internal/baseline.TextbookMirror, throat 电流

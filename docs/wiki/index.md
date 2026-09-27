@@ -7,4 +7,5 @@
 - [sources-and-data.md](./sources-and-data.md)
 - [github-and-raw-strategy.md](./github-and-raw-strategy.md)
 - [runtime-profile.md](./runtime-profile.md)
+- [world-structure-p1.md](./world-structure-p1.md)
 - [log.md](./log.md)

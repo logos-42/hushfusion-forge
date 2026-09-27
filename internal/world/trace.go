@@ -121,8 +121,54 @@ func ReadTrace(path string) ([]TraceLine, error) {
 	return out, nil
 }
 
+// TraceProtocol 读出 trace 里那条 hello 的**响应**声明的协议版本(§8.1: `--replay` 忽略
+// 命令行/默认的 --protocol, 以 trace 自己的 hello 响应为准 —— 一份 v1 旧 trace 必须由
+// 一个 v1 语义的世界回放, 否则"逐字节复现"验的就不是当初的那套语义)。
+//
+// 找不到 hello、或它的响应里没有整数 protocol, 都算这份 trace 不合格: 回放一个协议版本
+// 说不清的会话只能靠猜, 而猜出来的 Pass 没有意义。
+func TraceProtocol(path string) (int, error) {
+	lines, err := ReadTrace(path)
+	if err != nil {
+		return 0, err
+	}
+	for _, ln := range lines {
+		var req map[string]json.RawMessage
+		if err := json.Unmarshal(ln.Req, &req); err != nil {
+			continue // 畸形请求行是回放要报的错, 不是这里的错
+		}
+		rawOp, ok := req[OpKey]
+		if !ok {
+			continue
+		}
+		var op string
+		if err := json.Unmarshal(rawOp, &op); err != nil || op != OpHello {
+			continue
+		}
+		var resp map[string]json.RawMessage
+		if err := json.Unmarshal(ln.Resp, &resp); err != nil {
+			return 0, fmt.Errorf("world: trace %s line %d: the hello response is not a JSON object: %w", path, ln.No, err)
+		}
+		rawProto, ok := resp["protocol"]
+		if !ok {
+			return 0, fmt.Errorf("world: trace %s line %d: the hello response has no protocol field — "+
+				"a trace must say which semantics it was recorded under", path, ln.No)
+		}
+		var proto int
+		if err := json.Unmarshal(rawProto, &proto); err != nil {
+			return 0, fmt.Errorf("world: trace %s line %d: the hello response's protocol is not an integer: %s",
+				path, ln.No, clipLine(rawProto))
+		}
+		return proto, nil
+	}
+	return 0, fmt.Errorf("world: trace %s holds no hello request — a session must start with one", path)
+}
+
 // Replay 逐字节回放一个 trace(契约 §6 第 1 条): 把每条 req 喂给这个(新建的)世界,
 // 产出的响应必须与 resp 完全相同。任一行不同即红, 并打印行号与第一处差异。
+//
+// 回放前先核对协议版本(§8.1): trace 声明 v1 而世界按 v2 构建时, 它不是"回放失败",
+// 而是"回放的是另一套语义" —— 那种情况下报出来的差异一行都不可信, 所以这里直接拒绝。
 //
 // 报告走 stderr: stdout 只放协议行(契约 §1), 回放模式下一次会话都没有, 所以它一行
 // 都不该往 stdout 写。
@@ -130,6 +176,16 @@ func (s *Server) Replay(path string, log io.Writer) int {
 	lines, err := ReadTrace(path)
 	if err != nil {
 		fmt.Fprintf(log, "replay: %v\n", err)
+		return 1
+	}
+	proto, err := TraceProtocol(path)
+	if err != nil {
+		fmt.Fprintf(log, "replay: %v\n", err)
+		return 1
+	}
+	if proto != s.Protocol {
+		fmt.Fprintf(log, "replay: %s was recorded under protocol %d but this world was built for protocol %d — "+
+			"build the world from the trace's own protocol (§8.1) before replaying it\n", path, proto, s.Protocol)
 		return 1
 	}
 	bad := 0

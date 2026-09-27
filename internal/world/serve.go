@@ -18,29 +18,41 @@ import (
 type Server struct {
 	W *World
 
-	// Protocol 是本次会话请求的协议版本。它不等于 ProtocolVersion 时, 世界无法按
-	// 客户端的语义诚实服务: 第一个请求会得到 unsupported_protocol, 随后进程以 1
-	// 退出(契约 §3.5: 已回 ok:false 之后的致命错误)。
+	// Protocol 是本次会话请求的协议版本。它必须等于世界自己的协议(见 NewServer 与
+	// Supported): 一个按 v1 语义构建的世界无法按 v2 的语义诚实服务, 反之亦然。
 	Protocol int
 
 	// Log 是人类日志的去处(一律 stderr)。
 	Log io.Writer
 }
 
-// NewServer 构建一个会话。
+// NewServer 构建一个会话。protocol 留零时用世界自己的协议。
 func NewServer(w *World, protocol int, log io.Writer) *Server {
+	if protocol == 0 && w != nil {
+		protocol = w.Protocol()
+	}
 	return &Server{W: w, Protocol: protocol, Log: log}
 }
 
-// Supported 报告本次会话是否按一个已知的协议版本服务。
-func (s *Server) Supported() bool { return s.Protocol == ProtocolVersion }
+// Supported 报告本次会话是否按一个已知的协议版本服务 —— 判据是"这个世界的协议",
+// 不只是"一个已知号": v1 世界不能按 v2 服务(那会给出 19 维观测却声称 26 维)。
+func (s *Server) Supported() bool {
+	if s.W == nil || !ProtocolSupported(s.Protocol) {
+		return false
+	}
+	return s.Protocol == s.W.Protocol()
+}
 
 // answer 把一行请求变成一行响应。多个地方(replay 与 serve)共用它, 因此"世界怎么回应
 // 一行字节"只有一条代码路径 —— 回放门验的就是这一条路径。
 func (s *Server) answer(line []byte) (resp []byte, closed, fatal bool) {
 	if !s.Supported() {
+		serves := ProtocolVersion
+		if s.W != nil {
+			serves = s.W.Protocol()
+		}
 		return errLine(CodeUnsupportedProtocol,
-				fmt.Sprintf("this world serves protocol %d only; the session asked for %d", ProtocolVersion, s.Protocol)),
+				fmt.Sprintf("this world serves protocol %d only; the session asked for %d", serves, s.Protocol)),
 			false, true
 	}
 	return s.W.Handle(line)
