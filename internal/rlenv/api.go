@@ -94,9 +94,13 @@ type Env struct {
 }
 
 // 对应字段留零时使用的默认值。
+//
+// 房规: 影响分数的数字只有一个家 —— 这两个默认值住在 internal/config, 这里只做引用,
+// 不许再抄一份字面量(两份"差不多的"默认值会让两边安静地漂移)。
+// api.go 的冻结面是签名 / 类型 / JSON tag 与 golden 数值; 私有常量的初始值不在其中。
 const (
-	defaultMaxSteps   = 20
-	defaultDeltaScale = 0.15
+	defaultMaxSteps   = config.DefaultMaxSteps
+	defaultDeltaScale = config.DefaultDeltaScale
 )
 
 // 通过 runner.Meta 写入 registry 的 algorithm 标签。

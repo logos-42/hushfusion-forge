@@ -130,3 +130,28 @@ func TestOwnerResolvesExactAndPrefix(t *testing.T) {
 		}
 	}
 }
+
+// TestIsTrackedSkipsForeignCheckoutsButNotSources 盯住跳过规则的两侧。
+//
+// 只有前半条被测试的跳过列表, 会连同真文件一起被吃掉 —— 那时名册门仍然是绿的,
+// 但它已经不再证明任何事。
+func TestIsTrackedSkipsForeignCheckoutsButNotSources(t *testing.T) {
+	for _, rel := range []string{
+		".kilo/worktrees/immense-drop/internal/world/world.go",
+		".kilocode/cache/x.json",
+		".git/config",
+		"runs/phase0/registry.jsonl",
+	} {
+		if IsTracked(rel) {
+			t.Errorf("%s 属于别的工具/生成物, 名册门不该看见它", rel)
+		}
+	}
+	for _, rel := range []string{
+		"internal/world/world.go", "cmd/forge/main.go", "scripts/verify.sh",
+		"docs/world-protocol.md", "testdata/world_trace_golden.jsonl",
+	} {
+		if !IsTracked(rel) {
+			t.Errorf("%s 是本仓文件, 名册门必须看得见它(跳过列表吃掉了真文件)", rel)
+		}
+	}
+}

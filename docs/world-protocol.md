@@ -165,7 +165,18 @@ G18 是**三条一起**判:
    **必须非零退出**。只测好消息的门不算门。
 
 生成方式:`forge world serve --record testdata/world_trace_golden.jsonl`,由 trace 内的
-`hello → reset → step×n → close` 构成(`n` 取 5,够覆盖裁剪与终止两种路径)。
+`hello → reset → step×n → close` 构成(`n` 取 5)。
+
+**这份 trace 覆盖什么、不覆盖什么(写准,别假装)**:
+
+- 覆盖: 握手 → 显式 seed 的 reset → 归一化动作 → **双重裁剪**(动作裁剪 + 盒子夹取;
+  实测 x0 与 obs 都撞到 ±1) → 注册表分配的 `design_id` 序列 → 关闭。
+- **不覆盖 `truncated=true`**: `hello.max_steps` 是默认的 20,而 trace 只走 5 步,
+  所以 `truncated` 在整份 trace 里恒为 `false`。要覆盖它需要 `--max-steps 5` 另录一份,
+  那会让 `hello.max_steps` 与 §3.1 的示例不一致 —— 本版本选择**不假装覆盖**:
+  `truncated=true` 与「done 之后再 step」的语义由 `internal/world/world_test.go` 的单测
+  盯住,而不是由这份跨语言 trace 盯住。
+- 尺度锚点(漂移可见):trace 8 行;响应的原始字节合计 3635;B 级证据。
 
 ---
 

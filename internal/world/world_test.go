@@ -103,8 +103,9 @@ func zeroAction(spec config.Spec) []float64 { return make([]float64, spec.NParam
 // ---------------------------------------------------------------------------
 
 // TestDefaultsComeFromConfig 钉住两件事: 本包的默认值来自 internal/config(协议层不许
-// 自己发明一份 20 / 0.15), 以及 internal/rlenv 的默认值与 config 相同 —— rlenv 的
-// api.go 是冻结文件, 所以两边是否漂移只能这样盯住。
+// 自己发明一份 20 / 0.15), 以及 internal/rlenv 在留零时确实取自 config —— 它已经直接
+// 引用那两个常量, 所以这条断言盯的是**接线**(零值是否走到 config), 而不是两个数字
+// 碰巧相等。
 func TestDefaultsComeFromConfig(t *testing.T) {
 	w := New(&toyScorer{}, testSpec(), 0, 0, "test-engine")
 	if w.MaxSteps() != config.DefaultMaxSteps {
@@ -117,11 +118,11 @@ func TestDefaultsComeFromConfig(t *testing.T) {
 	// rlenv 用零值表示"用默认": 它的默认值必须与 config 逐位相同。
 	rlenvDefault := rlenv.NewEnv(&toyScorer{}, testSpec(), 0, 0)
 	if rlenvDefault.MaxSteps != config.DefaultMaxSteps {
-		t.Errorf("rlenv defaultMaxSteps = %d but config.DefaultMaxSteps = %d — the two defaults drifted",
+		t.Errorf("rlenv defaultMaxSteps = %d but config.DefaultMaxSteps = %d — rlenv must take its default from config",
 			rlenvDefault.MaxSteps, config.DefaultMaxSteps)
 	}
 	if rlenvDefault.DeltaScale != config.DefaultDeltaScale {
-		t.Errorf("rlenv defaultDeltaScale = %v but config.DefaultDeltaScale = %v — the two defaults drifted",
+		t.Errorf("rlenv defaultDeltaScale = %v but config.DefaultDeltaScale = %v — rlenv must take its default from config",
 			rlenvDefault.DeltaScale, config.DefaultDeltaScale)
 	}
 }

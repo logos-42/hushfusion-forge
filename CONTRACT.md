@@ -177,6 +177,10 @@ stage: <A..G>
 | 近导线 5 mm 的 `alpha2` 钳位语义 | **冻结为官方定义**：对**任意**采样点距导线 < 5e-3 m 即钳位。跨语言比场必须带 `--proximity-floor 0.005` | 带钳位：Go 与 scipy 差 1.7e-15；不带：稳定复现 4.05e-02（同一最优设计，反事实对照）。`verify.sh` G10 已写死该开关 |
 | `search.WarmStartDesign` 用字面量而非 import `internal/baseline` | **保留现状**：依赖箭头里没有 search→baseline；该字面量被 `testdata/golden_baseline.json` 硬校验（最大相对差 7.9e-11） | D 段隔离副本旁路核对 |
 | `internal/objective` 让 NaN 传播（不夹成有限值） | **保留**：物理层吐 NaN 时，分数就该是 NaN 而不是一个假的有限值 | B 段单测；`feasible` 判定与 Python `all(v<=0)` 对齐 |
+| `internal/rlenv/api.go` 的私有默认值改为**引用** `config.DefaultMaxSteps / DefaultDeltaScale` | **批准**：房规说「影响分数的数字只有一个家」，两份字面量 `20 / 0.15` 正是它禁止的东西。冻结面是**签名 / 类型 / JSON tag 与 golden 数值**，私有常量的初始值不在其中（签名与类型逐字节未动） | `go test ./internal/rlenv/ ./internal/world/` 全绿；`world_test.TestDefaultsComeFromConfig` 改为盯**接线**（零值是否走到 config）而不是「两个数字碰巧相等」 |
+| `owners.IsTracked` 跳过 `.kilo/` `.kilocode/` | **批准**：这道门叫 `TestRosterCoversEveryTrackedFile`，而它按文件系统遍历时会看见**别的 agent 工具留在仓里的 worktree 检出**（未跟踪、不受本仓名册管辖）——判它会长期假红，**假红比没有门更伤**。同次加了两侧断言测试 | `go test ./internal/owners/`（新增 `TestIsTrackedSkipsForeignCheckoutsButNotSources`：跳过项必须被跳过，**且真文件必须仍然可见**）；G4/G5 从红转绿，名册自报 `120 files across 10 stages` |
+| 契约 §6 关于黄金 trace 覆盖范围的措辞 | **写准，不假装覆盖**：trace 只走 5 步而 `max_steps=20`，`truncated` 恒为 `false`。`truncated=true` 与「done 之后再 step」由 `internal/world` 单测盯住，**不**由这份跨语言 trace 盯住 | `docs/world-protocol.md` §6 已写明覆盖/不覆盖两侧；trace 尺度锚点（8 行 / 响应 3635 字节）写进契约便于漂移可见 |
+| 世界协议新增导出符号（`internal/world` 一整套：`ProtocolVersion`、冻结错误码、`Server/Replay/Recorder/TraceLine/SpecSHA256`…） | **批准保留**：它们是协议层的冻结面本身（跨语言对账需要 `SpecSHA256` 这类单一实现点）。已核实 `internal/rlenv/api.go` 的签名/类型/JSON tag 与 `testdata/golden_*.json` 数值未被改动 | G18 三条门；`git show --stat` 可验范围 |
 | `baseline.TextbookMirror` 解出的电流越界即 error（不返回被裁剪的基线） | **保留**：否则"人机对比"比的不是同一个设计 | G6 |
 | `golden_*.json` 里 bool/int 被写成 JSON 浮点（`"n_coils": 4.0`） | **暂不迁移**：三个阶段各用 `map[string]float64` 兜住，迁移的收益不抵最后一刻动真值的风险。列入 Phase 2 的 schema 迁移 | 现存 goldens 由 `oracle.py --check-golden` 全绿复核 |
 | `rlenv` 观测槽 6（`cost_proxy`/1.0 ≈ 1.8e12）量纲极差 | **记入 Phase 1 前置**：改为按基线 cost 归一，需同步改冻结的 `ObsMetricRefs` | 见 PLAN.md Phase 1 清单 |
