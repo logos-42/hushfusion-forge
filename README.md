@@ -3,7 +3,7 @@
 **中文** | [English](README.en.md)
 
 [![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
-[![Phase 0](https://img.shields.io/badge/Phase%200-17%2F17%20gates-brightgreen)](scripts/verify.sh)
+[![Phase 0](https://img.shields.io/badge/Phase%200-18%2F18%20gates-brightgreen)](scripts/verify.sh)
 
 > 不是造一台装置，而是造一个**能不断产生、验证、淘汰下一代装置设计的工程系统**。
 > Forge 是这个系统的第一版：电磁线圈设计的设计—评分—记录—学习闭环。
@@ -42,7 +42,7 @@ Phase 0 的验收问题只有一个：
 ## 架构（Go 为主栈，Python 只做辅助）
 
 ```
-cmd/forge/            CLI：baseline / verify / design / run / benchmark / rules / report / registry / xcheck
+cmd/forge/            CLI：baseline / verify / design / run / benchmark / rules / report / registry / xcheck / world
 internal/
   config/             唯一真源：全部物理常数、搜索边界、目标权重
   physics/            圆环电流精确静磁学（完整椭圆积分 AGM）+ 独立分段 Biot–Savart 交叉实现
@@ -56,6 +56,7 @@ internal/
   report/             中文运行报告（含**诚实边界**章节）
   rlenv/              Phase 1 的 RL 环境接口 + 随机策略参考基线
   design/             内部设计判决层：上游 ProjectionPhysics 的闭式解 + 六道门 + 锚点（G17）
+  world/              世界协议：把 rlenv 的语义搬到进程边界之外（JSONL 行协议，G18）
   owners/             文件所有权名册 + 冻结门（互不重叠 / 无遗漏 / 变异会红）
 python/               仅辅助：独立 scipy oracle（跨语言交叉验证）+ 出图 + 统计对账
 ```
@@ -84,8 +85,13 @@ python/               仅辅助：独立 scipy oracle（跨语言交叉验证）
 ## 快速开始
 
 ```bash
-# 全部验收门（含跨语言 oracle 交叉验证、注册表完整性、反造假门）
+# 全部验收门（含跨语言 oracle 交叉验证、注册表完整性、反造假门、世界协议）
 bash scripts/verify.sh phase0
+
+# 世界协议（G18）：serve / 逐字节回放 / 另一种语言里的客户端
+printf '%s\n' '{"op":"hello"}' '{"op":"reset","seed":12345}' '{"op":"close"}' | go run ./cmd/forge world serve
+go run ./cmd/forge world serve --replay testdata/world_trace_golden.jsonl
+python3 python/aux/world_client.py --replay testdata/world_trace_golden.jsonl
 
 # 单次运行
 go run ./cmd/forge baseline
@@ -98,7 +104,7 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 
 - `runs/<tag>/` — 本次运行的证据：`registry.jsonl`（每次评估一行）、`results.json`、`report.md`、`figures/`
 - `knowledge/design_rules.md` — 知识库：带证据（ρ、同号 run 数、分位对比）的设计规则
-- `testdata/golden_*.json` — 冻结的跨语言数值锚点
+- `testdata/golden_*.json` — 冻结的跨语言数值锚点；`testdata/world_trace_golden.jsonl` — 世界协议的一次确定性会话（G18 的证据，由 `--record` 生成，`runs/` 不入仓）
 - `CONTRACT.md` — 并行构建合同（文件所有权名册、数值锚点、验收门、主线裁决）
 - `docs/wiki/` — **wiki-first 知识系统**：项目概览 / 当前状态 / 数据来源 / 仓库策略 / 变更日志
   + 21 个校验脚本（`wiki_check.py`、`wiki_lint.py --strict=v2`、`raw_manifest_check.py` 等）
@@ -107,6 +113,6 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 
 ## 版本与 License
 
-`v0.1.0` —— Phase 0：设计 → 评分 → 记录 → 学习闭环可跑，17 道门全绿（`bash scripts/verify.sh phase0`）。
+`v0.1.0` —— Phase 0：设计 → 评分 → 记录 → 学习闭环可跑，18 道门全绿（`bash scripts/verify.sh phase0`）。
 
 MIT — Copyright (c) 2026 LIU YUANJIE（刘元杰）

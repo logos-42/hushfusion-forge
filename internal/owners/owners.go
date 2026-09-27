@@ -94,7 +94,10 @@ var Stages = []Stage{
 		ID:    "F",
 		Name:  "RL environment + CLI wiring (wiring is a single-owner round, done last)",
 		Owner: "agent-F",
-		Paths: []string{"internal/rlenv/", "cmd/"},
+		// internal/world/ 是同一轮的所有权: 世界协议(docs/world-protocol.md)只是把
+		// rlenv 的语义搬到进程边界之外, 它和 rlenv、CLI 接线是同一段工作。
+		// 新增路径 = 合同变更, 已在 CONTRACT.md §2 同步(2026-09-27)。
+		Paths: []string{"internal/rlenv/", "cmd/", "internal/world/"},
 	},
 	{
 		ID:    "G",

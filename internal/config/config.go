@@ -61,6 +61,17 @@ type Spec struct {
 	Weights Weights `json:"weights"`
 }
 
+// RL 环境 (internal/rlenv) 与 `forge world serve` 共用的 episode 长度与动作步长。
+//
+// 它们决定每一步走多远、一条 episode 有多长, 因此按房规住在 config 里, 而不是散落在
+// CLI 或协议层。internal/rlenv 与 internal/world 各自留零表示"用默认值"时用的就是
+// 这两个数字；internal/world 有一条测试盯着 rlenv 的默认值必须与之相同, 所以两边
+// 不会各自漂移出一份"差不多的"默认值。
+const (
+	DefaultMaxSteps   = 20
+	DefaultDeltaScale = 0.15
+)
+
 // DefaultSpec 返回 v0.1 的参考装置与评估窗口。
 //
 // 电流上限的设置使得手工设计的参考装置 (internal/baseline.TextbookMirror, throat 电流

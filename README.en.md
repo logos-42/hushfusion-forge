@@ -3,7 +3,7 @@
 [中文](README.md) | **English**
 
 [![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
-[![Phase 0](https://img.shields.io/badge/Phase%200-17%2F17%20gates-brightgreen)](scripts/verify.sh)
+[![Phase 0](https://img.shields.io/badge/Phase%200-18%2F18%20gates-brightgreen)](scripts/verify.sh)
 
 > Not a machine. An engineering system that keeps producing, validating and
 > killing the designs of the *next* machine. Forge is its first version: a
@@ -48,7 +48,7 @@ with the code).
 ## Architecture (Go is the primary stack; Python only assists)
 
 ```
-cmd/forge/            CLI: baseline / verify / design / run / benchmark / rules / report / registry / xcheck
+cmd/forge/            CLI: baseline / verify / design / run / benchmark / rules / report / registry / xcheck / world
 internal/
   config/             single source of truth: constants, search box, objective weights
   physics/            exact circular-filament magnetostatics (elliptic integrals via AGM)
@@ -65,6 +65,7 @@ internal/
   rlenv/              the Phase-1 RL environment interface + a random-policy reference
   design/             internal design gate layer: upstream ProjectionPhysics closed forms,
                       the six gates, and its upstream anchors (gate G17)
+  world/              the world protocol: rlenv semantics moved outside the process (JSONL lines, gate G18)
   owners/             file-ownership roster + freeze gate (no overlap / no gap / mutation-tested)
 python/               auxiliary only: independent scipy oracle (cross-language check) + figures + statistics
 ```
@@ -101,8 +102,13 @@ objective.
 ## Quick start
 
 ```bash
-# every acceptance gate (cross-language oracle, registry integrity, anti-fabrication)
+# every acceptance gate (cross-language oracle, registry integrity, anti-fabrication, world protocol)
 bash scripts/verify.sh phase0
+
+# the world protocol (G18): serve / byte-exact replay / a client in another language
+printf '%s\n' '{"op":"hello"}' '{"op":"reset","seed":12345}' '{"op":"close"}' | go run ./cmd/forge world serve
+go run ./cmd/forge world serve --replay testdata/world_trace_golden.jsonl
+python3 python/aux/world_client.py --replay testdata/world_trace_golden.jsonl
 
 go run ./cmd/forge baseline
 go run ./cmd/forge benchmark --budget 1000 --seeds 0,1,2 --methods random,lhs,evolution,evolution_warm
@@ -114,7 +120,7 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 
 - `runs/<tag>/` — the evidence of a run: `registry.jsonl` (one line per evaluation), `results.json`, `report.md`, `figures/`
 - `knowledge/design_rules.md` — the knowledge base: rules with their evidence (rho, same-sign run count, decile contrast)
-- `testdata/golden_*.json` — frozen cross-language numeric anchors
+- `testdata/golden_*.json` — frozen cross-language numeric anchors; `testdata/world_trace_golden.jsonl` — one deterministic world-protocol session (the evidence for G18, written by `--record`; its `runs/` directory stays out of git)
 - `CONTRACT.md` — the parallel-build contract (file roster, numeric anchors, acceptance gates, mainline rulings)
 - `docs/wiki/` — the **wiki-first knowledge system**: overview / current status / sources / repo strategy / changelog, plus 21 validation scripts
 - `manifests/raw_sources.csv` — registry of local raw originals (the originals themselves stay out of git)
@@ -122,6 +128,6 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 
 ## Version and License
 
-`v0.1.0` — Phase 0: the design → score → record → learn loop runs, 17/17 gates green (`bash scripts/verify.sh phase0`).
+`v0.1.0` — Phase 0: the design → score → record → learn loop runs, 18/18 gates green (`bash scripts/verify.sh phase0`).
 
 MIT — Copyright (c) 2026 LIU YUANJIE（刘元杰）

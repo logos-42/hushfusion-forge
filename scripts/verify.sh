@@ -125,6 +125,49 @@ PP_DIR="$(python3 scripts/emit_pp_anchors.py --where 2>/dev/null || true)"
 _opt "G17 内部设计锚点门" "[ -n \"$PP_DIR\" ] && [ -d \"$PP_DIR\" ] && [ -f testdata/projectionphysics_anchors.json ]" \
   bash -c 'set -e; python3 scripts/emit_pp_anchors.py --check; go test ./internal/design/'
 
+# G18: 世界协议门 (docs/world-protocol.md) —— 契约 §6 说它由**三条一起**判, 少一条都不算门。
+#   抓的失败模式:
+#     (1) 协议层两次运行产出不同字节 —— 非最短往返的浮点写法、map 键序遍历、未播种随机源,
+#         以及 design_id 依赖残留注册表, 都会以"同一个请求序列给出两段不同字节"的形式出现;
+#     (2) 跨语言分歧 —— Python 客户端看到的世界与 Go 写下的不是同一个世界(只跑 Go 是
+#         证明不了这一点的: 那是"用 Go 验证 Go");
+#     (3) 握手错了却照跑 —— 比崩溃更坏的静默损坏。只测好消息的门不算门, 所以第三条
+#         故意把一个改坏的 hello 喂给客户端, 并要求它非零退出、且退出的理由是握手。
+#   三道子检查共用同一份 testdata/world_trace_golden.jsonl, 缺任一条即整门红。
+WORLD_TRACE="testdata/world_trace_golden.jsonl"
+_opt "G18 世界协议门（§6 三条：Go/Python 逐字节回放 + 握手反向断言）" \
+  "[ -f \"$WORLD_TRACE\" ] && [ -f cmd/forge/main.go ] && [ -f python/aux/world_client.py ]" \
+  bash -c "set -e
+tmp=\$(mktemp -d)
+trap 'rm -rf \"\$tmp\"' EXIT
+
+echo '  G18.1 Go 逐字节回放: 把 trace 的每条 req 喂给一个新世界'
+go run ./cmd/forge world serve --replay \"$WORLD_TRACE\"
+
+echo '  G18.2 Python 客户端逐字节回放: 跨语言证据'
+python3 python/aux/world_client.py --replay \"$WORLD_TRACE\"
+
+echo '  G18.3 反向断言: 改坏的 hello 必须让客户端非零退出'
+# 只做纯字符串替换(不重新序列化): 除 action_dim 的值以外一个字节都不许动。
+python3 - \"$WORLD_TRACE\" \"\$tmp/broken.jsonl\" <<'PY'
+import sys
+src = open(sys.argv[1]).read()
+broken = src.replace('\"action_dim\":12', '\"action_dim\":13', 1)
+if broken == src:
+    sys.exit('the probe changed nothing: the recorded hello no longer has action_dim:12')
+open(sys.argv[2], 'w').write(broken)
+PY
+if python3 python/aux/world_client.py --replay \"\$tmp/broken.jsonl\" >\"\$tmp/out\" 2>\"\$tmp/err\"; then
+  echo 'G18.3: the client accepted a hello whose action_dim contradicts the spec (exit 0)'
+  exit 1
+fi
+if ! grep -q 'HANDSHAKE MISMATCH' \"\$tmp/err\"; then
+  echo 'G18.3: the client failed, but not because of the handshake — green for the wrong reason:'
+  sed 's/^/        /' \"\$tmp/err\"
+  exit 1
+fi
+echo '  G18.3: the broken hello was refused with a handshake mismatch (non-zero exit)'"
+
 echo
 echo "=== 汇总: $pass 通过, $fail 失败, $skip 跳过 ==="
 if [ "$fail" -ne 0 ]; then

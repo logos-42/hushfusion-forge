@@ -39,7 +39,7 @@ Phase 0 的验收问题只有一个：
 | C | `internal/registry/` `internal/runner/` | agent-C |
 | D | `internal/search/` | agent-D |
 | E | `internal/experiment/` `internal/knowledge/` `internal/report/` | agent-E |
-| F | `internal/rlenv/` `cmd/` | agent-F |
+| F | `internal/rlenv/` `cmd/` `internal/world/` | agent-F（2026-09-27 世界协议 P0：新增 `internal/world/`，与 rlenv/CLI 接线同属一轮；**合同变更**，见 `docs/world-protocol.md`） |
 | G | `python/` | agent-G |
 | design | `internal/design/` | design（2026-09-26 内部设计判决层：移植 ProjectionPhysics 的闭式解 + 六道门 + 上游锚点脚本，见 `docs/design-layer.md`） |
 
@@ -140,6 +140,7 @@ Python 参考实现（已逐条验证过解析锚点）产出的 golden 数值�
 | G15 出图 + 独立复评最优/基线 ($TAG) | `python3 python/aux/analyze.py runs/$TAG` | 独立复评最优与基线 |
 | G16 逐位复现 ($TAG) | `python3 scripts/repro_check.py $TAG` | `registry.jsonl` 剔 `tag`/`timestamp` 后 sha256 完全相同 |
 | G17 内部设计锚点门 | `python3 scripts/emit_pp_anchors.py --check && go test ./internal/design/` | 上游 ProjectionPhysics（`logos-42/Hibs-Physics`）的闭式解逐条复现；锚点来自工作区重跑产物（上游 `artifacts/` 不入 git），出处见 `testdata/projectionphysics_anchors.json` 的 `provenance` |
+| G18 世界协议门（三条一起判） | `forge world serve --replay testdata/world_trace_golden.jsonl` + `python3 python/aux/world_client.py --replay testdata/world_trace_golden.jsonl` + 故意改坏的 hello 必须让客户端非零退出 | (a) Go 把 trace 的每条 req 喂给新世界，响应逐字节相同；(b) Python 客户端同样逐字节相同（**跨语言证据**：证明客户端看到的世界与 Go 写下的是同一个）；(c) 反向断言：改坏的 hello 必须让客户端非零退出且理由是握手。证据 = `testdata/world_trace_golden.jsonl`（由 `--record` 生成；trace 的 `runs/` 目录不入仓，契约 §4） |
 
 ---
 

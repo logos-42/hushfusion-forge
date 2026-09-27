@@ -12,6 +12,7 @@
 //	rules       从 registry 中挖掘可复现的 design 规则
 //	report      渲染中文运行报告, 含诚实边界章节
 //	registry    检视一个 registry 并检查其完整性 (G8)
+//	world       世界协议: 把 internal/rlenv 的语义搬到进程边界之外 (G18)
 //	version     版本、spec 形状与冻结的 schema 事实
 //
 // 退出码: 0 成功, 1 某项检查失败 / 某个包报了错, 2 用法错误。任何命令上的 --help
@@ -44,6 +45,7 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/rlenv"
 	"github.com/logos-42/hushfusion-forge/internal/runner"
 	"github.com/logos-42/hushfusion-forge/internal/search"
+	"github.com/logos-42/hushfusion-forge/internal/world"
 )
 
 // Version 是引擎版本 (v0.1 接口冻结)。
@@ -64,13 +66,16 @@ const (
 	defRunDir      = "runs/phase0"
 	defRunTag      = "ad_hoc"
 	defRunRegistry = "runs/scratch/registry.jsonl"
-	defXcheckOut   = "runs/scratch/field_samples.json"
-	defRulesOut    = "knowledge/design_rules.md"
-	defReportOut   = "runs/phase0/report.md"
-	goldenBaseline = "testdata/golden_baseline.json"
-	goldenSamples  = "testdata/golden_field_samples.json"
-	goldenSpec     = "testdata/golden_spec.json"
-	solverName     = "analytic-vacuum-loops"
+	// defWorldRegistry 是世界协议的注册表: 契约 §4 要求 trace 的 runs 不进仓,
+	// runs/scratch/ 已被 .gitignore 忽略。被提交的证据是 trace 文件本身。
+	defWorldRegistry = "runs/scratch/worldtrace/registry.jsonl"
+	defXcheckOut     = "runs/scratch/field_samples.json"
+	defRulesOut      = "knowledge/design_rules.md"
+	defReportOut     = "runs/phase0/report.md"
+	goldenBaseline   = "testdata/golden_baseline.json"
+	goldenSamples    = "testdata/golden_field_samples.json"
+	goldenSpec       = "testdata/golden_spec.json"
+	solverName       = "analytic-vacuum-loops"
 )
 
 // 由 CONTRACT.md §5 固定的容差。放宽它们等于篡改验收标准本身, 因此它们是具名
@@ -118,6 +123,8 @@ func run(args []string) int {
 		return cmdReport(rest)
 	case "registry", "reg":
 		return cmdRegistry(rest)
+	case "world":
+		return cmdWorld(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "forge: unknown command %q\n\n", cmd)
 		usage(os.Stderr)
@@ -140,6 +147,7 @@ commands:
   rules       mine replicated design rules from a registry
   report      render the markdown run report
   registry    inspect a registry and check its integrity
+  world       world protocol: serve/replay the design world (docs/world-protocol.md)
   version     print version, spec shape and frozen schema facts
 
 exit codes: 0 ok, 1 a gate/command failed, 2 usage error.
@@ -2017,4 +2025,131 @@ func cmdVersion(args []string) int {
 	note("  methods     %s", methodListOrNone())
 	note("  golden      score anchor %v, field samples vs Python oracle rel < %v", -0.2905708160753513, tolField)
 	return 0
+}
+
+// ---------------------------------------------------------------------------
+// world —— 世界协议 (docs/world-protocol.md, 门 G18)
+// ---------------------------------------------------------------------------
+
+// worldTag 是写进 registry 的 algorithm 标签: 一条 trace 的每条 record 都必须说得出
+// 它是被谁提出来的。
+const worldTag = "world_protocol"
+
+func cmdWorld(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "forge world: missing subcommand (known: serve)\n\n")
+		worldUsage(os.Stderr)
+		return 2
+	}
+	switch args[0] {
+	case "serve":
+		return cmdWorldServe(args[1:])
+	case "help", "-h", "--help":
+		worldUsage(os.Stdout)
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "forge world: unknown subcommand %q (known: serve)\n\n", args[0])
+		worldUsage(os.Stderr)
+		return 2
+	}
+}
+
+func worldUsage(w *os.File) {
+	fmt.Fprint(w, `usage: forge world serve [--protocol 1] [--max-steps n] [--delta-scale s] [--record FILE] [--replay FILE]
+
+Serve the design world over the JSONL line protocol frozen in docs/world-protocol.md,
+or replay a recorded trace byte for byte against a fresh world.
+
+The world is internal/rlenv: this command adds no physics, no shaping and no learning.
+stdout carries protocol lines only; every human log goes to stderr.
+
+Every process starts from an empty scratch registry (runs/scratch/worldtrace/), because
+design_id is assigned by the registry and a leftover record would turn D0001 into D0042 —
+the same request sequence must give the same response bytes (contract section 2).
+The submitted evidence is the trace file, not that runs/ directory (contract section 4).
+
+flags:
+  --protocol 1     protocol version to serve (an unknown version is refused)
+  --max-steps n    episode length (default: internal/config.DefaultMaxSteps)
+  --delta-scale s  normalised action scale (default: internal/config.DefaultDeltaScale)
+  --record FILE    append every request/response pair to FILE as a trace (one object per line)
+  --replay FILE    feed the trace's requests to a fresh world and compare byte for byte
+
+exit codes: 0 close/EOF, 1 a fatal error (already replied ok:false), 2 usage error.
+`)
+}
+
+func cmdWorldServe(args []string) int {
+	fs := newFlagSet("world serve", "world serve [--protocol 1] [--max-steps n] [--delta-scale s] [--record FILE] [--replay FILE]",
+		"Serve the design world (internal/rlenv) over the frozen JSONL line protocol, or\n"+
+			"replay a recorded trace byte for byte. stdout carries protocol lines only;\n"+
+			"any human log goes to stderr.")
+	protocol := fs.Int("protocol", world.ProtocolVersion, "protocol version to serve")
+	maxSteps := fs.Int("max-steps", config.DefaultMaxSteps, "episode length (steps to truncation)")
+	deltaScale := fs.Float64("delta-scale", config.DefaultDeltaScale, "normalised action scale")
+	record := fs.String("record", "", "trace file to record (one {\"req\":..,\"resp\":..} object per line)")
+	replay := fs.String("replay", "", "trace file to replay and verify byte for byte")
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+	if *record != "" && *replay != "" {
+		return fail("--record and --replay cannot be combined: a replay is not a session to record")
+	}
+
+	spec := defaultSpec()
+	base, err := baselineDesign()
+	if err != nil {
+		return fail("%v", err)
+	}
+	ev := analyticEvaluator(spec, base.Cost)
+
+	// 每个 serve 进程都从**空注册表**开始。
+	//
+	// 契约 §2 说世界是确定性的: "同一段请求序列必须产出同一段响应序列, 逐字节相同"。
+	// design_id 由注册表分配, 而注册表是只追加的 —— 如果它留着上一次会话的记录, 同一段
+	// 请求就会给出 D0042 而不是 D0001, 逐字节复现立刻不成立。因此这里的注册表是**这次
+	// 会话的** scratch 副本(目录落在 runs/scratch/, 已被 .gitignore 忽略), 而契约 §4
+	// 也正好把"被提交的证据"定义成 trace 文件本身, 不是那次跑的 runs/ 目录。
+	if err := os.Remove(defWorldRegistry); err != nil && !os.IsNotExist(err) {
+		return fail("cannot start from an empty registry %s: %v", defWorldRegistry, err)
+	}
+	fmt.Fprintf(os.Stderr, "forge world: starting from an empty registry (%s) — design_id must not depend on leftovers\n",
+		defWorldRegistry)
+	reg, err := openRegistry(defWorldRegistry)
+	if err != nil {
+		return fail("%v", err)
+	}
+	rn := runner.New(reg, ev, worldTag)
+
+	if *maxSteps <= 0 || *deltaScale <= 0 {
+		fmt.Fprintf(os.Stderr, "forge world: non-positive --max-steps/--delta-scale fall back to the "+
+			"internal/config defaults (%d / %v)\n", config.DefaultMaxSteps, config.DefaultDeltaScale)
+	}
+	w := world.New(rn, spec, *maxSteps, *deltaScale, Version)
+	srv := world.NewServer(w, *protocol, os.Stderr)
+	fmt.Fprintf(os.Stderr, "forge world serve: protocol=%d max_steps=%d delta_scale=%v registry=%s\n",
+		*protocol, w.MaxSteps(), w.DeltaScale(), defWorldRegistry)
+	if !srv.Supported() {
+		fmt.Fprintf(os.Stderr, "forge world: protocol %d is not a known version (this build serves %d); "+
+			"the first request will be refused with %s\n", *protocol, world.ProtocolVersion, world.CodeUnsupportedProtocol)
+	}
+
+	if *replay != "" {
+		// 报告走 stderr: stdout 只放协议行。回放不下发任何协议行, 退出码才是判据。
+		return srv.Replay(*replay, os.Stderr)
+	}
+	if *record == "" {
+		return srv.Serve(os.Stdin, os.Stdout, nil)
+	}
+
+	rec, err := world.NewRecorder(*record)
+	if err != nil {
+		return fail("%v", err)
+	}
+	code := srv.Serve(os.Stdin, os.Stdout, rec)
+	if err := rec.Close(); err != nil {
+		return fail("cannot close the trace %s: %v", *record, err)
+	}
+	fmt.Fprintf(os.Stderr, "forge world: recorded %s\n", *record)
+	return code
 }
