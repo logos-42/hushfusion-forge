@@ -524,12 +524,18 @@ def tier_of_alternative_reading(regime_stats: list[dict]) -> dict:
 
 
 def gate_verdict(evidence: dict) -> dict:
-    """§5 的三条子门，从**原始数字**重新推导。"""
+    """§5 的三条子门，从**原始数字**重新推导。
+
+    b 的语义按父线勘误 §7.5：强档才 pass，弱档与零档都红（红的理由不同）。
+    """
     control = evidence["control_group"]
     g19a = bool(control["passes_eps"])
 
     tier = tier_of(evidence["regimes"])
-    g19b = tier["tier"] != "zero"
+    # 父线勘误（docs/world-structure.md §7.5）：**只有强档 b 为 pass**。
+    # 旧写法 `!= "zero"` 会让弱档印绿，而 §4 又说弱档"P2 不启动" —— 那是"门绿着，
+    # 结论却是不许往下走"的假绿。门只能把"结构已被证明"印成绿；"结构未证明"必须红。
+    g19b = tier["tier"] == "strong"
 
     # G19c：四档特征向量不全相同，且至少 3/4 档两两可分。
     # 读法（§3 与 §5 都要满足）：§3 说"四档全同 ⟹ 门红"；§5 的判据是"至少 3/4 档两两可分"。

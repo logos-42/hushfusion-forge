@@ -141,7 +141,7 @@
     0.115836840456639
    ]
   ],
-  "runtime_seconds": 39.707
+  "runtime_seconds": 9.134
  },
  "control_group": {
   "semantics": "absolute parameters + no precondition gate + no source switch + no clamping (docs/world-structure.md section 4)",

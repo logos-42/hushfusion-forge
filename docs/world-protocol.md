@@ -1,4 +1,9 @@
-# Forge World Protocol v1（冻结契约）
+# Forge World Protocol（冻结契约）
+
+> **当前版本 v2** ｜ v1 仍受支持(`--protocol 1`),**v1 的黄金 trace 与门 G18 继续有效**。
+> 正文 §1–§7 是 v1 的文本;v2 的全部增补集中在 **§8**,逐条写明它覆盖了正文的哪一段。
+> **§8 与正文冲突时,以 §8 为准**(这是版本变更的记录方式,不是"两处说法"——审计时只认这一条明线)。
+> v2 的**判据与计量协议**在 `docs/world-structure.md`(那份冻的是"够不够格检验 Options")。
 
 > 本文件冻结 **Go 世界（`forge world serve`）与 Python Agent（headless）之间的线协议**。
 > 契约先行：先冻这份文本，再写实现；实现与文本不一致时，**文本是权威**，改动即协议版本变更。
@@ -23,7 +28,8 @@
 ## 1. 传输与进程
 
 ```
-forge world serve [--protocol 1] [--max-steps n] [--delta-scale s] [--record <file>] [--replay <file>]
+forge world serve [--protocol 2] [--max-steps n] [--delta-scale s] [--record <file>] [--replay <file>]
+                  [--source MATBG_N2_perp|MATBG_N2_par] [--budget n] [--target s]   # v2 新增
 ```
 
 - **JSONL 行协议**:一行一个请求,一行一个响应,按到达顺序一一对应。不允许跨行、不允许批量、不允许并发复用。
@@ -194,3 +200,92 @@ G18 是**三条一起**判:
 4. **证据等级**:本协议与 G18 属于 B 级(已实现、可复现),**不给收益**。
    任何"接上 headless 之后更好"的说法都必须走 C 级纪律:多 seed、共享对照、报告 Q7
    (第二次进入同一 regime 的 adaptation 步数是否更短),而不是单次 reward。
+
+---
+
+## 8. v2 增补（冻结,与正文冲突时以本节为准）
+
+**动因**:`docs/world-structure.md` 的 P1 判据。v1 暴露的 `Env` 是**可交换**的(`A ≡ 0`),
+在任何这类世界上检验时间抽象都是混杂的。v2 让世界有**可被抽象的顺序依赖**,并**先证明它有**(G19)。
+**v2 不新增物理**:`internal/design` / `internal/physics` 一行不动。
+
+### 8.1 覆盖 §1(用法与回放)
+
+- 交互服务默认 `--protocol 2`;`--protocol 1` 保留 v1 语义(供 G18 与旧 trace)。
+- **`--replay` 忽略 `--protocol`,以 trace 自己的 `hello` 响应里的 `protocol` 字段为准**
+  (trace 是那段历史的权威)。理由:否则同一份黄金 trace 会因为默认版本前进而假红,
+  而"默认值"和"协议兼容性"是两件事。
+- 新旗标:`--source`(初始场源)、`--budget`(步数预算)、`--target`(终止目标分)。
+  三者也都可以由 `reset` 的 `regime` 字段逐个覆盖(见 8.3)。**默认值只住 `internal/config`。**
+
+### 8.2 覆盖 §3.1(`hello`)
+
+响应增加 v2 字段(键名冻结):
+
+```json
+{"ok":true,"protocol":2,
+ "action_dim":12,"observation_dim":26,
+ "obs_keys_v2":["...19 维同 v1...","budget_remaining_norm","depth_norm",
+                "resid_death","resid_mu_window","resid_coil_ceiling",
+                "source_onehot_perp","source_onehot_par"],
+ "budget":24,"target":1.0,"delta_scale":0.15,"max_steps":24,
+ "sources":["MATBG_N2_perp","MATBG_N2_par"],
+ "clamp_zones":{"coil_proximity_floor_m":0.005},
+ "spec":{...,"sha256":"..."},"engine":{"version":"0.1.x"}}
+```
+
+- v1 的 `obs_metric_keys` / `obs_metric_refs` / `max_steps` / `spec` **保留不动**(v1 测试仍过)。
+- `observation_dim` 在协议 2 下是 **26**;客户端必须按 `protocol` 选维度表,不许"先跑再看"。
+
+### 8.3 覆盖 §3.2(`reset`)
+
+`reset` 增加可选的 `regime` 对象,缺省取服务旗标:
+
+```json
+{"op":"reset","seed":12345,
+ "regime":{"source":"MATBG_N2_par","budget":8,"target":1.0,"x0":[...]}}
+```
+
+四档 regime 的定义(`{perp, par} × {tight 8, loose 24}`)与"必须互相可区分"的判据
+在 `docs/world-structure.md` §3。`x0` 与 `regime` 同时给出时 `x0` 优先(先夹进盒子再求值)。
+
+### 8.4 覆盖 §3.3(`step`)
+
+- **动作语义**:v2 与 v1 同(归一化增量 + 夹取),但**增量加在"当前"参数上**,而夹取里包含
+  物理层自身的 θ-依赖钳位(近导线 5 mm 的 `alpha2` 钳位 = 官方定义、线圈峰场天花板、μ 窗口边界)。
+  ⇒ 这是 `A ≠ 0` 的真来源之一(R2),**不是**我们新造的规则。
+- **前提门(R3)**:当前设计处在"夹取区"(线圈距打分点 < 5 mm 或 `B_coil_max_T` 超材料天花板)时,
+  **只接受把设计移出该区的动作**;其余动作 `info.rejected=true`,**仍消耗一步预算**。
+- **奖励(R1)**:`reward = Δscore − λ_cost · max(0, Δcost_proxy) / cost(θ_prev)`;
+  `λ_cost` 住 `internal/config`。`cost_ref` **不用常数**:用该 episode 初始设计的真 cost(由 `reset` 算出)。
+- **代价记账**:每次 `step` 记 1 步预算,`info.budget_remaining` 是**已扣完的**剩余值。
+- **覆盖 §3.3 的两条"恒为 false"**:`truncated = (已用步数 ≥ budget)`;
+  **`terminated` 在 v2 可以真** = `(真分数 ≥ regime.target)`。这是**游戏规则声明,不是物理**,
+  写在这里是为了不许它被当成物理(黑名单:R5 不是 A 的来源)。
+- **`info` 增补**:`rejected`(bool)、`budget_remaining`(int)、`depth`(int)、
+  `residuals`(3 个真约束余量)、`source`(字符串)、`clamped`(哪些参数撞到了盒子/钳位)。
+
+### 8.5 覆盖 §3.5(新消息 `set_source`)
+
+请求：`{"op":"set_source","source":"MATBG_N2_perp"}`　响应：`{"ok":true,"obs":[...],"info":{...}}`
+
+- 合法值只有 hello 的 `sources`;其他值 = `bad_field`。
+- 语义:**用新源对同一个 θ 重新求值**(两个源都是上游真源:0.12 T / 1.6 T),
+  死活判据与 μ 窗口余量随源重算 ⇒ R3 的开关状态可能翻转。**消耗 1 步预算**;预算已尽 = `truncated`。
+- 未 `reset` 就 `set_source` 是错误(`not_started`)。
+
+### 8.6 对 §6 的增补:门 G19
+
+G19 的三条子门与判据全部在 `docs/world-structure.md` §5(尺子自检 / 结构门 / 四档可区分),
+证据存档 `testdata/world_structure_v2.json`。**G19 红时不许启动 P2/P3** —— 接 Options 的前提是
+`A` 到了强档,这是 `docs/world-structure.md` §4 预注册的那张表说了算,不是"看起来差不多"说了算。
+
+### 8.7 对 §7 诚实边界的增补
+
+v1 的 §7 写着"本版本故意不提供时序结构,因此它不是那个实验的场地"。v2 把这句话推进一格:
+
+- v2 **提供**了顺序依赖,并且**要求 G19 先证明它真的存在**(R1 不算结构,R5 不算结构);
+- 即便 G19 到了强档,也只说明**这个世界可以用来检验 Options**,
+  **不说明 Options 有用** —— 那要 P3 的 K1 四档矩阵 + 消融(共享预训练 + 随机基线 + ≥2 路对照)。
+- G19 若停在零档/弱档,诚实结论是「**本世界规则下设计空间仍不可交换性不足,不许接 Options**」,
+  处置写在 `docs/world-structure.md` §4(转 P4 或重设计世界语义),**不许**调阈值或换动作集合把它变成绿的。
