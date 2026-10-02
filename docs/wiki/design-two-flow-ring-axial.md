@@ -9,6 +9,11 @@ schema_version: 2.1
 tags: [design-layer, two-flow-ring, axial-separation, null-surface, clearance, envelope]
 ---
 
+> **方向声明（leo 2026-10-02）**：「**要的是双环方案产生的引力场，不是 FRC。**」
+> 本页是**磁位形**那条线（中性面 / 分界面 / 零场面）—— 这些量本身没错，
+> 但**不是当前目标，不许当设计目标引用**（尤其别拿它的半径选择去定装置几何）。
+> 当前目标见 [design-two-flow-ring-gravity.md](./design-two-flow-ring-gravity.md)。
+
 # 轴向分离双流环设计层（中性面悬空）
 
 上游出处：`logos-42/Hibs-Physics`（本地工作副本 `~/Downloads/lean/ProjectionPhysics`）的

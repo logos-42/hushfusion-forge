@@ -2,11 +2,11 @@
   "provenance": {
     "generator": "scripts/emit_pp_anchors.py",
     "upstream_root": "/Users/apple/Downloads/lean/ProjectionPhysics",
-    "upstream_commit": "0142fad966788b7683ce52f5dba25145d348460a",
-    "upstream_commit_subject": "feat(design): 轴向分离三步全做完 —— 零场面（分两类）/ 装置包络 / 有限截面修正（11 断言）",
+    "upstream_commit": "3cbb3cb53972f602be4250590cdb94c26a4975b8",
+    "upstream_commit_subject": "feat(design): 目标校正 —— 要的是双流环产生的**引力场**，不是 FRC（GCA2 判定泛函 → η → μ → 引力响应）",
     "upstream_artifacts_tracked_by_git": 0,
-    "generated_at_utc": "2026-10-02T10:36:41Z",
-    "generated_at_local": "2026-10-02T18:36:41.742104+08:00",
+    "generated_at_utc": "2026-10-02T11:42:07Z",
+    "generated_at_local": "2026-10-02T19:42:07.679617+08:00",
     "read_from": [
       "artifacts/moirefield/report.json",
       "artifacts/moirefield/summary.txt",
@@ -16,7 +16,7 @@
       "artifacts/fusionroadmap/summary.txt"
     ],
     "skipped_fields": [],
-    "source_of_truth": "上游仓库 commit 0142fad966788b7683ce52f5dba25145d348460a + 本地重跑 scripts/verify_moire_field.py 的产物。上游 artifacts/ 不入上游 git（同一 commit 的 `git ls-files artifacts/` = 0 个文件），因此这些数字来自该 commit 的**工作区重跑结果**，可由该脚本重放。",
+    "source_of_truth": "上游仓库 commit 3cbb3cb53972f602be4250590cdb94c26a4975b8 + 本地重跑 scripts/verify_moire_field.py 的产物。上游 artifacts/ 不入上游 git（同一 commit 的 `git ls-files artifacts/` = 0 个文件），因此这些数字来自该 commit 的**工作区重跑结果**，可由该脚本重放。",
     "check_note": "重放上游脚本后 report.json 与重放前逐字节相同，唯一差异是 meta.date。因此 --check 不做整文件比对（那样每天都会假红），只比锚点字段并显式忽略 generated_at_* 与 upstream_root。",
     "tolerance_note": "上游字段本身是逐位拷贝；Go 侧**复算**的派生量与上游差 ~2e-15 相对（Go 的无精度常数算术 vs CPython 的 float64 逐步求值、x*x vs **2），因此 anchor_test.go 用 rel 1e-12 锚定；summary.txt 里打过折的数字按打印精度锚定。"
   },
