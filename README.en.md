@@ -3,7 +3,7 @@
 [中文](README.md) | **English**
 
 [![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
-[![Phase 0](https://img.shields.io/badge/0.1.2-23%20gates-brightgreen)](scripts/verify.sh)
+[![Phase 0](https://img.shields.io/badge/0.1.3-23%20gates-brightgreen)](scripts/verify.sh)
 
 > Not a machine. An engineering system that keeps producing, validating and
 > killing the designs of the *next* machine. Forge is its first version: a
@@ -136,6 +136,8 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 - Site: [hushfusion.pages.dev](https://hushfusion.pages.dev) — the brand site; this project (FORGE) is introduced, with its measured numbers, on the **Progress page under `#forge`**
 
 ## Version and License
+
+`v0.1.3` — a **real defect fix**: the 0.1.2 re-record of the v1 golden trace omitted `--protocol 1`, so that "v1 trace" was really a protocol-2 session — and **G18 was green for the wrong reason** (replay follows the trace's own `hello.protocol`, so a mislabelled trace is compared against itself). The unit tests in `internal/world` caught it. Also records the **second instalment of the version tax** (every bump invalidates all three frozen traces, because the hello carries the engine string) and the alignment with the v3 plan. The criterion is unchanged. See [docs/version-0.1.3.md](docs/version-0.1.3.md).
 
 `v0.1.2` — **criterion change (PATCH)**: buildability (conductor-to-constraint-region clearance)
 is now part of the objective. Re-running the identical tuple: the machine-vs-human margin goes

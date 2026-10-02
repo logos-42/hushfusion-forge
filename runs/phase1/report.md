@@ -12,17 +12,17 @@
 | 项 | 值 |
 |---|---|
 | tag | phase1 |
-| timestamp (UTC) | 2026-10-02T03:30:00Z |
+| timestamp (UTC) | 2026-10-02T03:43:25Z |
 | budget (每次 run 的评估上限) | 1000 |
 | seeds | 0, 1, 2 |
 | methods | random, lhs, evolution, evolution_warm |
 | workers | 1 |
 | solver | analytic-vacuum-loops |
 | cost_ref (人工基线欧姆代价) | 1.791703035e+12 |
-| git commit | 538ba82fb5fd |
+| git commit | 42c0211723c0 |
 | platform | darwin/amd64 |
 | go version | go1.27.1 |
-| forge judge version | 0.1.2 |
+| forge judge version | 0.1.3 |
 | 登记的设计数 (registry) | 12001(其中 feasible 7221) |
 | registry best | 0.9488836641 (D7996) |
 

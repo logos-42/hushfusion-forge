@@ -56,7 +56,7 @@ _opt() {
 
 echo "=== Forge 门禁 (tag=$TAG, 判据版本 run=$RUN_VERSION / 当前=$CUR_VERSION) ==="
 if [ "$RUN_VERSION" != "$CUR_VERSION" ]; then
-  echo "注意: runs/$TAG 由判据 $RUN_VERSION 产出, 当前判据是 $CUR_VERSION。"
+  echo "注意: runs/$TAG 由判据 $RUN_VERSION 产出, 当前判据是 ${CUR_VERSION}。"
   echo "      依赖判据的门（G12/G15/G16）会 SKIP —— **SKIP 不是通过**。"
   echo "      要在当前判据下过这些门, 用 scripts/verify.sh <该判据产出的 tag>。"
 fi

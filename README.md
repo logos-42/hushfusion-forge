@@ -3,7 +3,7 @@
 **中文** | [English](README.en.md)
 
 [![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
-[![Phase 0](https://img.shields.io/badge/0.1.2-23%20gates-brightgreen)](scripts/verify.sh)
+[![Phase 0](https://img.shields.io/badge/0.1.3-23%20gates-brightgreen)](scripts/verify.sh)
 
 > 不是造一台装置，而是造一个**能不断产生、验证、淘汰下一代装置设计的工程系统**。
 > Forge 是这个系统的第一版：电磁线圈设计的设计—评分—记录—学习闭环。
@@ -119,6 +119,8 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 - 站点：[hushfusion.pages.dev](https://hushfusion.pages.dev) — 品牌站；本项目（FORGE）的介绍与实测数字在**进展页 `#forge`**
 
 ## 版本与 License
+
+`v0.1.3` —— 一条**真缺陷修复**：0.1.2 重录 v1 黄金 trace 时漏了 `--protocol 1`，那份「v1 trace」实际是 protocol-2 会话，而 **G18 是假绿的**（回放以 trace 自己的 `hello.protocol` 为准，标错版本就自己跟自己比）；抓到它的是 `internal/world` 的单测。同时记录**版本税第二笔**（每次 bump 都会让三份冻结 trace 失效，因为 hello 里带 engine 串）与计划 v3 对齐。判据未变。见 [docs/version-0.1.3.md](docs/version-0.1.3.md)。
 
 `v0.1.2` —— **判据变更（PATCH）**：目标函数加入**可造性**（导体到约束区域的净空）。
 同一元组重跑：机器对人工基线的优势 **+1.672 → +1.2395**，可行记录 **11072/12001 → 7221/12001**；

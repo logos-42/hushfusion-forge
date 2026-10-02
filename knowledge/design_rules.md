@@ -1,6 +1,6 @@
 # Forge knowledge rules — tag phase1
 
-- 生成时间 (UTC): 2026-10-02T03:30:56Z
+- 生成时间 (UTC): 2026-10-02T03:44:18Z
 - 输入: 12001 条 registry record(仅 feasible 参与挖掘)
 - 规则数: 3
 

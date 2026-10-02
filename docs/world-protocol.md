@@ -182,7 +182,7 @@ G18 是**三条一起**判:
   那会让 `hello.max_steps` 与 §3.1 的示例不一致 —— 本版本选择**不假装覆盖**:
   `truncated=true` 与「done 之后再 step」的语义由 `internal/world/world_test.go` 的单测
   盯住,而不是由这份跨语言 trace 盯住。
-- 尺度锚点(漂移可见):trace 8 行;响应的原始字节合计 5653;B 级证据。
+- 尺度锚点(漂移可见):trace 8 行;响应的原始字节合计 3635;B 级证据。
 
 ---
 
