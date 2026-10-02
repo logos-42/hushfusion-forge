@@ -140,6 +140,7 @@ type Metrics struct {
 	Ripple                float64 `json:"ripple"`
 	BCoilMaxT             float64 `json:"B_coil_max_T"`
 	MinCoilGapM           float64 `json:"min_coil_gap_m"`
+	MinClearanceM         float64 `json:"min_clearance_m"`
 	CostProxy             float64 `json:"cost_proxy"`
 	CoilProximityFloorHit bool    `json:"coil_proximity_floor_hit"`
 	NCoils                int     `json:"n_coils"`
@@ -184,6 +185,24 @@ func AxisRipple(bAxisCell []float64, bMid, prominence float64) float64 {
 
 // MinCoilGap 是两个线圈中心之间的最小距离; 少于两个线圈时返回 +Inf。
 func MinCoilGap(coils []Coil) float64 { return minCoilGap(coils) }
+
+// MinClearance 是导体面到约束区域的最小净空 [m] (0.1.2 新增)。
+//
+// 定义 (docs/version-0.1.2.md §1):
+//
+//	约束区域 R_cell = { 0 <= r <= spec.RPlasma, |z| <= spec.ZCell }   （中心元胞, 与
+//	                    volume_good 的采样区域同一口径; 不是 ZMid —— 那只是 B_mid 的取样窗）
+//	导体面         = 丝环 (r_k, z_k) 起、minor 半径 spec.TPack/2 的圆环面
+//	c_k            = dist((r_k, z_k), R_cell) − spec.TPack/2        （可以有符号: <0 = 已侵入）
+//	min_clearance  = min_k c_k
+//
+// dist 的闭式解利用 R_cell 在柱坐标下是**乘积区域**这一事实:
+//
+//	dist = sqrt( max(0, a − RPlasma)^2 + max(0, |z| − ZCell)^2 )      （精确）
+//
+// 为什么要它: 0.1.0 的最优解把导体放在距中场采样点 4.196 mm 处, 而当时的目标函数
+// 没有一项阻止它。少于一个线圈时返回 +Inf (与 MinCoilGap 同一约定)。
+func MinClearance(coils []Coil, spec config.Spec) float64 { return minClearance(coils, spec) }
 
 // VectorToCoils 解码一个设计向量, 裁剪到 spec 边界并按 z 排序 (规范形式: 消除 K! 排列
 // 简并)。若 len(x) != spec.NParams() 则返回错误。

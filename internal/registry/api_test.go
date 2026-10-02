@@ -54,7 +54,7 @@ func recordFixture(score float64, algorithm string) Record {
 		},
 		Terms:     map[string]float64{"field": 0.0, "mirror": 0.24753, "volume": 0.780886, "ripple": 0.0, "cost": 1.0},
 		Weighted:  map[string]float64{"field": 0.0, "mirror": 0.123765, "volume": 0.585664, "ripple": 0.0, "cost": -1.0},
-		Penalties: map[string]float64{"conductor_field": 0.0, "coil_separation": 0.0, "not_a_mirror": 0.0},
+		Penalties: map[string]float64{"conductor_field": 0.0, "coil_separation": 0.0, "not_a_mirror": 0.0, "clearance": 0.0},
 		Metrics:   metricsFixture(),
 		Note:      "fixture",
 	}
@@ -163,12 +163,12 @@ func TestRecordSchemaKeySetIsFrozen(t *testing.T) {
 	// 12 个原始 metrics: 整件事的意义在于 record 事后可以重新评分、重新加权,
 	// 而这仅凭一个 score 是做不到的。
 	metricKeys := jsonKeys(t, rec.Metrics)
-	if len(metricKeys) != 12 {
-		t.Fatalf("metrics must carry 12 raw quantities, got %d: %v", len(metricKeys), metricKeys)
+	if len(metricKeys) != 13 {
+		t.Fatalf("metrics must carry 13 raw quantities, got %d: %v", len(metricKeys), metricKeys)
 	}
 	metricsExtra, metricsMissing := keyDiff(metricKeys, []string{
 		"B_mid_T", "B_throat_T", "z_throat_m", "mirror_ratio", "volume_good", "ripple",
-		"B_coil_max_T", "min_coil_gap_m", "cost_proxy", "coil_proximity_floor_hit", "n_coils", "mu0",
+		"B_coil_max_T", "min_coil_gap_m", "min_clearance_m", "cost_proxy", "coil_proximity_floor_hit", "n_coils", "mu0",
 	})
 	if len(metricsExtra) != 0 || len(metricsMissing) != 0 {
 		t.Fatalf("metrics key set differs from the frozen cross-language schema:\n  extra:   %v\n  missing: %v",
@@ -181,7 +181,7 @@ func TestRecordSchemaKeySetIsFrozen(t *testing.T) {
 		t.Fatalf("terms key set differs:\n  extra:   %v\n  missing: %v", termExtra, termMissing)
 	}
 
-	penExtra, penMissing := keyDiff(jsonKeys(t, rec.Penalties), []string{"conductor_field", "coil_separation", "not_a_mirror"})
+	penExtra, penMissing := keyDiff(jsonKeys(t, rec.Penalties), []string{"conductor_field", "coil_separation", "not_a_mirror", "clearance"})
 	if len(penExtra) != 0 || len(penMissing) != 0 {
 		t.Fatalf("penalties key set differs:\n  extra:   %v\n  missing: %v", penExtra, penMissing)
 	}

@@ -3,7 +3,7 @@
 **中文** | [English](README.en.md)
 
 [![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
-[![Phase 0](https://img.shields.io/badge/Phase%200-22%20gates-brightgreen)](scripts/verify.sh)
+[![Phase 0](https://img.shields.io/badge/0.1.2-23%20gates-brightgreen)](scripts/verify.sh)
 
 > 不是造一台装置，而是造一个**能不断产生、验证、淘汰下一代装置设计的工程系统**。
 > Forge 是这个系统的第一版：电磁线圈设计的设计—评分—记录—学习闭环。
@@ -34,6 +34,13 @@ Phase 0 的验收问题只有一个：
 人工基线在这个盒子里偏弱（随机搜索平均 8 次评估即追平）；热启动的增益在 1000 次预算下落在噪声里
 （+0.004，方差反而更大）；**最优解把一圈线圈放在距中场打分点 4.2 mm 处**——目标函数还没有
 "导体净空"约束，所以它很可能是**不可造的退化解**，而不是一台机器设计的装置。
+
+**0.1.2 把第三条限定变成了判据。** 目标函数新增第 4 条罚项 `clearance`（导体面到中心元胞的净空，
+要求 ≥ 0.05 m；口径见 [docs/version-0.1.2.md](docs/version-0.1.2.md) §1）。同一元组重跑 ⟹
+**Δ = +1.2395**（0.1.0 是 +1.672），**可行记录 7221/12001**；而 0.1.0 那个冠军在新判据下
+`1.3814186 → −13.6099621`（它有一圈导体整根埋在约束区域里）。**「这条约束值 0.4325」是本仓第一个
+"物理约束值多少钱"的实测**——它同时说明另一件事：那个数字是被 `MinClearance = 0.05` 这个**工程判断**
+撑着的，换一个值它就是另一个数，**它不是物理常数**。
 
 活的状态、数据来源与门禁清单见 [docs/wiki/](docs/wiki/index.md)（wiki-first，随代码一起版本化）。
 
@@ -113,7 +120,13 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 
 ## 版本与 License
 
-`v0.1.0` —— Phase 0：设计 → 评分 → 记录 → 学习闭环可跑。`bash scripts/verify.sh phase0` → **22 道门 / 21 绿 / 1 红**；
+`v0.1.2` —— **判据变更（PATCH）**：目标函数加入**可造性**（导体到约束区域的净空）。
+同一元组重跑：机器对人工基线的优势 **+1.672 → +1.2395**，可行记录 **11072/12001 → 7221/12001**；
+新增 **G23 可造性门**专门钉住「0.1.0 的退化解必须被咬住」。判据语义与发版清单一句话看
+[docs/version-0.1.2.md](docs/version-0.1.2.md)，变化清单与**对旧证据的影响**看 [CHANGELOG.md](CHANGELOG.md)。
+
+`v0.1.0` —— Phase 0：设计 → 评分 → 记录 → 学习闭环可跑。`bash scripts/verify.sh phase0` → 22 道门 / 21 绿 / 1 红；
 那 1 红是 **G19 世界结构门**，它红着是**设计所许**的诚实记录（旧设计空间的目标函数层里，顺序依赖只有夹取一档，量级 ~3%）。
+**`runs/phase0/` 是这一版判据下的证据，永不重跑覆盖**——默认 tag 从 `phase0` 改成了 `phase1`。
 
 MIT — Copyright (c) 2026 LIU YUANJIE（刘元杰）

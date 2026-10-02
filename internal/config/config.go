@@ -13,6 +13,17 @@ import "math"
 // MU0 是真空磁导率 [H/m]。
 const MU0 = 4.0e-7 * math.Pi
 
+// ForgeVersion 是引擎的判据版本, 语义写死在 docs/version-0.1.2.md §3:
+//
+//	MAJOR  冻结契约的断裂性变更（改冻结签名/类型/JSON tag 的语义、删字段）
+//	MINOR  新增能力（新命令/新世界/新层），旧证据仍可解释
+//	PATCH  改判据本身 —— 任何会让**同一个设计得到不同分数**的改动
+//
+// 它住在 config 而不是 cmd/ 的理由是这个数字会被写进 runs/<tag>/results.json 的
+// meta（否则「用今天的判据复现昨天的 run」这件事无法被机器判定）, 而写入方在
+// internal/experiment —— cmd/ 在依赖图的最下游, 把版本放那里会让 experiment 反向依赖它。
+const ForgeVersion = "0.1.2"
+
 // Bounds 是单个线圈的搜索盒子 [SI]。
 type Bounds struct {
 	Radius  [2]float64 `json:"radius"`  // [m]  线圈半径
@@ -57,6 +68,16 @@ type Spec struct {
 
 	ConfineFactor float64 `json:"confine_factor"` // |B| <= factor * B_mid 即算作 "好场"
 	MinCoilSep    float64 `json:"min_coil_sep"`   // [m] 线圈中心的最小间距
+
+	// MinClearance 是**可造性**约束: 导体面到约束区域(中心元胞)的最小允许净空 [m]。
+	//
+	// 加它的原因是一个具体的失败: 0.1.0 的最优解把一圈 1.78 MA 的导体放在距中场采样点
+	// 4.196 mm 处 —— 当时的目标函数没有一项阻止它, 于是 "机器赢" 赢在了一个真实装置
+	// 不可能有的位形上。取值必须与 MinCoilSep 同量级, 并且必须让**人工基线仍然可行**
+	// (否则 "机器打败人类" 会退化成 "比谁的基线更不可造")。
+	//
+	// 与 Weights 同性质: **工程判断, 不是物理**。口径 / 判据 / 死法见 docs/version-0.1.2.md §1。
+	MinClearance float64 `json:"min_clearance"` // [m] 导体面到约束区域的最小允许净空
 
 	Weights Weights `json:"weights"`
 }
@@ -151,6 +172,7 @@ func DefaultSpec() Spec {
 		NVolZ:          33,
 		ConfineFactor:  1.25,
 		MinCoilSep:     0.05,
+		MinClearance:   0.05,
 		Weights: Weights{
 			Field:   1.0,
 			Mirror:  0.5,
@@ -222,6 +244,7 @@ func (s Spec) AsMap() map[string]any {
 		"n_vol_z":          s.NVolZ,
 		"confine_factor":   s.ConfineFactor,
 		"min_coil_sep":     s.MinCoilSep,
+		"min_clearance":    s.MinClearance,
 		"weights": map[string]any{
 			"field": s.Weights.Field, "mirror": s.Weights.Mirror, "volume": s.Weights.Volume,
 			"ripple": s.Weights.Ripple, "cost": s.Weights.Cost, "penalty": s.Weights.Penalty,

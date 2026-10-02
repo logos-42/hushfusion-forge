@@ -234,6 +234,7 @@ func sectionSetup(b *strings.Builder, rep *experiment.Report) {
 	fmt.Fprintf(b, "| git commit | %s |\n", shortCommit(m.GitCommit))
 	fmt.Fprintf(b, "| platform | %s |\n", orDash(m.Platform))
 	fmt.Fprintf(b, "| go version | %s |\n", orDash(m.GoVersion))
+	fmt.Fprintf(b, "| forge judge version | %s |\n", orDash(m.ForgeVersion))
 	fmt.Fprintf(b, "| 登记的设计数 (registry) | %d(其中 feasible %d) |\n",
 		rep.RegistrySummary.NRecords, rep.RegistrySummary.NFeasible)
 	fmt.Fprintf(b, "| registry best | %s (%s) |\n\n",

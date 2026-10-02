@@ -47,6 +47,7 @@ const (
 	PenConductorField = "conductor_field"
 	PenCoilSeparation = "coil_separation"
 	PenNotAMirror     = "not_a_mirror"
+	PenClearance      = "clearance" // 0.1.2 新增: 导体面到约束区域的净空 (可造性)
 )
 
 // EvalResult 是一次评估产出的全部内容。
@@ -98,6 +99,7 @@ func NewEvaluator(spec config.Spec, solver physics.Solver, costRef float64, grid
 		{"spec.MirrorRef", spec.MirrorRef},
 		{"spec.CoilFieldLimit", spec.CoilFieldLimit},
 		{"spec.MinCoilSep", spec.MinCoilSep},
+		{"spec.MinClearance", spec.MinClearance},
 	} {
 		if !(p.v > 0) || math.IsInf(p.v, 0) {
 			panic(fmt.Sprintf("objective.NewEvaluator: %s must be finite and > 0, got %v", p.name, p.v))
@@ -127,6 +129,7 @@ func NewEvaluator(spec config.Spec, solver physics.Solver, costRef float64, grid
 //	penalties[conductor_field] = max(0, B_coil/CoilFieldLimit - 1)
 //	penalties[coil_separation] = max(0, (MinCoilSep - min_gap)/MinCoilSep)
 //	penalties[not_a_mirror]    = max(0, (MirrorMin - R)/MirrorMin)
+//	penalties[clearance]       = max(0, (MinClearance - min_clearance)/MinClearance)   (0.1.2)
 //
 //	Feasible = 所有 penalties <= 0
 //	Design   = 实际被评估的 canonical(z 排序、裁剪后)向量

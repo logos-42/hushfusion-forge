@@ -37,6 +37,7 @@ var Stages = []Stage{
 			"README.en.md",
 			"PLAN.md",
 			"CONTRACT.md",
+			"CHANGELOG.md",
 			".gitignore",
 			"internal/config/",
 			"internal/owners/",

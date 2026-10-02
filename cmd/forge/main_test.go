@@ -26,7 +26,7 @@ func TestMetricAccessorCoversFrozenKeys(t *testing.T) {
 	spec := config.DefaultSpec()
 	m := physics.Metrics{
 		BMidT: 1, BThroatT: 2, ZThroatM: -1, MirrorRatio: 2, VolumeGood: 0.5,
-		Ripple: 0.1, BCoilMaxT: 3, MinCoilGapM: 0.4, CostProxy: 1e12,
+		Ripple: 0.1, BCoilMaxT: 3, MinCoilGapM: 0.4, MinClearanceM: 0.25, CostProxy: 1e12,
 		CoilProximityFloorHit: true, NCoils: spec.NCoils, MU0: config.MU0,
 	}
 	raw, err := json.Marshal(m)
@@ -268,6 +268,7 @@ func metricsFromGolden(m map[string]float64) physics.Metrics {
 		BMidT: m["B_mid_T"], BThroatT: m["B_throat_T"], ZThroatM: m["z_throat_m"],
 		MirrorRatio: m["mirror_ratio"], VolumeGood: m["volume_good"], Ripple: m["ripple"],
 		BCoilMaxT: m["B_coil_max_T"], MinCoilGapM: m["min_coil_gap_m"], CostProxy: m["cost_proxy"],
+		MinClearanceM:         m["min_clearance_m"],
 		CoilProximityFloorHit: m["coil_proximity_floor_hit"] != 0,
 		NCoils:                int(m["n_coils"]), MU0: m["mu0"],
 	}

@@ -28,7 +28,8 @@ func metricsFor(coils []Coil, spec config.Spec, g Grids, s Solver) Metrics {
 		NCoils: len(coils),
 		MU0:    config.MU0,
 		// 在下面会被覆盖; 在这里声明是为了即使提前退出也仍带着一个有限的间距。
-		MinCoilGapM: minCoilGap(coils),
+		MinCoilGapM:   minCoilGap(coils),
+		MinClearanceM: minClearance(coils, spec),
 	}
 	if s == nil || len(g.StackR) == 0 || len(g.StackR) != len(g.StackZ) {
 		return m

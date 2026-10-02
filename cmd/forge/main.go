@@ -48,8 +48,9 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/world"
 )
 
-// Version 是引擎版本 (v0.1 接口冻结)。
-const Version = "0.1.0"
+// Version 是引擎版本。它是 internal/config.ForgeVersion 的**别名**, 不是一个独立副本:
+// 判据版本必须只有一个家, 否则 runs/ 里记的版本与 CLI 报的版本会静默分叉。
+const Version = config.ForgeVersion
 
 // buildCommit 在构建时注入:
 //
@@ -324,7 +325,7 @@ func splitInts(s string) ([]int, error) {
 
 var metricKeys = []string{
 	"B_mid_T", "B_throat_T", "z_throat_m", "mirror_ratio", "volume_good",
-	"ripple", "B_coil_max_T", "min_coil_gap_m", "cost_proxy", "n_coils", "mu0",
+	"ripple", "B_coil_max_T", "min_coil_gap_m", "min_clearance_m", "cost_proxy", "n_coils", "mu0",
 }
 
 // metricBoolKeys 是非 float 的 metrics。
@@ -352,6 +353,8 @@ func metricValue(m physics.Metrics, key string) (float64, bool) {
 		return m.CostProxy, true
 	case "n_coils":
 		return float64(m.NCoils), true
+	case "min_clearance_m":
+		return m.MinClearanceM, true
 	case "mu0":
 		return m.MU0, true
 	case "coil_proximity_floor_hit":

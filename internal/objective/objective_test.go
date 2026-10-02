@@ -72,17 +72,18 @@ func designVector(spec config.Spec) []float64 {
 // conductor 远在限值之内、线圈相距很远。
 func cleanMirror() physics.Metrics {
 	return physics.Metrics{
-		BMidT:       1.0,
-		BThroatT:    3.5,
-		ZThroatM:    -1.0,
-		MirrorRatio: 3.5,
-		VolumeGood:  0.5,
-		Ripple:      0.0,
-		BCoilMaxT:   3.0,
-		MinCoilGapM: 0.5,
-		CostProxy:   1.0e12,
-		NCoils:      4,
-		MU0:         config.MU0,
+		BMidT:         1.0,
+		BThroatT:      3.5,
+		ZThroatM:      -1.0,
+		MirrorRatio:   3.5,
+		VolumeGood:    0.5,
+		Ripple:        0.0,
+		BCoilMaxT:     3.0,
+		MinCoilGapM:   0.5,
+		MinClearanceM: 0.25,
+		CostProxy:     1.0e12,
+		NCoils:        4,
+		MU0:           config.MU0,
 	}
 }
 
@@ -91,7 +92,7 @@ func cleanMirror() physics.Metrics {
 // 分叉, 而这里是廉价地抓到它的地方。
 var (
 	frozenTermKeys    = []string{"field", "mirror", "volume", "ripple", "cost"}
-	frozenPenaltyKeys = []string{"conductor_field", "coil_separation", "not_a_mirror"}
+	frozenPenaltyKeys = []string{"conductor_field", "coil_separation", "not_a_mirror", "clearance"}
 )
 
 func relDiff(got, want float64) float64 {
@@ -112,17 +113,18 @@ func TestTermsAndWeightedForMirrorShapedMetrics(t *testing.T) {
 	)
 	e := evalFixture(t, spec, cost)
 	m := physics.Metrics{
-		BMidT:       1.0,
-		BThroatT:    mirrorRatio,
-		ZThroatM:    -0.9975,
-		MirrorRatio: mirrorRatio,
-		VolumeGood:  0.7808857808857809,
-		Ripple:      0.0,
-		BCoilMaxT:   3.416271368796406,
-		MinCoilGapM: 0.5,
-		CostProxy:   cost,
-		NCoils:      4,
-		MU0:         config.MU0,
+		BMidT:         1.0,
+		BThroatT:      mirrorRatio,
+		ZThroatM:      -0.9975,
+		MirrorRatio:   mirrorRatio,
+		VolumeGood:    0.7808857808857809,
+		Ripple:        0.0,
+		BCoilMaxT:     3.416271368796406,
+		MinCoilGapM:   0.5,
+		MinClearanceM: 0.25,
+		CostProxy:     cost,
+		NCoils:        4,
+		MU0:           config.MU0,
 	}
 	x := designVector(spec)
 	res := e.evalFromMetrics(m, x)
@@ -274,13 +276,14 @@ func TestPenaltyBranches(t *testing.T) {
 
 	t.Run("empty_field_and_single_coil_stay_finite", func(t *testing.T) {
 		m := physics.Metrics{ // 完全没有 field, 一个线圈, 无成本
-			BMidT:       0.0,
-			MirrorRatio: 0.0,
-			BCoilMaxT:   0.0,
-			MinCoilGapM: math.Inf(1), // 线圈数 < 2 时 physics.MinCoilGap 返回 +Inf
-			CostProxy:   0.0,
-			NCoils:      1,
-			MU0:         config.MU0,
+			BMidT:         0.0,
+			MirrorRatio:   0.0,
+			BCoilMaxT:     0.0,
+			MinCoilGapM:   math.Inf(1), // 线圈数 < 2 时 physics.MinCoilGap 返回 +Inf
+			MinClearanceM: 0.25,
+			CostProxy:     0.0,
+			NCoils:        1,
+			MU0:           config.MU0,
 		}
 		res := e.evalFromMetrics(m, designVector(spec))
 
@@ -323,7 +326,7 @@ func TestScoreIsExactlyTheSumOfItsParts(t *testing.T) {
 	all3.CostProxy = 2.0e12
 	scenarios["all_three_violated"] = all3
 
-	zero := physics.Metrics{MinCoilGapM: math.Inf(1)}
+	zero := physics.Metrics{MinCoilGapM: math.Inf(1), MinClearanceM: 0.25}
 	scenarios["degenerate_zero"] = zero
 
 	absurd := cleanMirror()
@@ -471,7 +474,7 @@ func TestConcurrentAlgebraMatchesSerial(t *testing.T) {
 	all3.BCoilMaxT = 15.0
 	all3.MinCoilGapM = 0.01
 	scenarios = append(scenarios, all3)
-	scenarios = append(scenarios, physics.Metrics{MinCoilGapM: math.Inf(1)})
+	scenarios = append(scenarios, physics.Metrics{MinCoilGapM: math.Inf(1), MinClearanceM: 0.25})
 
 	designs := make([][]float64, len(scenarios))
 	serial := make([]EvalResult, len(scenarios))
@@ -578,6 +581,7 @@ func (g goldenBaseline) metrics() physics.Metrics {
 		Ripple:                g.Metrics["ripple"],
 		BCoilMaxT:             g.Metrics["B_coil_max_T"],
 		MinCoilGapM:           g.Metrics["min_coil_gap_m"],
+		MinClearanceM:         g.Metrics["min_clearance_m"],
 		CostProxy:             g.Metrics["cost_proxy"],
 		CoilProximityFloorHit: g.Metrics["coil_proximity_floor_hit"] != 0,
 		NCoils:                int(g.Metrics["n_coils"]),

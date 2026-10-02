@@ -25,6 +25,7 @@ Phase 0 的验收问题只有一个：
 | `testdata/golden_*.json` | 跨语言数值锚点（Python 参考实现产出） | parent（已完成，勿改数值） |
 | `python/aux/oracle.py` | **独立**数值 oracle（scipy 实现，不 import Go 的任何东西） | stage G |
 | `scripts/verify.sh` | 总验收脚本 | parent |
+| `docs/version-0.1.2.md` | **0.1.2 的判据契约**：可造性口径 · 世界语义重做方案 · 版本语义与发版模型 · 对旧证据的影响 | parent（2026-10-01） |
 
 ---
 
@@ -32,7 +33,7 @@ Phase 0 的验收问题只有一个：
 
 | Stage | 包/路径 | 所有者 |
 |---|---|---|
-| root | `go.mod` `LICENSE` `README.md` `README.en.md` `PLAN.md` `CONTRACT.md` `.gitignore` `internal/config/` `internal/owners/` `testdata/` `scripts/` `knowledge/` | parent |
+| root | `go.mod` `LICENSE` `README.md` `README.en.md` `PLAN.md` `CONTRACT.md` `CHANGELOG.md`（2026-10-01 新增） `.gitignore` `internal/config/` `internal/owners/` `testdata/` `scripts/` `knowledge/` | parent |
 | wiki | `docs/` `manifests/` `AGENTS.md` `CLAUDE.md` `.cursorrules` `.windsurfrules` `.claude/` `.github/` | parent（2026-09-26 接入 wiki-first 知识系统时新增） |
 | A | `internal/physics/` | agent-A |
 | B | `internal/objective/` `internal/baseline/` | agent-B |
@@ -107,6 +108,20 @@ Python 参考实现（已逐条验证过解析锚点）产出的 golden 数值�
 
 `testdata/golden_spec.json`：`config.Spec.AsMap()` 的键集合必须与之一致（schema parity gate）。
 
+**0.1.2 新增（可造性，见 `docs/version-0.1.2.md` §1）**：
+
+| 量 | 值 |
+|---|---|
+| `spec.min_clearance` | `0.05` [m]（工程判断，非物理；硬约束：必须让人工基线仍然可行） |
+| `metrics.min_clearance_m`（基线） | `0.22499999999999998`（喉部线圈 (0.30, ±1.00) 到中心元胞的距离 − t_pack/2） |
+| `penalties.clearance`（基线） | `0.0` |
+| `score`（基线） | **不变**：`-0.2905708161`（基线净空充足 ⟹ 新罚项为 0） |
+
+**一处既有的微小跨语言漂移（0.1.2 复核时发现，不修）**：人工基线的 `field` 项，Go 侧给
+`-3.442446546963692e-11`，Python 参考实现给 `9.64327466553287e-17` ⟹ `score` 相差 **3.442e-11**
+（在 1e-06 容差内；两者都等价于「B_mid 精确等于 B_ref」）。用 `git worktree add --detach HEAD`
+在 0.1.0 原树上复核过：**该差在改动之前就存在**，不是 0.1.2 引入的。记在这里，下一个人不必重新怀疑一遍。
+
 **轴解析锚点**（不依赖 Python，必须自证）：
 - 单圈轴上：`B_z(0,z) = mu0*I*a^2/(2*(a^2+z^2)^1.5)`，`B_r(0,z) = 0`（精确）
 - Helmholtz 对（半径 a、间距 a、电流 I）：中心 `B = (4/5)^1.5 * mu0*I/a`；且 `|z| <= 0.1a` 内不均匀度 `< 1.2e-4`
@@ -117,7 +132,13 @@ Python 参考实现（已逐条验证过解析锚点）产出的 golden 数值�
 
 ## 6. 验收门（parent 亲自跑，不采信自述）
 
-**权威是 `scripts/verify.sh`，不是本表**：本表是它的镜像，改门必须同时改这里。`$TAG` 是运行标签
+**权威是 `scripts/verify.sh`，不是本表**：本表是它的镜像，改门必须同时改这里。
+
+**0.1.2 起新增一条前置条件：判据版本。** 带 tag 的门里 G12/G15/G16 依赖「同一个设计在同一个判据下的分数」，
+所以它们额外要求 `runs/<tag>/results.json` 的 `meta.forge_version` == `internal/config.ForgeVersion`。
+判据变了（PATCH）而 run 是旧的 ⟹ 这三道门 **SKIP**，并在抬头大声说明：拿新尺子量旧证据是**用错了尺子**，
+不是旧 run 坏了。`runs/phase0` 是 **0.1.0 判据下的证据**，永不重跑覆盖；`scripts/verify.sh` 的默认 tag 从
+`phase0` 改成 `phase1`（默认 tag 应当指向当前判据的证据）。`$TAG` 是运行标签
 （如 `phase0`）。`_opt` 类门在缺少前置产物时**跳过**（`runs/$TAG` 不存在、上游目录不在），
 汇总行会分开报「通过 / 失败 / 跳过」——**跳过不等于通过**。
 
@@ -139,6 +160,7 @@ Python 参考实现（已逐条验证过解析锚点）产出的 golden 数值�
 | G14 规则对账（scipy） | `python3 python/aux/rules_check.py --rules knowledge/design_rules.md --registry runs/$TAG/registry.jsonl` | 规则表与实际记录对账 |
 | G15 出图 + 独立复评最优/基线 ($TAG) | `python3 python/aux/analyze.py runs/$TAG` | 独立复评最优与基线 |
 | G16 逐位复现 ($TAG) | `python3 scripts/repro_check.py $TAG` | `registry.jsonl` 剔 `tag`/`timestamp` 后 sha256 完全相同 |
+| **G23 可造性门**（0.1.2） | `python3 scripts/check_buildability.py` | 三条一起判：(a) 人工基线可行且 `clearance` 罚项**精确**为 0（抓「把真装置也判死」）；(b) 0.1.0 的最优退化解在 0.1.2 下**不可行**且罚项 > 0（抓「约束没咬住它要咬的东西」——这是本版存在的全部理由）；(c) 净空的闭式解 == 圆环面密采样的独立路径（< 1e-9），且侵入时精确 = −t_pack/2（抓「几何算错」）。它是**判据门**，不依赖某个 run，故不受版本前置条件约束 |
 | G17 内部设计锚点门 | `python3 scripts/emit_pp_anchors.py --check && go test ./internal/design/` | 上游 ProjectionPhysics（`logos-42/Hibs-Physics`）的闭式解逐条复现；锚点来自工作区重跑产物（上游 `artifacts/` 不入 git），出处见 `testdata/projectionphysics_anchors.json` 的 `provenance` |
 | G18 世界协议门（三条一起判） | `forge world serve --replay testdata/world_trace_golden.jsonl` + `python3 python/aux/world_client.py --replay testdata/world_trace_golden.jsonl` + 故意改坏的 hello 必须让客户端非零退出 | (a) Go 把 trace 的每条 req 喂给新世界，响应逐字节相同；(b) Python 客户端同样逐字节相同（**跨语言证据**：证明客户端看到的世界与 Go 写下的是同一个）；(c) 反向断言：改坏的 hello 必须让客户端非零退出且理由是握手。证据 = `testdata/world_trace_golden.jsonl`（由 `--record` 生成；trace 的 `runs/` 目录不入仓，契约 §4） |
 
@@ -179,11 +201,24 @@ stage: <A..G>
 | `internal/objective` 让 NaN 传播（不夹成有限值） | **保留**：物理层吐 NaN 时，分数就该是 NaN 而不是一个假的有限值 | B 段单测；`feasible` 判定与 Python `all(v<=0)` 对齐 |
 | `internal/rlenv/api.go` 的私有默认值改为**引用** `config.DefaultMaxSteps / DefaultDeltaScale` | **批准**：房规说「影响分数的数字只有一个家」，两份字面量 `20 / 0.15` 正是它禁止的东西。冻结面是**签名 / 类型 / JSON tag 与 golden 数值**，私有常量的初始值不在其中（签名与类型逐字节未动） | `go test ./internal/rlenv/ ./internal/world/` 全绿；`world_test.TestDefaultsComeFromConfig` 改为盯**接线**（零值是否走到 config）而不是「两个数字碰巧相等」 |
 | `owners.IsTracked` 跳过 `.kilo/` `.kilocode/` | **批准**：这道门叫 `TestRosterCoversEveryTrackedFile`，而它按文件系统遍历时会看见**别的 agent 工具留在仓里的 worktree 检出**（未跟踪、不受本仓名册管辖）——判它会长期假红，**假红比没有门更伤**。同次加了两侧断言测试 | `go test ./internal/owners/`（新增 `TestIsTrackedSkipsForeignCheckoutsButNotSources`：跳过项必须被跳过，**且真文件必须仍然可见**）；G4/G5 从红转绿，名册自报 `120 files across 10 stages` |
-| 契约 §6 关于黄金 trace 覆盖范围的措辞 | **写准，不假装覆盖**：trace 只走 5 步而 `max_steps=20`，`truncated` 恒为 `false`。`truncated=true` 与「done 之后再 step」由 `internal/world` 单测盯住，**不**由这份跨语言 trace 盯住 | `docs/world-protocol.md` §6 已写明覆盖/不覆盖两侧；trace 尺度锚点（8 行 / 响应 3635 字节）写进契约便于漂移可见 |
+| 契约 §6 关于黄金 trace 覆盖范围的措辞 | **写准，不假装覆盖**：trace 只走 5 步而 `max_steps=20`，`truncated` 恒为 `false`。`truncated=true` 与「done 之后再 step」由 `internal/world` 单测盯住，**不**由这份跨语言 trace 盯住 | `docs/world-protocol.md` §6 已写明覆盖/不覆盖两侧；trace 尺度锚点（8 行 / 响应 5653 字节）写进契约便于漂移可见 |
 | 世界协议新增导出符号（`internal/world` 一整套：`ProtocolVersion`、冻结错误码、`Server/Replay/Recorder/TraceLine/SpecSHA256`…） | **批准保留**：它们是协议层的冻结面本身（跨语言对账需要 `SpecSHA256` 这类单一实现点）。已核实 `internal/rlenv/api.go` 的签名/类型/JSON tag 与 `testdata/golden_*.json` 数值未被改动 | G18 三条门；`git show --stat` 可验范围 |
 | `internal/mu/`（新包：flatten / Q_A / 交换子 / 区域族分类 / μ 状态方程 / 增益）归 F 段 | **批准**：它是 `--world mu` 的语义底座，与 `internal/world/` 同一段工作；名册非重叠原则不受影响（`internal/mu/` 此前无人认领）。同一次把 `internal/mu/` 写进 `owners.go` 的 F 段路径 | `go test ./internal/owners/`（新路径入册后 G4 自报覆盖文件数）；`emit_mu_anchors.py --check` 锚点来自上游 `artifacts/{mudynamics,gravitycontrol}/report.json` |
-| Python 回放的判据从**字符级**改成**字节级** | **批准（真缺陷修复）**：Go 侧一直按字节比（`bytes.Equal`），Python 侧却把世界 stdout 解码成 `str` 再比 —— 原 UTF-8 与 `\uXXXX` 转义两种写法**字符相同、字节不同**，那是契约 §2 唯一要抓的东西。修前 Python 数出 10038「bytes」（实为字符），与 Go 的 10048 不一致，两个数本身就报警了 | 修后三份 trace 两侧字节数一致（3635/7197/10048）；冒充判据：把 mu trace 里的 `−` 换成 `\u2212`（字符相同、字节不同）→ **Go 与 Python 都 FAIL**（修前 Python 会假绿） |
+| Python 回放的判据从**字符级**改成**字节级** | **批准（真缺陷修复）**：Go 侧一直按字节比（`bytes.Equal`），Python 侧却把世界 stdout 解码成 `str` 再比 —— 原 UTF-8 与 `\uXXXX` 转义两种写法**字符相同、字节不同**，那是契约 §2 唯一要抓的东西。修前 Python 数出 10048「bytes」（实为字符），与 Go 的 10048 不一致，两个数本身就报警了 | 修后三份 trace 两侧字节数一致（5653/7199/10048）；冒充判据：把 mu trace 里的 `−` 换成 `\u2212`（字符相同、字节不同）→ **Go 与 Python 都 FAIL**（修前 Python 会假绿） |
 | `baseline.TextbookMirror` 解出的电流越界即 error（不返回被裁剪的基线） | **保留**：否则"人机对比"比的不是同一个设计 | G6 |
 | `golden_*.json` 里 bool/int 被写成 JSON 浮点（`"n_coils": 4.0`） | **暂不迁移**：三个阶段各用 `map[string]float64` 兜住，迁移的收益不抵最后一刻动真值的风险。列入 Phase 2 的 schema 迁移 | 现存 goldens 由 `oracle.py --check-golden` 全绿复核 |
 | `rlenv` 观测槽 6（`cost_proxy`/1.0 ≈ 1.8e12）量纲极差 | **记入 Phase 1 前置**：改为按基线 cost 归一，需同步改冻结的 `ObsMetricRefs` | 见 PLAN.md Phase 1 清单 |
 | 报告 §4 设计谱系偏薄（`registry.BranchImprovement()` 未进报告） | **记入 Phase 1**：报告 schema 冻结，加字段需同步 schema_check 与报告测试 | `runs/phase0/report.md` §4 |
+
+---
+
+## 10. 主线裁决（2026-10-01，0.1.2 收口轮——可造性进判据 + 版本模型）
+
+| 议题 | 裁决 | 证据 |
+|---|---|---|
+| `internal/physics.Metrics` 新增 `min_clearance_m`（**冻结类型变更**） | **批准**：它是「可造性」唯一的原始量，而房规要求每个影响分数的量都原样落盘（否则审阅者只看到一个罚项数字，无法独立复算）。同步改了 Python 参考实现、`schema_check.py` 的冻结键集、`main.go` 的 `metricKeys`、registry 单测，以及 `testdata/golden_baseline.json`（**文本级最小插入**，保持该文件既有的「bool/int 写成浮点」格式——整文件重出会改类型并让 Go 侧读不进来，实测踩过一次） | 13 个 metrics 键；`forge verify` 10/10；golden 里 `coil_proximity_floor_hit` 仍是 `0.0` |
+| `internal/objective` 新增 `clearance` 罚项（`penaltyOrder` **追加在末尾**） | **批准**：追加而非插入，使既有三条的累加顺序逐位不变（`score == Σweighted − w·Σpenalties` 的可审计性是硬要求）；形状与既有三条同族 | G23b：0.1.0 最优 D9857 的分数 1.3814186 → **−13.6099621**（罚项 1.5，净空 −0.025 m） |
+| `config.ForgeVersion` 作为版本**唯一真源**（`cmd/forge.Version` 只是别名） | **批准**：run 的 meta 必须记住产出它的判据版本，而写入方在 `internal/experiment`——版本若住在 `cmd/`，`experiment` 就要反向依赖 CLI。`runs/<tag>` 之间的可比性由这一个常量定义 | `forge version` = 0.1.2；`phase1/results.json` 的 `meta.forge_version = "0.1.2"` |
+| `objective_test` 手工构造的 metrics fixture 补 `MinClearanceM` | **批准（必须）**：golden 加载器若不读新键，`min_clearance_m` 就是 0 ⟹ 罚项凭空变成 1 ⟹ 分数差 −10——那是**测试的错**，不是实现的错 | `TestGoldenScoreReproducedFromFrozenMetrics` 复现冻结分数到 1e-12 |
+| `python/tests/test_analyze.py` 的 fixture 获胜设计换新 | **批准**：旧 fixture 是 0.1.0 的获胜设计，其中一圈 `r=0.10, z=0.04` 的导体落在约束区域**内部**（净空 −0.025）⟹ 在 0.1.2 下被罚 −15，不再是「能赢过基线的那个」。换成本版真实获胜设计 D7996 并写明原因 | `pytest python/tests -q` 103 passed |
+| 0.1.2 的消融轴 = **版本边界**（不额外加 `--clearance=false` 开关） | **批准**：同一元组（budget 1000 × seeds 0,1,2 × 4 方法）只有判据不同，两侧都被归档、都可逐位复现——版本号本身就是那个开关。加一个开关等于让冻结的 CLI 面变宽，收益不抵 | `runs/phase0`（0.1.0）：Δ = **+1.672**；`runs/phase1`（0.1.2）：Δ = **+1.2395**；两版都逐位复现 |

@@ -42,12 +42,15 @@ TERM_FIELD, TERM_MIRROR, TERM_VOLUME, TERM_RIPPLE, TERM_COST = (
     "field", "mirror", "volume", "ripple", "cost")
 PEN_CONDUCTOR, PEN_SEPARATION, PEN_NOT_MIRROR = (
     "conductor_field", "coil_separation", "not_a_mirror")
+# 0.1.2 新增的可造性罚项 (docs/version-0.1.2.md §1)。
+PEN_CLEARANCE = "clearance"
 TERM_KEYS = (TERM_FIELD, TERM_MIRROR, TERM_VOLUME, TERM_RIPPLE, TERM_COST)
-PENALTY_KEYS = (PEN_CONDUCTOR, PEN_SEPARATION, PEN_NOT_MIRROR)
+PENALTY_KEYS = (PEN_CONDUCTOR, PEN_SEPARATION, PEN_NOT_MIRROR, PEN_CLEARANCE)
 
 # 必须与 golden_baseline.json 匹配的指标键 (physics.Metrics 的 JSON tag)。
 METRIC_KEYS = ("B_mid_T", "B_throat_T", "z_throat_m", "mirror_ratio", "volume_good",
-               "ripple", "B_coil_max_T", "min_coil_gap_m", "cost_proxy", "mu0")
+               "ripple", "B_coil_max_T", "min_coil_gap_m", "min_clearance_m",
+               "cost_proxy", "mu0")
 
 # ripple 结构显著性由指标层传入 (internal/physics/api.go)。
 RIPPLE_PROMINENCE = 0.05
@@ -86,6 +89,7 @@ class Spec:
         self.n_vol_z = int(s["n_vol_z"])
         self.confine_factor = float(s["confine_factor"])
         self.min_coil_sep = float(s["min_coil_sep"])
+        self.min_clearance_allowed = float(s["min_clearance"])
         self.weights = {k: float(v) for k, v in s["weights"].items()}
         self.self_field = float(s["self_field_T"]) if "self_field_T" in s else self.self_field_anchor()
 
@@ -300,6 +304,55 @@ def axis_ripple(b_axis_cell, b_mid, prominence=RIPPLE_PROMINENCE):
     return total / b_mid
 
 
+def _coil_rz(coil):
+    """线圈可以是 (a, z, I) 元组或 {"radius_m","z_m","current_A"} 字典 (两种形状在
+    本模块里都出现: 引擎用元组, textbook_mirror/golden 用字典)。"""
+    if isinstance(coil, dict):
+        return float(coil["radius_m"]), float(coil["z_m"])
+    return float(coil[0]), float(coil[1])
+
+
+def min_clearance(coils, spec: "Spec"):
+    """导体面到约束区域的最小净空 [m] —— 闭式解 (docs/version-0.1.2.md §1)。
+
+    约束区域 = 中心元胞 {0 <= r <= RPlasma, |z| <= ZCell} (与 volume_good 同一口径)。
+    导体面   = 丝环 (a, z0) 起、minor 半径 t_pack/2 的圆环面; 它在 (r, z) 半平面里的
+               剖面正好是半径 t_pack/2 的**圆盘**, 所以净空 = 圆盘中心到矩形的距离 − 半径。
+    **可以有符号**: 负值 = 圆盘已侵入区域 (即导体侵入等离子体所在元胞)。
+    """
+    h = spec.t_pack / 2.0
+    best = math.inf
+    for coil in coils:
+        a, z0 = _coil_rz(coil)
+        dr = max(0.0, a - spec.r_plasma)
+        dz = max(0.0, abs(z0) - spec.z_cell)
+        best = min(best, math.hypot(dr, dz) - h)
+    return best
+
+
+def min_clearance_surface_bruteforce(coils, spec: "Spec", n_u=200001):
+    """独立路径: 直接在圆环面上密集采样, 取到约束区域的最小**无符号**距离。
+
+    这条路径**不使用**「中心距 − 半径」那个闭式捷径, 所以它是对几何的独立复核。
+    一处让它仍然精确的观察: 环面上的 (r, z) = (a + h·cos u, z0 + h·sin u) 与环向角 theta
+    **无关** (绕轴对称 + 环是圆), 所以沿 u 采样就已经覆盖整个面。
+
+    与闭式解的关系 (可证明, 由 G23c 钉住): 当闭式净空 >= 0 时圆盘与区域不重叠, 最近点
+    必在圆盘边界上, 两者必须一致; 闭式净空 < 0 时表示侵入, 这时无符号距离退化为 0。
+    """
+    h = spec.t_pack / 2.0
+    u = np.linspace(0.0, 2.0 * math.pi, n_u, endpoint=False)
+    best = math.inf
+    for coil in coils:
+        a, z0 = _coil_rz(coil)
+        r = a + h * np.cos(u)
+        z = z0 + h * np.sin(u)
+        d = np.sqrt(np.maximum(0.0, r - spec.r_plasma) ** 2
+                    + np.maximum(0.0, np.abs(z) - spec.z_cell) ** 2)
+        best = min(best, float(d.min()))
+    return best
+
+
 def min_coil_gap(coils):
     if len(coils) < 2:
         return math.inf
@@ -369,6 +422,7 @@ def metrics_for(coils, spec: Spec, grids: Grids, proximity_floor=0.0):
         "ripple": float(ripple),
         "B_coil_max_T": float(b_coil_max),
         "min_coil_gap_m": float(min_coil_gap(coils)),
+        "min_clearance_m": float(min_clearance(coils, spec)),
         "cost_proxy": cost,
         "coil_proximity_floor_hit": bool(proximity_floor_hit),
         "n_coils": int(len(coils)),
@@ -403,6 +457,8 @@ def evaluate(x, spec: Spec, cost_ref: float, grids: Grids, proximity_floor=0.0):
         PEN_CONDUCTOR: max(0.0, m["B_coil_max_T"] / spec.coil_field_limit - 1.0),
         PEN_SEPARATION: max(0.0, (spec.min_coil_sep - m["min_coil_gap_m"]) / spec.min_coil_sep),
         PEN_NOT_MIRROR: max(0.0, (MIRROR_MIN - m["mirror_ratio"]) / MIRROR_MIN),
+        PEN_CLEARANCE: max(0.0, (spec.min_clearance_allowed - m["min_clearance_m"])
+                           / spec.min_clearance_allowed),
     }
     score = (sum(weighted.values()) - w["penalty"] * sum(penalties.values()))
     return {

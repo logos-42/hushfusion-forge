@@ -27,7 +27,7 @@ import (
 // 保持同步; 测试刻意把 key 写成字面量。
 var (
 	termOrder    = [...]string{TermField, TermMirror, TermVolume, TermRipple, TermCost}
-	penaltyOrder = [...]string{PenConductorField, PenCoilSeparation, PenNotAMirror}
+	penaltyOrder = [...]string{PenConductorField, PenCoilSeparation, PenNotAMirror, PenClearance}
 )
 
 // evalFromMetrics 从某个设计已经算好的 field metrics,
@@ -62,6 +62,7 @@ func (e *Evaluator) evalFromMetrics(m physics.Metrics, design []float64) EvalRes
 		PenConductorField: math.Max(0, m.BCoilMaxT/s.CoilFieldLimit-1),
 		PenCoilSeparation: math.Max(0, (s.MinCoilSep-m.MinCoilGapM)/s.MinCoilSep),
 		PenNotAMirror:     math.Max(0, (MirrorMin-m.MirrorRatio)/MirrorMin),
+		PenClearance:      math.Max(0, (s.MinClearance-m.MinClearanceM)/s.MinClearance),
 	}
 
 	score := 0.0

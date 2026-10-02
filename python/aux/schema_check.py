@@ -48,7 +48,8 @@ METRIC_FIELDS = ["B_mid_T", "B_throat_T", "z_throat_m", "mirror_ratio", "volume_
                  "coil_proximity_floor_hit", "n_coils", "mu0"]
 TERM_FIELDS = {"terms": ["field", "mirror", "volume", "ripple", "cost"],
                "weighted": ["field", "mirror", "volume", "ripple", "cost"],
-               "penalties": ["conductor_field", "coil_separation", "not_a_mirror"]}
+               "penalties": ["conductor_field", "coil_separation", "not_a_mirror",
+                             "clearance"]}
 PARAM_FIELDS = ["radius_m", "z_m", "current_A"]
 
 DESIGN_ID_RE = re.compile(r"^D(\d{4,})$")

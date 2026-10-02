@@ -3,7 +3,7 @@
 [中文](README.md) | **English**
 
 [![Wiki Lint](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml/badge.svg)](https://github.com/logos-42/hushfusion-forge/actions/workflows/wiki-lint.yml)
-[![Phase 0](https://img.shields.io/badge/Phase%200-22%20gates-brightgreen)](scripts/verify.sh)
+[![Phase 0](https://img.shields.io/badge/0.1.2-23%20gates-brightgreen)](scripts/verify.sh)
 
 > Not a machine. An engineering system that keeps producing, validating and
 > killing the designs of the *next* machine. Forge is its first version: a
@@ -32,6 +32,15 @@ Phase 0 has exactly one acceptance question:
 **Phase 0, measured (12 001 records; 4 methods × 3 seeds × 1000 evaluations; 5.5 s of compute)**:
 best machine design `score = 1.381419` (`evolution_warm`, seed 0) against a human baseline of
 `−0.290571` — Δ = **+1.672**; all four methods beat the human on 3/3 seeds.
+
+**0.1.2 turns the third caveat into a criterion.** The objective gains a fourth penalty term,
+`clearance` (conductor surface to the central cell, required ≥ 0.05 m; definition in
+[docs/version-0.1.2.md](docs/version-0.1.2.md) §1). Re-running the identical tuple gives
+**Δ = +1.2395** (was +1.672) with **7221/12001 feasible**, and the 0.1.0 champion drops from
+`1.3814186` to **−13.6099621** under the new criterion (one of its coils sits entirely inside the
+constraint region). **That 0.4325 is this repo's first measurement of "what a physical constraint is
+worth"** — and it also says plainly that the number is held up by the `MinClearance = 0.05`
+*engineering judgement*: change the value and it is a different number. **It is not a physical constant.**
 
 Read it with three caveats, always (full text in `runs/phase0/report.md` §6 and [PLAN.md](PLAN.md)):
 the human baseline is weak *inside this box* (random search catches it after ~8 evaluations); the
@@ -128,6 +137,15 @@ go run ./cmd/forge report --results runs/phase0/results.json --out runs/phase0/r
 
 ## Version and License
 
-`v0.1.0` — Phase 0: the design → score → record → learn loop runs, 18/18 gates green (`bash scripts/verify.sh phase0`).
+`v0.1.2` — **criterion change (PATCH)**: buildability (conductor-to-constraint-region clearance)
+is now part of the objective. Re-running the identical tuple: the machine-vs-human margin goes
+**+1.672 → +1.2395**, feasible records **11072/12001 → 7221/12001**, and a new gate **G23** pins the
+claim that 0.1.0's degenerate winner must be bitten. Criterion semantics and the release checklist:
+[docs/version-0.1.2.md](docs/version-0.1.2.md); what changed and **what it means for older evidence**:
+[CHANGELOG.md](CHANGELOG.md).
+
+`v0.1.0` — Phase 0: the design → score → record → learn loop runs (`bash scripts/verify.sh phase0`).
+**`runs/phase0/` is evidence under *that* criterion and is never re-run in place** — the default tag
+moved from `phase0` to `phase1`.
 
 MIT — Copyright (c) 2026 LIU YUANJIE（刘元杰）

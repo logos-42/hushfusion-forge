@@ -34,12 +34,17 @@ def make_report(spec, baseline, budget=40, tamper_aggregate=False, tamper_best=F
     grids = oracle.Grids(spec)
     cost_ref = baseline["cost_proxy"]
     base_eval = oracle.evaluate(baseline["design"], spec, cost_ref, grids)
-    # 一次真实 stage-E/F benchmark 运行 (runs/scratch/bench) 的获胜设计，抄成
-    # 纯数字，这样这个 fixture 不依赖任何文件 —— 它是能赢过基线的那个
-    best_design = [0.34074440599674666, 1.0, 0.1, 0.3157946290596812,
-                   -0.20688985165708562, 0.012635023002828594,
-                   0.04049787940226826, 0.07602128113826669,
-                   624565.672280665, 10000.0, 2163774.4578687255, 529264.0963625956]
+    # 一次真实 benchmark 运行的获胜设计（D7996, evolution, seed 1, budget 1000），抄成
+    # 纯数字，这样这个 fixture 不依赖任何文件 —— 它是能赢过基线的那个。
+    #
+    # 0.1.1 换掉了这个 fixture 的旧值：那个旧设计里有一圈 r=0.10, z=0.04 的导体落在
+    # 约束区域（中心元胞 r<=0.15, |z|<=0.8）内部，净空 = -t_pack/2 = -0.025，
+    # 于是 0.1.1 的可造性罚项给它 -15 —— 它在新判据下不再是"能赢过基线的那个"。
+    # 这不是 fixture 变脆，这正是 0.1.1 要测量的东西（见 docs/version-0.1.1.md §1.5）。
+    best_design = [0.4146332525448388, 0.25566536844237375, 0.22687510592037435,
+                   0.3714968976556156, -0.3348281949794771, -0.08028778280953543,
+                   -0.03564347615135271, 1.0486842323808179,
+                   10000.0, 1019032.2446799617, 648338.6238830279, 81184.22957828964]
     best_eval = oracle.evaluate(best_design, spec, cost_ref, grids)
     report = {
         "meta": {"tag": "demo", "timestamp": "1970-01-01T00:00:00Z", "budget": budget,

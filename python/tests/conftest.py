@@ -70,10 +70,11 @@ def good_record(eid=1, **over):
                    "current_A": [1.6e6, 4.6e5, 4.6e5, 1.6e6]},
         "terms": {"field": 0.0, "mirror": 0.25, "volume": 0.78, "ripple": 0.0, "cost": 1.0},
         "weighted": {"field": 0.0, "mirror": 0.125, "volume": 0.585, "ripple": -0.0, "cost": -1.0},
-        "penalties": {"conductor_field": 0.0, "coil_separation": 0.0, "not_a_mirror": 0.0},
+        "penalties": {"conductor_field": 0.0, "coil_separation": 0.0, "not_a_mirror": 0.0,
+                      "clearance": 0.0},
         "metrics": {"B_mid_T": 1.0, "B_throat_T": 3.53, "z_throat_m": -0.9975,
                     "mirror_ratio": 3.53, "volume_good": 0.78, "ripple": 0.0,
-                    "B_coil_max_T": 3.41, "min_coil_gap_m": 0.5,
+                    "B_coil_max_T": 3.41, "min_coil_gap_m": 0.5, "min_clearance_m": 0.225,
                     "cost_proxy": 1.79e12, "coil_proximity_floor_hit": False,
                     "n_coils": 4, "mu0": 1.2566370614359173e-06},
     }

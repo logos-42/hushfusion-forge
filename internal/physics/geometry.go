@@ -168,3 +168,19 @@ func randomDesign(rng *rand.Rand, spec config.Spec) []float64 {
 	}
 	return coilsToVector(coils)
 }
+
+// minClearance 见 api.go 的 MinClearance (0.1.2): 导体面到中心元胞的最小净空。
+//
+// 闭式解的依据: 约束区域 {0 <= r <= RPlasma, |z| <= ZCell} 是柱坐标下的**乘积区域**,
+// 且绕轴对称, 所以丝环上每一点到它的距离都相同, 可以直接分离成径向超出与轴向超出。
+func minClearance(coils []Coil, spec config.Spec) float64 {
+	best := math.Inf(1)
+	for _, c := range coils {
+		dr := math.Max(0, c.Radius-spec.RPlasma)
+		dz := math.Max(0, math.Abs(c.Z)-spec.ZCell)
+		if cl := math.Hypot(dr, dz) - spec.TPack/2; cl < best {
+			best = cl
+		}
+	}
+	return best
+}

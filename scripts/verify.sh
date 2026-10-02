@@ -11,7 +11,16 @@ export PATH="$HOME/.local/bin:$PATH"
 export GOTOOLCHAIN=local
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO" || exit 2
-TAG="${1:-phase0}"
+TAG="${1:-phase1}"
+
+# 判据版本（docs/version-0.1.2.md §3）。版本只有一个家: internal/config.ForgeVersion,
+# 这里只是把它读出来显示/比较, 绝不复制一份字面量。
+CUR_VERSION="$(sed -n 's/^const ForgeVersion = "\([^"]*\)".*/\1/p' internal/config/config.go | head -1)"
+# 这个 tag 的 run 是用哪一版判据产出的（0.1.0 的 run 没有这个字段, 如实显示）。
+RUN_VERSION="$(python3 scripts/run_version.py "$TAG" 2>/dev/null || echo unknown)"
+# 依赖判据的门（schema / 独立复评 / 逐位复现）只在「同一判据」下才有意义:
+# 判据变了, 同一个设计的分数就该不同, 那时红不是缺陷而是**用错了尺子**。
+SAME_JUDGE='[ "$RUN_VERSION" = "$CUR_VERSION" ]'
 
 pass=0
 fail=0
@@ -45,7 +54,12 @@ _opt() {
   fi
 }
 
-echo "=== Forge 门禁 (tag=$TAG) ==="
+echo "=== Forge 门禁 (tag=$TAG, 判据版本 run=$RUN_VERSION / 当前=$CUR_VERSION) ==="
+if [ "$RUN_VERSION" != "$CUR_VERSION" ]; then
+  echo "注意: runs/$TAG 由判据 $RUN_VERSION 产出, 当前判据是 $CUR_VERSION。"
+  echo "      依赖判据的门（G12/G15/G16）会 SKIP —— **SKIP 不是通过**。"
+  echo "      要在当前判据下过这些门, 用 scripts/verify.sh <该判据产出的 tag>。"
+fi
 
 # G1-G2: 能编译，且静态分析器没有意见。
 _run "G1  构建" go build ./...
@@ -91,7 +105,7 @@ _opt "G11 注册表完整性 ($TAG)" "[ -f runs/$TAG/registry.jsonl ]" \
   go run ./cmd/forge registry --check --registry "runs/$TAG/registry.jsonl"
 
 # G12: schema 一致性 —— Go 写出的记录必须符合 Python 辅助层读取的那套冻结 schema。
-_opt "G12 go/python schema 一致 ($TAG)" "[ -f runs/$TAG/registry.jsonl ] && [ -f python/aux/schema_check.py ]" \
+_opt "G12 go/python schema 一致 ($TAG)" "[ -f runs/$TAG/registry.jsonl ] && [ -f python/aux/schema_check.py ] && $SAME_JUDGE" \
   python3 python/aux/schema_check.py "runs/$TAG/registry.jsonl"
 
 # G13: Python 辅助层自己的测试。（辅助层的唯一职责是独立复核 Go，所以它自己也得有门。）
@@ -106,13 +120,13 @@ _opt "G14 规则对账（scipy）" "[ -f knowledge/design_rules.md ] && [ -f run
 #      numpy/scipy 从设计向量重新算一遍（并对齐 Go 的 5 mm 钳位半径）。两者不一致
 #      就意味着"机器打败人类"这句话所依赖的定义已经不唯一了。
 #      输出同时打印落在钳位半径内的采样点数——那是"最优点在靠奇异性得分"的证据。
-_opt "G15 出图 + 独立复评最优/基线 ($TAG)" "[ -f runs/$TAG/results.json ]" \
+_opt "G15 出图 + 独立复评最优/基线 ($TAG)" "[ -f runs/$TAG/results.json ] && $SAME_JUDGE" \
   python3 python/aux/analyze.py "runs/$TAG"
 
 # G16: 复现门 —— 用 runs/<tag>/results.json 里记录的参数（不硬编码）重跑一次，逐位比对。
 #      只排除 tag 与 timestamp；任何数字、id、谱系、term 变动都算红。没有这道门，
 #      "机器赢了人工基线"就只是一次性观测，不是可复核的证据。
-_opt "G16 逐位复现 ($TAG)" "[ -f runs/$TAG/results.json ] && [ -f scripts/repro_check.py ]" \
+_opt "G16 逐位复现 ($TAG)" "[ -f runs/$TAG/results.json ] && [ -f scripts/repro_check.py ] && $SAME_JUDGE" \
   python3 scripts/repro_check.py "$TAG"
 
 # G17: 内部设计判决层 —— 上游锚点必须能由**上游真实 artifact 文件**重新推导出来，
@@ -285,6 +299,19 @@ if python3 python/aux/world_client.py --replay \"\$tmp/broken.jsonl\" >/dev/null
   echo '        → 客户端接受了改坏的 hello: 这就是握手没在看的证据'; exit 1
 fi
 echo '        → 已非零退出 ✓'"
+# G23: 可造性门（docs/version-0.1.2.md §5）—— 三条一起判, 缺一条不算过。
+#   抓的失败模式:
+#     (a) 新约束把**真装置也判死** —— 那时「机器打败人类」比的是谁的基线更不可造;
+#     (b) 约束**没咬住它要咬的东西** —— 0.1.0 的最优退化解必须在 0.1.2 下不可行,
+#         且 clearance 罚项 > 0。这一条是 0.1.2 存在的全部理由; 没有它, 「退化解被踢
+#         出去了」就只是一次性观测, 不是可回归的事实;
+#     (c) 几何算错 —— 净空是本版唯一一处新数学, 必须与「圆环面密采样」这条独立路径
+#         一致到 1e-9, 并钉住侵入时的符号约定（= −t_pack/2）。
+#   它是**判据**门（不依赖某个 run 的分数）, 所以不受版本前置条件约束。
+_opt "G23 可造性门（基线可行 + 退化解被咬住 + 几何两条独立路径）" \
+  '[ -f scripts/check_buildability.py ] && [ -f runs/phase0/results.json ]' \
+  python3 scripts/check_buildability.py
+
 echo "=== 汇总: $pass 通过, $fail 失败, $skip 跳过 ==="
 if [ "$fail" -ne 0 ]; then
   printf 'failed: %s\n' "${failed_names[*]}"

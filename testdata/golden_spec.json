@@ -3,7 +3,8 @@
     "forge_version": "0.1.0",
     "generated_by": "scripts/emit_golden.py",
     "numpy": "1.26.4",
-    "python": "3.12.8"
+    "python": "3.12.8",
+    "regenerated_for": "forge 0.1.2 (\u53ef\u9020\u6027\u7ea6\u675f: spec.min_clearance)"
   },
   "spec": {
     "b_ref": 1.0,
@@ -24,6 +25,7 @@
     "coil_field_limit": 12.0,
     "confine_factor": 1.25,
     "j_eng": 100000000.0,
+    "min_clearance": 0.05,
     "min_coil_sep": 0.05,
     "mirror_ref": 2.0,
     "n_axis": 161,

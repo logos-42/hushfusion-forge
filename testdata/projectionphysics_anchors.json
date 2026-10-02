@@ -2,11 +2,11 @@
   "provenance": {
     "generator": "scripts/emit_pp_anchors.py",
     "upstream_root": "/Users/apple/Downloads/lean/ProjectionPhysics",
-    "upstream_commit": "7f47cd0e98bbe1914ff781e85031dfa6bf73a3cf",
-    "upstream_commit_subject": "docs(wiki): 判决漏斗对外公开(改档 self→public)+ 修正 1.29% 口径",
+    "upstream_commit": "b4071c626957c39345140b6494d164c7e0d9b4be",
+    "upstream_commit_subject": "docs(SC-gap): 定位页 —— 标度缺口的「位置」，它为什么会出现（一个长度 vs 两个来源）",
     "upstream_artifacts_tracked_by_git": 0,
-    "generated_at_utc": "2026-09-27T04:00:12Z",
-    "generated_at_local": "2026-09-27T12:00:12.170409+08:00",
+    "generated_at_utc": "2026-10-02T03:31:03Z",
+    "generated_at_local": "2026-10-02T11:31:03.264935+08:00",
     "read_from": [
       "artifacts/moirefield/report.json",
       "artifacts/moirefield/summary.txt",
@@ -16,7 +16,7 @@
       "artifacts/fusionroadmap/summary.txt"
     ],
     "skipped_fields": [],
-    "source_of_truth": "上游仓库 commit 7f47cd0e98bbe1914ff781e85031dfa6bf73a3cf + 本地重跑 scripts/verify_moire_field.py 的产物。上游 artifacts/ 不入上游 git（同一 commit 的 `git ls-files artifacts/` = 0 个文件），因此这些数字来自该 commit 的**工作区重跑结果**，可由该脚本重放。",
+    "source_of_truth": "上游仓库 commit b4071c626957c39345140b6494d164c7e0d9b4be + 本地重跑 scripts/verify_moire_field.py 的产物。上游 artifacts/ 不入上游 git（同一 commit 的 `git ls-files artifacts/` = 0 个文件），因此这些数字来自该 commit 的**工作区重跑结果**，可由该脚本重放。",
     "check_note": "重放上游脚本后 report.json 与重放前逐字节相同，唯一差异是 meta.date。因此 --check 不做整文件比对（那样每天都会假红），只比锚点字段并显式忽略 generated_at_* 与 upstream_root。",
     "tolerance_note": "上游字段本身是逐位拷贝；Go 侧**复算**的派生量与上游差 ~2e-15 相对（Go 的无精度常数算术 vs CPython 的 float64 逐步求值、x*x vs **2），因此 anchor_test.go 用 rel 1e-12 锚定；summary.txt 里打过折的数字按打印精度锚定。"
   },

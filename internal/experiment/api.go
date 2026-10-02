@@ -111,7 +111,11 @@ type Meta struct {
 	GitCommit string   `json:"git_commit"`
 	Platform  string   `json:"platform"`
 	GoVersion string   `json:"go_version"`
-	Workers   int      `json:"workers"`
+	// ForgeVersion 是产出这次 run 的**判据版本**（config.ForgeVersion）。没有它,
+	// 门就无法区分「同一判据下的可复现」与「换了判据所以本来就不该相同」——
+	// 后者在 0.1.2 加可造性罚项时真实发生过（runs/phase0 是 0.1.0 的证据）。
+	ForgeVersion string `json:"forge_version"`
+	Workers      int    `json:"workers"`
 }
 
 // Agg 是按方法、跨 seed 的统计量。绝不据此做单 seed 的结论。
@@ -310,15 +314,16 @@ func RunBenchmark(reg *registry.Registry, spec config.Spec, opt Opts) (*Report, 
 
 	rep := &Report{
 		Meta: Meta{
-			Tag:       opt.Tag,
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			Budget:    budget,
-			Seeds:     seeds,
-			Methods:   methods,
-			GitCommit: gitCommit(),
-			Platform:  runtime.GOOS + "/" + runtime.GOARCH,
-			GoVersion: runtime.Version(),
-			Workers:   workers,
+			Tag:          opt.Tag,
+			Timestamp:    time.Now().UTC().Format(time.RFC3339),
+			Budget:       budget,
+			Seeds:        seeds,
+			Methods:      methods,
+			GitCommit:    gitCommit(),
+			Platform:     runtime.GOOS + "/" + runtime.GOARCH,
+			GoVersion:    runtime.Version(),
+			ForgeVersion: config.ForgeVersion,
+			Workers:      workers,
 		},
 		Spec:      spec.AsMap(),
 		Solver:    solver.Name(),

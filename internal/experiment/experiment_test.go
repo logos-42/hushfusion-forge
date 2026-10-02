@@ -463,7 +463,8 @@ func TestReportJSONSchemaKeysFrozen(t *testing.T) {
 		"aggregate", "robustness", "best", "registry_summary",
 	})
 	assertKeysExact(t, "meta", sub(top["meta"]), []string{
-		"tag", "timestamp", "budget", "seeds", "methods", "git_commit", "platform", "go_version", "workers",
+		"tag", "timestamp", "budget", "seeds", "methods", "git_commit", "platform", "go_version",
+		"forge_version", "workers",
 	})
 	assertKeysExact(t, "baseline", sub(top["baseline"]), []string{
 		"name", "note", "score", "feasible", "terms", "weighted", "penalties", "metrics", "design", "cost_proxy", "design_id",
@@ -484,7 +485,8 @@ func TestReportJSONSchemaKeysFrozen(t *testing.T) {
 	}
 	assertKeysExact(t, "baseline.metrics", metrics, []string{
 		"B_mid_T", "B_throat_T", "z_throat_m", "mirror_ratio", "volume_good", "ripple",
-		"B_coil_max_T", "min_coil_gap_m", "cost_proxy", "coil_proximity_floor_hit", "n_coils", "mu0",
+		"B_coil_max_T", "min_coil_gap_m", "min_clearance_m", "cost_proxy",
+		"coil_proximity_floor_hit", "n_coils", "mu0",
 	})
 
 	var aggregate map[string]json.RawMessage
