@@ -216,6 +216,26 @@ class HeadlessDesignAgent:
                 break  # 防炸
         self.history.extend(zip(designs, scores))
 
+    def pretrain_balanced(self, registry_path: Path, n_random: int = 2000):
+        """冷启动预训练：混合「已评估设计」+「随机采样」的分布，消除分布偏移。
+
+        关键：headless 在已评估池(偏优分布)选样有效(lift +1.003), 但在全盒随机候选池失效,
+        因为训练分布 ≠ 应用分布。预训练让它同时见过两类分布。
+        """
+        rows = load_designs(registry_path)
+        X_known = np.array([r[0] for r in rows])
+        Y_known = np.array([r[1] for r in rows])
+        # 随机采样候选 + 近邻 oracle 分(让它见全空间分布)
+        cands = candidate_designs(n_random, seed=0)
+        oracle = np.array([
+            Y_known[np.argmin(np.sum((X_known - c) ** 2, axis=1))] for c in cands
+        ])
+        # 混合训练
+        X_all = np.vstack([X_known, cands])
+        Y_all = np.concatenate([Y_known, oracle])
+        self.learn_batch(X_all.tolist(), Y_all.tolist(), epochs=5)
+        return len(X_all)
+
     def predict(self, design) -> float:
         import torch
         x = torch.tensor([design], dtype=torch.float32, device=self.device)
@@ -303,10 +323,15 @@ def main() -> int:
                     help="驱动 forge 真评估(默认: 最近邻 oracle 软验证)")
     ap.add_argument("--forge-root", default=str(ROOT),
                     help="forge 仓库根(真评估时用; 服务器上是 /work/liuyuanjie/forge)")
+    ap.add_argument("--pretrain", action="store_true",
+                    help="冷启动预训练(混合已评估+随机采样, 消除分布偏移)")
     args = ap.parse_args()
 
     forge_root = Path(args.forge_root) if args.real else None
     agent = HeadlessDesignAgent(feature_dim=12)
+    if args.pretrain:
+        n = agent.pretrain_balanced(Path(args.registry))
+        print(f"预训练完成: 混合 {n} 个设计(已评估+随机), 消除分布偏移")
     metrics = []
     for i in range(args.rounds):
         m, agent = run_round(agent, Path(args.registry), args.n_cand, args.k, i,
