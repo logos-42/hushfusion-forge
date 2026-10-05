@@ -10,7 +10,9 @@ FORGE_ROOT="/work/liuyuanjie/forge"
 PY="/work/liuyuanjie/envs/vllm-cu128/bin/python"
 LOG="/work/liuyuanjie/oml_v4.log"
 STOP="/work/liuyuanjie/design_daemon_oml.stop"
-OUT="/work/liuyuanjie/forge/artifacts/oml_daemon_trend_v4.jsonl"
+# 输出文件带时间戳(每启动一次新文件, 防污染门 + 每趟干净记录best_score/evals)
+TS=$(date +%s)
+OUT="/work/liuyuanjie/forge/artifacts/oml_daemon_trend_v4_${TS}.jsonl"
 CKPT="/work/liuyuanjie/forge/artifacts/oml_daemon_v4_ckpt.pkl"
 
 echo "[supervisor $(date +%FT%T)] 启动, forge_root=$FORGE_ROOT"
@@ -33,6 +35,10 @@ while true; do
     echo "[supervisor $(date +%FT%T)] 拉起 daemon (restarts=$RESTARTS) ..."
     cd "$FORGE_ROOT"
     export CUDA_VISIBLE_DEVICES=0
+    # 每次拉起用新时间戳输出文件(防污染门要求文件不存在; ckpt恢复累积池)
+    TS=$(date +%s)
+    OUT="/work/liuyuanjie/forge/artifacts/oml_daemon_trend_v4_${TS}.jsonl"
+    echo "[supervisor] 本轮输出: $OUT"
     # 前台跑(不是setsid后台): supervisor 可感知崩溃
     "$PY" -u scripts/design_daemon_oml.py \
         --rounds 100000 --forge-root "$FORGE_ROOT" \
