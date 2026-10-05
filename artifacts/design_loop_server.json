@@ -1,0 +1,38 @@
+{
+  "metrics": [
+    {
+      "round": 0,
+      "headless_median": -0.12234669740421761,
+      "random_median": -0.10374650158873522,
+      "lift": -0.01860019581548239,
+      "n_learn": 7236
+    },
+    {
+      "round": 1,
+      "headless_median": 0.3342641932676348,
+      "random_median": 0.15025616695522087,
+      "lift": 0.18400802631241392,
+      "n_learn": 7251
+    },
+    {
+      "round": 2,
+      "headless_median": 0.42585440478307773,
+      "random_median": 0.20695911694384728,
+      "lift": 0.21889528783923046,
+      "n_learn": 7266
+    },
+    {
+      "round": 3,
+      "headless_median": 0.19399813614890588,
+      "random_median": 0.21908547363326925,
+      "lift": -0.02508733748436337,
+      "n_learn": 7281
+    }
+  ],
+  "summary": {
+    "headless_mean": 0.2079425091988502,
+    "random_mean": 0.11813856398590054,
+    "lift_mean": 0.08980394521294965,
+    "continuous_improvement": 0.014200059928967779
+  }
+}

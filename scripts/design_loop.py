@@ -99,6 +99,51 @@ class ValueModel:
             return self.net(Xt).numpy().flatten()
 
 
+# ── forge 真评估: headless 生成的设计 → registry → forge benchmark → 读真实 score ──
+def forge_eval_batch(forge_root, designs_raw, tag, seed=0, budget=30):
+    """把设计写成 registry, forge benchmark(evolution_knowledge 播种)真评估, 读每个设计真实 score。
+    返回 {design_idx: real_score} —— 从产出 registry 里对应 design_id 读。
+    """
+    import random, string, subprocess, time
+    reg_dir = forge_root / "runs" / f"hl_gen_{tag}_{int(time.time())}"
+    reg_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+    lines = []
+    for i, d in enumerate(designs_raw):
+        rec = {
+            "experiment_id": 1, "design_id": f"D{i+1:04d}", "generation": 0,
+            "algorithm": "headless_gen", "seed": 0, "eval_index": i, "tag": "hlgen",
+            "timestamp": ts, "score": 0.0, "feasible": True,
+            "params": {"radius_m": [float(x) for x in d[:4]],
+                       "z_m": [float(x) for x in d[4:8]],
+                       "current_A": [float(x) for x in d[8:]]},
+            "terms": {}, "weighted": {}, "penalties": {}, "metrics": {}, "note": "headless_gen",
+        }
+        lines.append(json.dumps(rec))
+    (reg_dir / "registry.jsonl").write_text("\n".join(lines) + "\n")
+    out_dir = reg_dir / "out"
+    out_dir.mkdir(exist_ok=True)
+    cmd = ["go", "run", "./cmd/forge", "benchmark",
+           "--budget", str(budget), "--seeds", str(seed),
+           "--methods", "evolution_knowledge",
+           "--knowledge", str(reg_dir), "--out", str(out_dir), "--tag", f"hlgen_{tag}"]
+    r = subprocess.run(cmd, cwd=str(forge_root), capture_output=True, text=True)
+    # 读产出 registry 的每一个设计 score(含 human_baseline + 搜索产物)
+    scores = {}
+    out_reg = out_dir / "registry.jsonl"
+    if out_reg.exists():
+        for line in open(out_reg):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # 只取 headless_gen 产出的(design_id 匹配 D####)
+            bid = rec.get("design_id", "")
+            if bid.startswith("D") and bid[1:].isdigit():
+                scores[bid] = rec.get("score", 0.0)
+    return scores, r.returncode, r.stdout[-200:], r.stderr[-200:]
+
+
 def propose_designs(value_model, n, seed=0):
     """价值引导生成: 随机采样 + 用价值函数挑 top(利用价值指引, 而非纯随机)。"""
     cands = gen_random_designs(n * 4, seed=seed)   # 采多点
