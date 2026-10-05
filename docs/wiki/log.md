@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-05 | 实验 B | Rule-guided Search 消融（Phase B） | 新增 `evolution_rule` / `evolution_champion_rule` 搜索方法（`--rule` 读 design_rules.md 生成规则偏置子空间种群）+ `--target N` 的 Evals-to-Target 报告。4 方法 × 7 档预算 × 5 seeds 消融：**champion 全面碾压（0.9489+，Evals-to-Target 全 1.0 但系播种即达），rule 弱但 budget≥100 超冷（1000: 0.910 vs 0.876），champ+rule≈champion**。核心判断：HUSHFUSION 是好的 replay system，规则（仅 3 条成本规则）还没抽象出可迁移知识 | `bash forge benchmark --knowledge runs/phase1 --rule knowledge/design_rules.md --target 0.5`；`go test ./...` 全绿；`runs/phaseB/` |
 | 2026-10-05 | 实验 A | 知识复用 vs budget（Phase 1 第一实验） | 新增 `evolution_knowledge` 搜索方法（`--knowledge DIR` 读上一轮 registry 的 feasible top-K 播种首代）+ `Options.WarmPopulation` 整代播种。7 档预算（10-1000）× 3 seed 三方对比：knowledge 全赢 cold 与 warm，**Gain(know−cold) +1.47 → +0.11 随 budget 单调降**（知识越小预算越值钱）；人工基线播种在小预算反而帮倒忙（budget 50/100 负增益）。worst case 从 −0.52 抬到 0.95。诚实边界：同 spec 继承（非跨任务）、budget≤10 是"继承冠军"非"学会更好" | `bash forge benchmark --knowledge runs/phase1`；`go test ./...` 全绿；`runs/knowledge_ladder/` |
 | 2026-10-05 | 版本跃迁 | 0.1.3 → 0.2（MINOR，判据数字不变） | `ForgeVersion = "0.2"`；三份冻结 trace（v1/v2/mu）+ 两份 world_structure 用 `--record`/`--write` 重录重测，**除版本串外逐位一致（0/8、0/10、0/17）** ⟹ 版本税干净交掉、无物理漂移。门禁 19 通过 / 1 失败（G19 弱档，既有）/ 3 跳过（phase1 是 0.1.3 判据，如实 SKIP）；G14 由 0.1.3 时代的红变绿。 | `bash scripts/verify.sh phase1` → 19/1/3；CHANGELOG 0.2 条目；README badge 0.2 |
 

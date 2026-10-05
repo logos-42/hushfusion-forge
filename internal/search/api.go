@@ -47,6 +47,13 @@ const (
 	// 播种(从 registry 读 feasible 且 score 最高的前 K 个), 而非人工基线。这是
 	// 文档"知识复用"实验 A 的核心对照 —— 继承学到的东西, 不继承教科书。
 	AlgorithmEvolutionKnowledge = "evolution_knowledge"
+	// evolution_rule = 规则引导: 初始种群从**规则偏置子空间**采样(而非全盒随机)。
+	// 规则来自 design_rules.md(参数→term 的 Spearman 方向), 对负贡献 term 的
+	// 参数往降方向采样、正贡献往升方向。这是 Phase B 消融的"Rule"组 —— 测规则本身值不值钱。
+	AlgorithmEvolutionRule = "evolution_rule"
+	// evolution_champion_rule = Champion + Rule: 初始种群 = 上一轮最优(top-K) 拼上
+	// 规则偏置子空间的采样。这是 Phase B 的"Champion+Rule"组。
+	AlgorithmEvolutionChampionRule = "evolution_champion_rule"
 )
 
 // 文档化的默认值(由 DefaultOptions 镜像)。
@@ -207,13 +214,26 @@ func EvolutionKnowledge(sc runner.Scorer, opt Options) Result {
 	return evolutionRun(sc, opt, AlgorithmEvolutionKnowledge, nil)
 }
 
+// EvolutionRule 与 EvolutionKnowledge 同一实现 —— 区别在调用方填进 WarmPopulation 的
+// 种群来源: rule 组填的是"规则偏置子空间采样", champion_rule 组填的是"冠军+规则"。
+// 方法名区分知识来源, 使消融能在同 budget/seed 下回答"是什么在产生复利"。
+func EvolutionRule(sc runner.Scorer, opt Options) Result {
+	return evolutionRun(sc, opt, AlgorithmEvolutionRule, nil)
+}
+
+func EvolutionChampionRule(sc runner.Scorer, opt Options) Result {
+	return evolutionRun(sc, opt, AlgorithmEvolutionChampionRule, nil)
+}
+
 // Methods 把方法名映射到其实现。
 var Methods = map[string]func(runner.Scorer, Options) Result{
-	AlgorithmRandom:             Random,
-	AlgorithmLHS:                LHS,
-	AlgorithmEvolution:          Evolution,
-	AlgorithmEvolutionWarm:      EvolutionWarm,
-	AlgorithmEvolutionKnowledge: EvolutionKnowledge,
+	AlgorithmRandom:                Random,
+	AlgorithmLHS:                   LHS,
+	AlgorithmEvolution:             Evolution,
+	AlgorithmEvolutionWarm:         EvolutionWarm,
+	AlgorithmEvolutionKnowledge:    EvolutionKnowledge,
+	AlgorithmEvolutionRule:         EvolutionRule,
+	AlgorithmEvolutionChampionRule: EvolutionChampionRule,
 }
 
 // MethodNames 返回已知方法名, 已排序(供 CLI 帮助与错误

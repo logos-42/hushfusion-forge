@@ -20,11 +20,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -322,6 +324,122 @@ func topDesigns(reg *registry.Registry, spec config.Spec, k int) ([][]float64, e
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+// designRule 是 design_rules.md 里一条规则(机器可读块)的最小形态。
+type designRule struct {
+	Parameter string  // 参数名, 如 "I_3" / "radius_0" / "z_1"
+	Term      string  // 关联的 term, 如 "cost"
+	Rho       float64 // Spearman 秩相关(最差 case 绝对值)
+	Direction int     // 该参数对 score 的贡献方向: +1 越大越好, -1 越小越好, 0 未知
+}
+
+// readRules 解析 design_rules.md 的 machine-readable JSON 块, 返回规则列表。
+// 规则方向根据 term 对 score 的符号权重映射(见 internal/objective): cost/ripple 是负项,
+// 参数与负项正相关 ⟹ 参数越大 score 越低(direction=-1); field/mirror/volume 是正项 ⟹ 反向。
+func readRules(path string) ([]designRule, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	// 规则在 ```json ... ``` 代码块里
+	start := bytes.Index(b, []byte("```json\n"))
+	if start < 0 {
+		return nil, fmt.Errorf("no ```json block in %s", path)
+	}
+	start += len("```json\n")
+	end := bytes.Index(b[start:], []byte("\n```"))
+	if end < 0 {
+		return nil, fmt.Errorf("unterminated json block in %s", path)
+	}
+	raw := b[start : start+end]
+	var recs []struct {
+		RuleID     string  `json:"rule_id"`
+		Parameter  string  `json:"parameter"`
+		Term       string  `json:"term"`
+		Rho        float64 `json:"rho"`
+		SignAgree  float64 `json:"sign_agreement"`
+		DecileLow  float64 `json:"decile_low"`
+		DecileHigh float64 `json:"decile_high"`
+	}
+	if err := json.Unmarshal(raw, &recs); err != nil {
+		return nil, fmt.Errorf("parse rules json: %w", err)
+	}
+	// term 对 score 的符号权重(与 objective.score 一致): 负项 cost/ripple
+	termSign := map[string]int{"field": +1, "mirror": +1, "volume": +1, "ripple": -1, "cost": -1}
+	out := make([]designRule, 0, len(recs))
+	for _, r := range recs {
+		ts, ok := termSign[r.Term]
+		if !ok {
+			continue
+		}
+		// parameter 正相关且 term 负项 ⟹ 参数越大越差(direction=-1)
+		dir := 0
+		if r.Rho > 0 {
+			dir = ts
+		} else if r.Rho < 0 {
+			dir = -ts
+		}
+		out = append(out, designRule{Parameter: r.Parameter, Term: r.Term, Rho: r.Rho, Direction: dir})
+	}
+	return out, nil
+}
+
+// ruleSeededDesigns 按规则方向生成 K 个初始设计: 对 direction!=0 的参数, 采样偏向
+// 规则推荐的子空间(正方向取盒子上半, 负方向取下半); 其余参数全盒均匀采样。
+// 这是 Phase B "Rule" 组的整代播种 —— 用规则引导, 而不是冠军点。
+func ruleSeededDesigns(spec config.Spec, rules []designRule, k int, rng *rand.Rand) [][]float64 {
+	// 参数索引 → 方向。参数名形如 "I_3"/"radius_0"/"z_1", 定位到 design 向量槽。
+	dirBySlot := map[int]int{}
+	for _, r := range rules {
+		if r.Direction == 0 {
+			continue
+		}
+		idx := paramIndexByName(r.Parameter, spec)
+		if idx >= 0 {
+			dirBySlot[idx] = r.Direction
+		}
+	}
+	lo, hi := spec.Lower(), spec.Upper()
+	out := make([][]float64, 0, k)
+	for i := 0; i < k; i++ {
+		d := make([]float64, len(lo))
+		for j := range d {
+			if dir, ok := dirBySlot[j]; ok && dir != 0 {
+				// 偏向子空间: 正方向取 [mid, hi], 负方向取 [lo, mid]
+				if dir > 0 {
+					d[j] = lo[j] + (hi[j]-lo[j])*(0.5+0.5*rng.Float64())
+				} else {
+					d[j] = lo[j] + (hi[j]-lo[j])*(0.5*rng.Float64())
+				}
+			} else {
+				d[j] = lo[j] + (hi[j]-lo[j])*rng.Float64()
+			}
+		}
+		out = append(out, search.Canonicalise(d, spec))
+	}
+	return out
+}
+
+// paramIndexByName 把 "I_3"/"radius_0"/"z_1" 映射到 design 向量槽位。
+// 设计向量布局 = [radius_0..radius_n, z_0..z_n, I_0..I_n](见 registry.Params)。
+func paramIndexByName(name string, spec config.Spec) int {
+	prefixes := []string{"radius", "z", "I"}
+	lo, hi := spec.Lower(), spec.Upper()
+	for pi, p := range prefixes {
+		if len(name) > len(p) && name[:len(p)] == p && name[len(p)] == '_' {
+			var idx int
+			if _, err := fmt.Sscanf(name[len(p)+1:], "%d", &idx); err != nil {
+				return -1
+			}
+			slot := pi*spec.NCoils + idx
+			if slot >= 0 && slot < len(lo) {
+				return slot
+			}
+		}
+	}
+	_ = hi
+	return -1
 }
 
 func resolveCommit() string {
@@ -1763,6 +1881,8 @@ func cmdBenchmark(args []string) int {
 	tag := fs.String("tag", "", "run tag (default: the base name of --out)")
 	workers := fs.Int("workers", 1, "evaluation workers")
 	knowledgeDir := fs.String("knowledge", "", "registry dir to seed evolution_knowledge from (reads feasible top-K designs by score)")
+	ruleFile := fs.String("rule", "", "design_rules.md to seed evolution_rule / evolution_champion_rule from")
+	target := fs.Float64("target", 0.0, "target score for Evals-to-Target report (0 = disabled)")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
@@ -1812,7 +1932,7 @@ func cmdBenchmark(args []string) int {
 	note("registry: %s", regPath)
 	// 知识复用(evolution_knowledge): 从 --knowledge 指定的 registry 读 feasible 且
 	// score 最高的前 K 个设计作为整代播种。K 取 mu(默认 16) —— 铺满首代。
-	var knowledgeWarm [][]float64
+	var knowledgeWarm, ruleWarm, champRuleWarm [][]float64
 	if *knowledgeDir != "" {
 		kpath := filepath.Join(*knowledgeDir, "registry.jsonl")
 		kreg, err := openRegistry(kpath)
@@ -1829,15 +1949,33 @@ func cmdBenchmark(args []string) int {
 		knowledgeWarm = know
 		note("--knowledge: seeding %d designs from %s", len(know), kpath)
 	}
+	// 规则引导(evolution_rule / evolution_champion_rule): 从 --rule 指定的
+	// design_rules.md 读规则, 生成规则偏置子空间的初始种群。
+	if *ruleFile != "" {
+		rules, err := readRules(*ruleFile)
+		if err != nil {
+			return fail("--rule: %v", err)
+		}
+		if len(rules) == 0 {
+			return fail("--rule: no usable rules in %s (need known term sign)", *ruleFile)
+		}
+		rng := rand.New(rand.NewSource(0))
+		ruleWarm = ruleSeededDesigns(spec, rules, 16, rng)
+		champRuleWarm = append(append([][]float64(nil), knowledgeWarm...), ruleWarm...)
+		note("--rule: %d rules, seeding %d rule designs (champion_rule gets %d total)",
+			len(rules), len(ruleWarm), len(champRuleWarm))
+	}
 	start := time.Now()
 	rep, err := experiment.RunBenchmark(reg, spec, experiment.Opts{
-		Budget:        *budget,
-		Seeds:         seedList,
-		Methods:       methodList,
-		Tag:           runTag,
-		Workers:       *workers,
-		Baseline:      &base,
-		KnowledgeWarm: knowledgeWarm,
+		Budget:           *budget,
+		Seeds:            seedList,
+		Methods:          methodList,
+		Tag:              runTag,
+		Workers:          *workers,
+		Baseline:         &base,
+		KnowledgeWarm:    knowledgeWarm,
+		RuleWarm:         ruleWarm,
+		ChampionRuleWarm: champRuleWarm,
 		Progress: func(method string, seed int, res search.Result, seconds float64) {
 			note("  %-16s seed=%-4d evals=%-6d best_score=%-24v %.1fs",
 				method, seed, res.NEvals, res.BestScore, seconds)
@@ -1863,6 +2001,33 @@ func cmdBenchmark(args []string) int {
 	note("")
 	note("baseline: %s score=%v feasible=%v design_id=%s",
 		rep.Baseline.Name, rep.Baseline.Score, rep.Baseline.Feasible, rep.Baseline.DesignID)
+	if *target > 0 {
+		// Evals-to-Target: 每个 (method,seed) 的 best-so-far 首次达到 target 的评估数, 跨 seed 平均。
+		note("")
+		note("Evals-to-Target(%.3f): 首次达到 target 的评估数, 跨 seed 平均(- = 未达)", *target)
+		note("%-16s %-12s", "method", "evals_to_target_mean")
+		for _, m := range sortedKeys(rep.Aggregate) {
+			evs := []float64{}
+			for _, s := range seedList {
+				h := rep.History[fmt.Sprintf("%s/seed=%d", m, s)]
+				for i, v := range h {
+					if v >= *target {
+						evs = append(evs, float64(i+1))
+						break
+					}
+				}
+			}
+			mean := -1.0
+			if len(evs) > 0 {
+				sm := 0.0
+				for _, e := range evs {
+					sm += e
+				}
+				mean = sm / float64(len(evs))
+			}
+			note("%-16s %-12.0f", m, mean)
+		}
+	}
 	if rep.Best != nil {
 		note("best: %s score=%v algorithm=%s seed=%d feasible=%v",
 			rep.Best.DesignID, rep.Best.Score, rep.Best.Algorithm, rep.Best.Seed, rep.Best.Feasible)

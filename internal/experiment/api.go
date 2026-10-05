@@ -204,6 +204,10 @@ type Opts struct {
 	// KnowledgeWarm 是 evolution_knowledge 的整代播种（上一轮 registry 学到的最优设计）。
 	// 为空时 evolution_knowledge 退化为冷 evolution。
 	KnowledgeWarm [][]float64
+	// RuleWarm 是 evolution_rule 的整代播种（规则偏置子空间采样）。
+	// ChampionRuleWarm 是 evolution_champion_rule 的播种（冠军 top-K + 规则偏置 拼接）。
+	RuleWarm         [][]float64
+	ChampionRuleWarm [][]float64
 }
 
 const (
@@ -351,6 +355,12 @@ func RunBenchmark(reg *registry.Registry, spec config.Spec, opt Opts) (*Report, 
 			}
 			if m == search.AlgorithmEvolutionKnowledge && len(opt.KnowledgeWarm) > 0 {
 				o.WarmPopulation = opt.KnowledgeWarm
+			}
+			if m == search.AlgorithmEvolutionRule && len(opt.RuleWarm) > 0 {
+				o.WarmPopulation = opt.RuleWarm
+			}
+			if m == search.AlgorithmEvolutionChampionRule && len(opt.ChampionRuleWarm) > 0 {
+				o.WarmPopulation = opt.ChampionRuleWarm
 			}
 			started := time.Now()
 			res, err := search.Run(m, sc, o)

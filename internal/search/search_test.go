@@ -193,7 +193,8 @@ func sameResult(got, want Result, strictIDs bool) string {
 }
 
 func allMethods() []string {
-	return []string{AlgorithmRandom, AlgorithmLHS, AlgorithmEvolution, AlgorithmEvolutionWarm, AlgorithmEvolutionKnowledge}
+	return []string{AlgorithmRandom, AlgorithmLHS, AlgorithmEvolution, AlgorithmEvolutionWarm,
+		AlgorithmEvolutionKnowledge, AlgorithmEvolutionRule, AlgorithmEvolutionChampionRule}
 }
 
 // checkInsideBoxAndCanonical 断言交给 scorer 的每个设计都在
@@ -249,8 +250,8 @@ func TestDefaultOptionsMatchesDocumentedDefaults(t *testing.T) {
 }
 
 func TestConstantsCoverMethods(t *testing.T) {
-	if len(Methods) != 5 {
-		t.Fatalf("Methods has %d entries, want 5: %v", len(Methods), MethodNames())
+	if len(Methods) != 7 {
+		t.Fatalf("Methods has %d entries, want 7: %v", len(Methods), MethodNames())
 	}
 	want := allMethods()
 	sort.Strings(want)
