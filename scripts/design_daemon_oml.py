@@ -24,7 +24,9 @@ import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from design_loop import design_to_feature, load_designs, gen_random_designs  # noqa: E402
+from design_loop import (  # noqa: E402
+    design_to_feature, feature_to_design, load_designs, gen_random_designs,
+)
 from oml_continual_core import OMLDesignLearner  # noqa: E402
 
 
@@ -78,9 +80,44 @@ def main() -> int:
         rand = Y_all[qry_idx[rng.choice(len(qry_idx), kk, replace=False)]]
         lift = float(np.median(hl) - np.median(rand))
 
+        # ── 操作 forge: 用 OML 持续学到的价值, 引导 forge 搜索下一批 ──
+        #    headless 选 top-K 设计 → 写 registry → forge benchmark(--knowledge 播种)
+        #    → forge 真评估+搜索 → 真实 score 回流 → OML 持续学习
+        hl_cands_raw = np.array([feature_to_design(x) for x in X_all[qry_idx[hl_idx]]])
+        op_result = {}
+        try:
+            _regen_fpath = pathlib.Path(args.forge_root) / "runs" / f"oml_op_{int(time.time()*1000)}"
+            _regen_fpath.mkdir(parents=True, exist_ok=True)
+            # 写 forge 能读的 registry
+            import json as _json, time as _time
+            _ts = _time.strftime("%Y-%m-%dT%H:%M:%S")
+            _lines = []
+            for _i, _d in enumerate(hl_cands_raw):
+                _rec = {"experiment_id": 1, "design_id": f"D{_i+1:04d}", "generation": 0,
+                        "algorithm": "oml_guided", "seed": 0, "eval_index": _i, "tag": "omlop",
+                        "timestamp": _ts, "score": 0.0, "feasible": True,
+                        "params": {"radius_m": [float(x) for x in _d[:4]],
+                                   "z_m": [float(x) for x in _d[4:8]],
+                                   "current_A": [float(x) for x in _d[8:]]},
+                        "terms": {}, "weighted": {}, "penalties": {}, "metrics": {}, "note": "oml_guided"}
+                _lines.append(_json.dumps(_rec))
+            (_regen_fpath / "registry.jsonl").write_text("\n".join(_lines) + "\n")
+            # forge benchmark 用 OML 选的设计当初始种群(evolution_knowledge 播种)
+            import subprocess as _sub
+            _out_dir = _regen_fpath / "out"
+            _out_dir.mkdir(exist_ok=True)
+            _cmd = ["go", "run", "./cmd/forge", "benchmark",
+                    "--budget", "30", "--seeds", "0", "--methods", "evolution_knowledge",
+                    "--knowledge", str(_regen_fpath), "--out", str(_out_dir), "--tag", "oml_op"]
+            _r = _sub.run(_cmd, cwd=str(args.forge_root), capture_output=True, text=True)
+            op_result = {"exit": _r.returncode, "tail": _r.stdout[-200:]}
+        except Exception as _e:
+            op_result = {"exit": -1, "tail": str(_e)}
+
         trend.append({"round": rnd, "query_mse": loss_before, "query_mse_adapted": loss_adapted,
                       "select_lift": lift, "hl_median": float(np.median(hl)),
                       "rand_median": float(np.median(rand)),
+                      "forge_op_exit": op_result.get("exit"),
                       "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
         recent_mse = np.mean([t["query_mse"] for t in trend[-5:]])
         recent_lift = np.mean([t["select_lift"] for t in trend[-5:]])
