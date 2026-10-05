@@ -65,10 +65,16 @@ def gen_random_designs(n, seed=0):
     ] for _ in range(n)])
 
 
-# ── headless 设计价值函数 ──
+# ── headless 设计价值函数（稳定性增强版）──
 class ValueModel:
-    """非线性价值函数: 设计特征 → 预测 score。用 P LN 头(非线性)。"""
-    def __init__(self, feature_dim=12, d_model=64, lr=1e-3, seed=0):
+    """非线性价值函数: 设计特征 → 预测 score。用 PLNHead(非线性)。
+
+    稳定性三修复（应对轮11灾难性退化 -9.5）：
+      ① replays buffer: 每轮学完把(设计,score)存进缓存, 下轮先重放历史 —— 防单轮坏数据覆盖。
+      ② 梯度裁剪 + 预测 clip: Adam 梯度 clip 到 [−1,1], 预测 clip 到 [-20,20] —— 防漂移/NaN。
+      ③ ε 探索在 propose(不在本模型): 见 propose_designs 的探索项。
+    """
+    def __init__(self, feature_dim=12, d_model=64, lr=1e-3, seed=0, replay_cap=2000):
         import torch
         from hibs_lnn.pln_head import PLNHead
         torch.manual_seed(seed)
@@ -76,27 +82,48 @@ class ValueModel:
         self.opt = torch.optim.Adam(self.net.parameters(), lr=lr)
         self.loss = torch.nn.MSELoss()
         self.n_learn = 0
+        self.replay_X = []   # 历史(设计,score) —— replay buffer
+        self.replay_Y = []
+        self.replay_cap = replay_cap
 
-    def learn_batch(self, X, Y, epochs=10):
+    def learn_batch(self, X, Y, epochs=6):
         import torch
         if len(X) == 0:
             return
-        Xt = torch.tensor(np.array(X, dtype=float), dtype=torch.float32)
-        Yt = torch.tensor(np.array(Y, dtype=float).reshape(-1, 1), dtype=torch.float32)
+        # 入 replay buffer
+        self.replay_X.extend(X)
+        self.replay_Y.extend(Y)
+        if len(self.replay_X) > self.replay_cap:
+            # 截断: 保留最近 replay_cap 条(最相关)
+            self.replay_X = self.replay_X[-self.replay_cap:]
+            self.replay_Y = self.replay_Y[-self.replay_cap:]
+        # 训练: 本轮新数据 + 随机采样的一部分历史(replay) 混合 -> 防忘记旧知识
+        import random
+        n_hist = min(len(self.replay_X), max(len(X), 200))
+        hist_idx = random.sample(range(len(self.replay_X)), min(n_hist, len(self.replay_X)))
+        X_train = list(X) + [self.replay_X[i] for i in hist_idx]
+        Y_train = list(Y) + [self.replay_Y[i] for i in hist_idx]
+        Xt = torch.tensor(np.array(X_train, dtype=float), dtype=torch.float32)
+        Yt = torch.tensor(np.array(Y_train, dtype=float).reshape(-1, 1), dtype=torch.float32)
         for _ in range(epochs):
             self.opt.zero_grad()
-            loss = self.loss(self.net(Xt), Yt)
+            pred = self.net(Xt)
+            loss = self.loss(pred, Yt)
             loss.backward()
+            # 梯度裁剪(防漂移/爆炸)
+            torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1.0)
             self.opt.step()
             if torch.isnan(loss):
                 break
         self.n_learn += len(X)
 
     def predict(self, X):
-        import torch
+        import torch, numpy as np
         Xt = torch.tensor(np.array(X, dtype=float), dtype=torch.float32)
         with torch.no_grad():
-            return self.net(Xt).numpy().flatten()
+            out = self.net(Xt).numpy().flatten()
+        # 预测 clip(防极端值污染 propose 的选择)
+        return np.clip(out, -20.0, 20.0)
 
 
 # ── forge 真评估: headless 生成的设计 → registry → forge benchmark → 读真实 score ──
@@ -144,13 +171,31 @@ def forge_eval_batch(forge_root, designs_raw, tag, seed=0, budget=30):
     return scores, r.returncode, r.stdout[-200:], r.stderr[-200:]
 
 
-def propose_designs(value_model, n, seed=0):
-    """价值引导生成: 随机采样 + 用价值函数挑 top(利用价值指引, 而非纯随机)。"""
+def propose_designs(value_model, n, seed=0, epsilon=0.3):
+    """价值引导生成: 大部分按价值挑 top(利用), ε 比例纯随机(探索)。
+
+    ε 探索是稳定性修复 #3: 价值函数可能在某轮被坏数据带偏、把高分预测全堆在污染区,
+    若 propose 只挑预测 top, 会一直 stuck 在坏区(轮11的灾难)。ε 比例随机注入
+    探索保证不会完全困死。
+    """
     cands = gen_random_designs(n * 4, seed=seed)   # 采多点
     feats = np.array([design_to_feature(c) for c in cands])
     vals = value_model.predict(feats)
     top = np.argsort(-vals)[:n]
-    return cands[top]
+    # 探索: 用 ε 的比例, 把部分选出的换成纯随机(从剩下随机挑)
+    rng = np.random.default_rng(seed + 1)
+    n_explore = int(n * epsilon)
+    if n_explore > 0:
+        # 从全部候选里随机替换掉 n_explore 个"预测 top"为纯随机
+        rest = [i for i in range(len(cands)) if i not in set(top.tolist())]
+        if rest:
+            rempl = rng.choice(rest, min(n_explore, len(rest)), replace=False)
+            sel = list(top[:n - n_explore]) + list(rempl)
+        else:
+            sel = list(top[:n])
+    else:
+        sel = list(top[:n])
+    return cands[np.array(sel)]
 
 
 # ── 主循环 ──
