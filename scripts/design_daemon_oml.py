@@ -37,6 +37,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from design_loop import (  # noqa: E402
     design_to_feature, feature_to_design, load_designs,
+    gen_random_designs, propose_designs,
 )
 from oml_continual_core import OMLDesignLearner  # noqa: E402
 
@@ -109,26 +110,23 @@ def main() -> int:
         Xq, yq = pool[qry_idx], poolY[qry_idx]
         loss_before, loss_adapted = model.oml_step(Xs, ys, Xq, yq, K=args.inner_k)
 
-        # 2. 选 top-K(可配策略) / cold 对照轮(随机引导, 归因)
-        #    交替: 偶数为 warm(OML引导), 奇数为 cold(随机引导) → 严格对比 forge best_score
+        # 2. 选候选(可配策略) / cold 对照轮(随机引导, 归因)
+        #    交替: 偶数为 warm(OML价值引导生成新候选), 奇数为 cold(纯随机生成)
+        #    ★机制修正: 不用 select_topk(pool)(从已评估池挑→局部最优),
+        #    改用 propose_designs(生成新设计+价值筛选+ε探索→引导forge探索新空间)
         is_cold = (rnd % 2 == 1)
         if is_cold:
-            sel = rng.choice(len(pool), args.topk, replace=False)
-            sel = np.sort(sel)
-        elif args.strategy == "ucb":
-            sel = model.select_topk_ucb(pool, args.topk, lam=0.5)
-        elif args.strategy == "diverse":
-            sel = model.select_topk_diverse(pool, args.topk, lam=0.3)
+            hl_cands = list(gen_random_designs(args.topk, seed=rnd + 200))
         else:
-            sel = model.select_topk(pool, args.topk)
-        kk = min(args.topk, len(sel))
-        hl = poolY[sel[:kk]]
-        rand_idx = rng.choice(len(pool), kk, replace=False)
-        rand = poolY[rand_idx]
-        lift_pool = float(np.median(hl) - np.median(rand))
-
-        # 3. 写候选 registry(用选出的设计参数) → forge 真评估
-        hl_cands = [list(feature_to_design(pool[i])) for i in sel[:kk]]
+            hl_cands = list(propose_designs(model, args.topk, seed=rnd, epsilon=0.3))
+        hl_cands = [list(c) for c in hl_cands]
+        kk = min(args.topk, len(hl_cands))
+        # lift 用模型在这些候选上的预测价值 vs 随机
+        hl_feats = np.array([design_to_feature(c) for c in hl_cands[:kk]])
+        hl_pred = model.predict(hl_feats)
+        rand_feats = np.array([design_to_feature(c) for c in gen_random_designs(kk, seed=rnd + 300)])
+        rand_pred = model.predict(rand_feats)
+        lift_pool = float(np.median(hl_pred) - np.median(rand_pred))
         op = {}
         new_reflux = 0
         outd = None
