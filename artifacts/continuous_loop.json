@@ -1,0 +1,58 @@
+{
+  "metrics": [
+    {
+      "round": 0,
+      "headless_topk_median": 0.30475113679239063,
+      "random_topk_median": 0.09275155549688516,
+      "lift": 0.21199958129550547,
+      "n_learned": 50,
+      "mode": "oracle"
+    },
+    {
+      "round": 1,
+      "headless_topk_median": 0.18886421786847857,
+      "random_topk_median": 0.1755510467714195,
+      "lift": 0.013313171097059068,
+      "n_learned": 100,
+      "mode": "oracle"
+    },
+    {
+      "round": 2,
+      "headless_topk_median": 0.3725812231622977,
+      "random_topk_median": 0.10260581465056588,
+      "lift": 0.2699754085117318,
+      "n_learned": 150,
+      "mode": "oracle"
+    },
+    {
+      "round": 3,
+      "headless_topk_median": 0.11069314655003282,
+      "random_topk_median": 0.16161921412568847,
+      "lift": -0.050926067575655654,
+      "n_learned": 200,
+      "mode": "oracle"
+    },
+    {
+      "round": 4,
+      "headless_topk_median": 0.34266817648393655,
+      "random_topk_median": 0.008643561379394732,
+      "lift": 0.33402461510454184,
+      "n_learned": 250,
+      "mode": "oracle"
+    },
+    {
+      "round": 5,
+      "headless_topk_median": 0.1845130315596229,
+      "random_topk_median": 0.014028649949718655,
+      "lift": 0.17048438160990426,
+      "n_learned": 300,
+      "mode": "oracle"
+    }
+  ],
+  "summary": {
+    "headless_mean": 0.25067848873612647,
+    "random_mean": 0.09253330706227873,
+    "lift_mean": 0.1581451816738478,
+    "continuous_improvement": -0.013901743921835297
+  }
+}
