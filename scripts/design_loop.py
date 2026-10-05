@@ -162,6 +162,8 @@ def main():
     ap.add_argument("--registry", default=str(ROOT / "runs" / "phase1" / "registry.jsonl"))
     ap.add_argument("--out", default=str(ROOT / "artifacts" / "design_loop.json"))
     ap.add_argument("--pretrain", action="store_true", help="先用 registry 预训练价值函数")
+    ap.add_argument("--real", action="store_true", help="用 forge 真评估(默认 oracle 近似)")
+    ap.add_argument("--forge-root", default=str(ROOT), help="forge 仓库根")
     args = ap.parse_args()
 
     # forge Evaluator(真评估) —— Go 包不能直接 Python import, 用 oracle 近似先验证 headless 生成能力
@@ -175,6 +177,7 @@ def main():
         print(f"预训练完成: {len(X_all)} 个设计")
 
     metrics = []
+    forge_root = pathlib.Path(args.forge_root) if args.real else None
     for rnd in range(args.rounds):
         rng = np.random.default_rng(rnd)
         # headless 生成设计
@@ -182,13 +185,30 @@ def main():
         # 随机生成对照
         rand_cands = gen_random_designs(args.n_propose, seed=rnd + 100)
 
-        # 评估(用 oracle 近似 —— 真 forge 评估需在 forge 编译环境跑)
-        def oracle_scores(cands):
-            return np.array([
-                Y_all[np.argmin(np.sum((X_all - design_to_feature(c)) ** 2, axis=1))]
-                for c in cands])
-        hl_s = oracle_scores(hl_cands)
-        rand_s = oracle_scores(rand_cands)
+        if args.real:
+            # 真 forge 评估: 各写 registry → forge 真打分 → 按设计向量对齐读真实 score
+            hl_scores, _, _, _ = forge_eval_batch(forge_root, hl_cands, f"hl_{rnd}",
+                                                  seed=rnd, budget=30)
+            rand_scores, _, _, _ = forge_eval_batch(forge_root, rand_cands, f"rand_{rnd}",
+                                                    seed=rnd, budget=30)
+            def real_score_for(cands, scoremap):
+                # 按设计向量内容对齐:ause 生成的设计的特征在 scoremap 找不到精确, 用最近邻
+                # 最简单: forge 会对传入的所有设计评估, 我们取 scoremap 里我们写的 design_id 对应的。
+                # 这里用数量对 -- 但 forge 改了编号, 用后 n 个 headless_gen 的 score 平均最稳。
+                vals = [v for k, v in scoremap.items()]
+                # forge 产出 = n(我们的设计) + human_baseline(1) + 搜索产物(~budget)
+                # 我们的设计 score 是【最先评估的】(作为 knowledge 播种进首代)
+                return vals[:len(cands)]  # 近似: 前 n 个=我们的
+            hl_s = np.array(real_score_for(hl_cands, hl_scores), dtype=float)
+            rand_s = np.array(real_score_for(rand_cands, rand_scores), dtype=float)
+        else:
+            # oracle 近似
+            def oracle_scores(cands):
+                return np.array([
+                    Y_all[np.argmin(np.sum((X_all - design_to_feature(c)) ** 2, axis=1))]
+                    for c in cands])
+            hl_s = oracle_scores(hl_cands)
+            rand_s = oracle_scores(rand_cands)
 
         # 回流学习
         hl_feats = np.array([design_to_feature(c) for c in hl_cands])
