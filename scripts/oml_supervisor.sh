@@ -51,5 +51,9 @@ while true; do
         break
     fi
     sleep 5   # 崩溃后短暂等待再拉起
+    # ── 每轮循环间隙生成一次归档快照(长期趋势可见) ──
+    "$PY" scripts/oml_daily_report.py \
+        --trend "$OUT" --out-dir "$FORGE_ROOT/artifacts/daily" \
+        --ckpt-size "$CKPT" >> /work/liuyuanjie/oml_daily.log 2>&1 || true
 done
 echo "[supervisor $(date +%FT%T)] 结束, 共拉起 $RESTARTS 次"
