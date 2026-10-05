@@ -109,8 +109,13 @@ def main() -> int:
         Xq, yq = pool[qry_idx], poolY[qry_idx]
         loss_before, loss_adapted = model.oml_step(Xs, ys, Xq, yq, K=args.inner_k)
 
-        # 2. 选 top-K(可配策略)
-        if args.strategy == "ucb":
+        # 2. 选 top-K(可配策略) / cold 对照轮(随机引导, 归因)
+        #    交替: 偶数为 warm(OML引导), 奇数为 cold(随机引导) → 严格对比 forge best_score
+        is_cold = (rnd % 2 == 1)
+        if is_cold:
+            sel = rng.choice(len(pool), args.topk, replace=False)
+            sel = np.sort(sel)
+        elif args.strategy == "ucb":
             sel = model.select_topk_ucb(pool, args.topk, lam=0.5)
         elif args.strategy == "diverse":
             sel = model.select_topk_diverse(pool, args.topk, lam=0.3)
@@ -205,7 +210,7 @@ def main() -> int:
                       "select_lift": lift_pool, "pool_size": n, "new_reflux": new_reflux,
                       "reflux_err": reflux_err, "forge_op": op.get("exit"),
                       "best_score": best_score, "evals_to_beat": evals_to_beat,
-                      "strategy": args.strategy,
+                      "strategy": args.strategy, "is_cold": is_cold,
                       "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
         with open(out, "a") as f:
             f.write(json.dumps(trend[-1]) + "\n")
@@ -216,7 +221,8 @@ def main() -> int:
                 pickle.dump((pool_X, pool_Y, seen_signatures), f)
 
         recent_lift = np.mean([t["select_lift"] for t in trend[-5:]])
-        print(f"[round {rnd}] pool={n} reflux={new_reflux} "
+        mode = "cold" if is_cold else "warm"
+        print(f"[round {rnd}][{mode}] pool={n} reflux={new_reflux} "
               f"(回水误{reflux_err:.3f}) lift={lift_pool:+.3f}"
               f"(近5{recent_lift:+.3f}) best={best_score:.3f} evals_to_beat={evals_to_beat}"
               f" [op={op.get('exit')} {time.time()-t0:.0f}s]",
