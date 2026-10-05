@@ -2,57 +2,41 @@
   "metrics": [
     {
       "round": 0,
-      "headless_topk_median": 0.30475113679239063,
-      "random_topk_median": 0.09275155549688516,
-      "lift": 0.21199958129550547,
-      "n_learned": 50,
-      "mode": "oracle"
+      "headless_topk_median": 0.3239522071589206,
+      "random_topk_median": 0.32193511770580835,
+      "lift": 0.002017089453112242,
+      "n_learned": 58,
+      "mode": "real_forge"
     },
     {
       "round": 1,
-      "headless_topk_median": 0.18886421786847857,
-      "random_topk_median": 0.1755510467714195,
-      "lift": 0.013313171097059068,
-      "n_learned": 100,
-      "mode": "oracle"
+      "headless_topk_median": 0.10677952848151845,
+      "random_topk_median": 0.10919632606964225,
+      "lift": -0.002416797588123798,
+      "n_learned": 116,
+      "mode": "real_forge"
     },
     {
       "round": 2,
-      "headless_topk_median": 0.3725812231622977,
-      "random_topk_median": 0.10260581465056588,
-      "lift": 0.2699754085117318,
-      "n_learned": 150,
-      "mode": "oracle"
+      "headless_topk_median": 0.4359151168726593,
+      "random_topk_median": 0.20054352259917518,
+      "lift": 0.23537159427348414,
+      "n_learned": 170,
+      "mode": "real_forge"
     },
     {
       "round": 3,
-      "headless_topk_median": 0.11069314655003282,
-      "random_topk_median": 0.16161921412568847,
-      "lift": -0.050926067575655654,
-      "n_learned": 200,
-      "mode": "oracle"
-    },
-    {
-      "round": 4,
-      "headless_topk_median": 0.34266817648393655,
-      "random_topk_median": 0.008643561379394732,
-      "lift": 0.33402461510454184,
-      "n_learned": 250,
-      "mode": "oracle"
-    },
-    {
-      "round": 5,
-      "headless_topk_median": 0.1845130315596229,
-      "random_topk_median": 0.014028649949718655,
-      "lift": 0.17048438160990426,
-      "n_learned": 300,
-      "mode": "oracle"
+      "headless_topk_median": 0.04592171427597458,
+      "random_topk_median": 0.21982862834160063,
+      "lift": -0.17390691406562606,
+      "n_learned": 222,
+      "mode": "real_forge"
     }
   ],
   "summary": {
-    "headless_mean": 0.25067848873612647,
-    "random_mean": 0.09253330706227873,
-    "lift_mean": 0.1581451816738478,
-    "continuous_improvement": -0.013901743921835297
+    "headless_mean": 0.22814214169726824,
+    "random_mean": 0.2128758986790566,
+    "lift_mean": 0.015266243018211632,
+    "continuous_improvement": -0.058641334506246104
   }
 }

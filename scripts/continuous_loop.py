@@ -102,7 +102,7 @@ def write_headless_selection_to_registry(designs_raw, scores, reg_path: Path):
     ts = time.strftime("%Y-%m-%dT%H:%M:%S")
     for i, (d, s) in enumerate(zip(designs_raw, scores)):
         rec = {
-            "experiment_id": "headless_sel", "design_id": f"D{i+1:04d}", "generation": 0,
+            "experiment_id": 1, "design_id": f"D{i+1:04d}", "generation": 0,
             "algorithm": "headless_selection", "seed": 0, "eval_index": i, "tag": "headless",
             "timestamp": ts, "score": float(s), "feasible": True,
             "params": {"radius_m": [float(x) for x in d[:4]],
@@ -118,9 +118,16 @@ def write_headless_selection_to_registry(designs_raw, scores, reg_path: Path):
 
 def run_forge_eval(forge_root: Path, seed_registry: Path, budget: int = 50, seed: int = 0,
                    method: str = "evolution_knowledge") -> dict:
-    """驱动 forge benchmark，用 headless 选的设计当初始种群，返回真实评估结果。"""
-    import subprocess
-    out_dir = forge_root / "runs" / f"headless_loop_r{seed}"
+    """驱动 forge benchmark，用 headless 选的设计当初始种群。
+
+    返回:
+      best_score    forge 搜索到的 best
+      evaluated     forge 评估的所有 feasible (归一化特征, score) —— 全部回流 GVF 学习用
+    """
+    import subprocess, time
+    # 每轮必须用唯一输出目录: forge benchmark 需要空 registry(它写 human baseline 当 lineage root),
+    # 复用目录会因旧记录报 "registry already holds N records"。
+    out_dir = forge_root / "runs" / f"headless_loop_{int(time.time()*1000)}"
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = ["go", "run", "./cmd/forge", "benchmark",
            "--budget", str(budget), "--seeds", str(seed),
@@ -129,12 +136,29 @@ def run_forge_eval(forge_root: Path, seed_registry: Path, budget: int = 50, seed
            "--out", str(out_dir), "--tag", f"headless_r{seed}"]
     r = subprocess.run(cmd, cwd=str(forge_root), capture_output=True, text=True)
     best_score = None
+    evaluated = []
     for line in r.stdout.splitlines():
         if line.strip().startswith("best:"):
             for tok in line.split():
                 if tok.startswith("score="):
                     best_score = float(tok.split("=")[1])
-    return {"best_score": best_score, "exit": r.returncode, "log_tail": r.stdout[-300:]}
+    # 读 forge 评估出的所有 feasible 设计，回流学习
+    reg_file = out_dir / "registry.jsonl"
+    if reg_file.exists():
+        for line in open(reg_file):
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not rec.get("feasible"):
+                continue
+            p = rec.get("params", {})
+            if "radius_m" in p and "current_A" in p:
+                vec = list(p["radius_m"]) + list(p.get("z_m", [])) + list(p["current_A"])
+                if len(vec) == 12:
+                    evaluated.append((design_to_feature(vec), rec.get("score", 0.0)))
+    return {"best_score": best_score, "exit": r.returncode, "evaluated": evaluated,
+            "stderr": r.stderr[-500:], "log_tail": r.stdout[-300:]}
 
 
 # ───────────────────────── [B] 学习核心 ─────────────────────────
@@ -202,9 +226,11 @@ def run_round(agent, registry_path: Path, n_cand: int = 200, k: int = 10,
         rand_res = run_forge_eval(forge_root, rand_reg, budget=50, seed=round_i)
         sel_score = sel_res["best_score"] if sel_res["best_score"] is not None else float("nan")
         rand_score = rand_res["best_score"] if rand_res["best_score"] is not None else float("nan")
-        # headless 用真实 best 学
-        for i, idx in enumerate(selected_idx):
-            agent.learn(cands[idx], sel_score)
+        # headless 用 forge 评估的全部 feasible 设计回流学习(不只 top-K —— 大幅增学习量)
+        for (feat, s) in sel_res.get("evaluated", []):
+            agent.learn(feat, s)
+        for (feat, s) in rand_res.get("evaluated", []):
+            agent.learn(feat, s)
     else:
         # 软验证: 用已知设计的最近邻 score 当 oracle（新候选 forge 没真算）
         oracle_scores = np.array([
