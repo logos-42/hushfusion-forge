@@ -103,16 +103,23 @@ def main() -> int:
                 _lines.append(_json.dumps(_rec))
             (_regen_fpath / "registry.jsonl").write_text("\n".join(_lines) + "\n")
             # forge benchmark 用 OML 选的设计当初始种群(evolution_knowledge 播种)
-            import subprocess as _sub
+            import os as _os, subprocess as _sub
             _out_dir = _regen_fpath / "out"
             _out_dir.mkdir(exist_ok=True)
             _cmd = ["go", "run", "./cmd/forge", "benchmark",
                     "--budget", "30", "--seeds", "0", "--methods", "evolution_knowledge",
                     "--knowledge", str(_regen_fpath), "--out", str(_out_dir), "--tag", "oml_op"]
-            _r = _sub.run(_cmd, cwd=str(args.forge_root), capture_output=True, text=True)
-            op_result = {"exit": _r.returncode, "tail": _r.stdout[-200:]}
+            # 子进程环境: 注入 go PATH(daemon 由 setsid 启动, 不继承交互 PATH)
+            _env = dict(_os.environ)
+            _env["PATH"] = "/work/liuyuanjie/go1.24/bin:/work/liuyuanjie/go/bin:" + _env.get("PATH", "")
+            _env["GOTOOLCHAIN"] = "local"
+            _env["GOPROXY"] = "https://goproxy.cn,direct"
+            _r = _sub.run(_cmd, cwd=str(args.forge_root), capture_output=True, text=True, env=_env)
+            op_result = {"exit": _r.returncode, "tail": _r.stdout[-200:], "err": _r.stderr[-200:]}
         except Exception as _e:
-            op_result = {"exit": -1, "tail": str(_e)}
+            import traceback as _tb
+            op_result = {"exit": -1, "tail": str(_e), "err": _tb.format_exc()[-500:]}
+            print(f"[round {rnd}] 操作forge异常: {_e}\n{op_result['err']}", flush=True)
 
         trend.append({"round": rnd, "query_mse": loss_before, "query_mse_adapted": loss_adapted,
                       "select_lift": lift, "hl_median": float(np.median(hl)),
