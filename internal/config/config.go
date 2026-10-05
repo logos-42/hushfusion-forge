@@ -22,7 +22,7 @@ const MU0 = 4.0e-7 * math.Pi
 // 它住在 config 而不是 cmd/ 的理由是这个数字会被写进 runs/<tag>/results.json 的
 // meta（否则「用今天的判据复现昨天的 run」这件事无法被机器判定）, 而写入方在
 // internal/experiment —— cmd/ 在依赖图的最下游, 把版本放那里会让 experiment 反向依赖它。
-const ForgeVersion = "0.1.3"
+const ForgeVersion = "0.2"
 
 // Bounds 是单个线圈的搜索盒子 [SI]。
 type Bounds struct {

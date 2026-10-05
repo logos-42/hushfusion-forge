@@ -2,6 +2,9 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-05 | 版本跃迁 | 0.1.3 → 0.2（MINOR，判据数字不变） | `ForgeVersion = "0.2"`；三份冻结 trace（v1/v2/mu）+ 两份 world_structure 用 `--record`/`--write` 重录重测，**除版本串外逐位一致（0/8、0/10、0/17）** ⟹ 版本税干净交掉、无物理漂移。门禁 19 通过 / 1 失败（G19 弱档，既有）/ 3 跳过（phase1 是 0.1.3 判据，如实 SKIP）；G14 由 0.1.3 时代的红变绿。 | `bash scripts/verify.sh phase1` → 19/1/3；CHANGELOG 0.2 条目；README badge 0.2 |
+
+|---|---|---|---|---|
 | 2026-09-26 | 启动 | 初始化知识系统 | 建立 wiki / manifest / 21 个校验脚本 / repo 级规则（AGENTS.md、CLAUDE.md、.cursorrules、.windsurfrules） | `wiki_check.py`、`raw_manifest_check.py`、`wiki_lint.py --strict=v2` |
 | 2026-09-26 | Phase 0 验收 | 人机对比闭环跑通 | Go 主栈 12 个包 + CLI 全部实装；phase0 跑出 12001 条记录（4 方法 × 3 seed × 1000 评估），机器最优 1.381419 vs 人工基线 −0.290571（Δ +1.672），4 方法 3/3 赢 | `runs/phase0/{registry.jsonl,results.json,report.md}`；`bash scripts/verify.sh phase0` 15/15 PASS |
 | 2026-09-26 | 真实缺陷 1 | 跨语言"分歧"实为钳位约定 | 独立 oracle 复评最优设计时 B_mid 差 4.05e-02；查明是 Go 对距导线 5 mm 内的采样点钳住 alpha2 而精确闭式解不钳。带同一半径复算后差 **1.7e-15**；不带则稳定复现 4.05e-02（反事实对照） | G10 写死 `--proximity-floor 0.005`；`analyze.py --proximity-floor`（默认 0.005）；PLAN.md §3"Phase 0 的一个真实发现" |

@@ -7,7 +7,7 @@
  ],
  "protocol": 2,
  "spec_sha256": "7cbf60e8eae081781bd7bdd2f204f57805049b7e1a27139608aa99a94179e2b3",
- "engine_version": "0.1.3",
+ "engine_version": "0.2",
  "instrument": {
   "k_actions": 8,
   "action_seed": 20260927,
@@ -141,7 +141,7 @@
     0.115836840456639
    ]
   ],
-  "runtime_seconds": 33.407
+  "runtime_seconds": 10.738
  },
  "control_group": {
   "semantics": "absolute parameters + no precondition gate + no source switch + no clamping (docs/world-structure.md section 4)",
