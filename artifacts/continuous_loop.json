@@ -2,41 +2,33 @@
   "metrics": [
     {
       "round": 0,
-      "headless_topk_median": 0.3239522071589206,
-      "random_topk_median": 0.32193511770580835,
-      "lift": 0.002017089453112242,
-      "n_learned": 58,
-      "mode": "real_forge"
+      "headless_topk_median": 0.031929701046730735,
+      "random_topk_median": 0.07653692480841323,
+      "lift": -0.044607223761682496,
+      "n_learned": 50,
+      "mode": "oracle"
     },
     {
       "round": 1,
-      "headless_topk_median": 0.10677952848151845,
-      "random_topk_median": 0.10919632606964225,
-      "lift": -0.002416797588123798,
-      "n_learned": 116,
-      "mode": "real_forge"
+      "headless_topk_median": 0.20177823196947525,
+      "random_topk_median": -0.08078197246134572,
+      "lift": 0.28256020443082097,
+      "n_learned": 100,
+      "mode": "oracle"
     },
     {
       "round": 2,
-      "headless_topk_median": 0.4359151168726593,
-      "random_topk_median": 0.20054352259917518,
-      "lift": 0.23537159427348414,
-      "n_learned": 170,
-      "mode": "real_forge"
-    },
-    {
-      "round": 3,
-      "headless_topk_median": 0.04592171427597458,
-      "random_topk_median": 0.21982862834160063,
-      "lift": -0.17390691406562606,
-      "n_learned": 222,
-      "mode": "real_forge"
+      "headless_topk_median": 0.3246443867765827,
+      "random_topk_median": 0.20796245002543323,
+      "lift": 0.11668193675114946,
+      "n_learned": 150,
+      "mode": "oracle"
     }
   ],
   "summary": {
-    "headless_mean": 0.22814214169726824,
-    "random_mean": 0.2128758986790566,
-    "lift_mean": 0.015266243018211632,
-    "continuous_improvement": -0.058641334506246104
+    "headless_mean": 0.18611743993092955,
+    "random_mean": 0.06790580079083358,
+    "lift_mean": 0.11821163914009598,
+    "continuous_improvement": 0.0
   }
 }

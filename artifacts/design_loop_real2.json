@@ -1,0 +1,94 @@
+{
+  "metrics": [
+    {
+      "round": 0,
+      "headless_median": -1.8989708038799975,
+      "random_median": -0.47339878006685737,
+      "lift": -1.4255720238131402,
+      "n_learn": 7241
+    },
+    {
+      "round": 1,
+      "headless_median": -2.0516783588702654,
+      "random_median": -1.9493049206395603,
+      "lift": -0.1023734382307051,
+      "n_learn": 7261
+    },
+    {
+      "round": 2,
+      "headless_median": -0.5736396916250247,
+      "random_median": -1.094610513695952,
+      "lift": 0.5209708220709274,
+      "n_learn": 7281
+    },
+    {
+      "round": 3,
+      "headless_median": -0.441488590866458,
+      "random_median": -1.2984950361317629,
+      "lift": 0.8570064452653049,
+      "n_learn": 7301
+    },
+    {
+      "round": 4,
+      "headless_median": -1.0133190340141796,
+      "random_median": -1.2156986513953534,
+      "lift": 0.20237961738117383,
+      "n_learn": 7321
+    },
+    {
+      "round": 5,
+      "headless_median": -0.5128699325900306,
+      "random_median": -0.7128342283394513,
+      "lift": 0.19996429574942076,
+      "n_learn": 7341
+    },
+    {
+      "round": 6,
+      "headless_median": -0.9148998606159704,
+      "random_median": -2.185327534311048,
+      "lift": 1.2704276736950775,
+      "n_learn": 7361
+    },
+    {
+      "round": 7,
+      "headless_median": -0.5663988051148244,
+      "random_median": -1.619981497926931,
+      "lift": 1.0535826928121064,
+      "n_learn": 7381
+    },
+    {
+      "round": 8,
+      "headless_median": -0.7647491950405089,
+      "random_median": -1.2117956184407805,
+      "lift": 0.4470464234002717,
+      "n_learn": 7401
+    },
+    {
+      "round": 9,
+      "headless_median": -1.7668762753541216,
+      "random_median": -2.9513507507411862,
+      "lift": 1.1844744753870646,
+      "n_learn": 7421
+    },
+    {
+      "round": 10,
+      "headless_median": -1.4333545950521835,
+      "random_median": -0.7266048341890572,
+      "lift": -0.7067497608631264,
+      "n_learn": 7441
+    },
+    {
+      "round": 11,
+      "headless_median": -14.646376056633361,
+      "random_median": -5.129423770123651,
+      "lift": -9.51695228650971,
+      "n_learn": 7461
+    }
+  ],
+  "summary": {
+    "headless_mean": -2.2153850999714106,
+    "random_mean": -1.714068844666799,
+    "lift_mean": -0.5013162553046112,
+    "continuous_improvement": -4.347878292664495
+  }
+}
