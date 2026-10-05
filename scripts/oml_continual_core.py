@@ -64,3 +64,49 @@ class OMLDesignLearner:
         """在候选集上选预测价值 top-k(利用当前持续学到的价值)。"""
         pred = self.predict(X)
         return np.argsort(-pred)[:k]
+
+    def _sparsity(self, X):
+        """特征空间稀疏度(每个点到近邻的平均距离) —— 探索信号: 稀疏=未充分学习=值得探索。"""
+        from scipy.spatial import cKDTree
+        X = np.asarray(X, dtype=float)
+        if len(X) < 8:
+            return np.ones(len(X))
+        tree = cKDTree(X)
+        # 到第 3 近邻的平均距离(自距离=0, 从第2近邻起)
+        d, _ = tree.query(X, k=min(8, len(X)))
+        if d.ndim == 1:
+            d = d[:, None]
+        return d[:, 1:].mean(axis=1) if d.shape[1] > 1 else d[:, 0]
+
+    def select_topk_ucb(self, X, k, lam=0.5):
+        """UCB风格选样: 预测价值 + λ×稀疏度。探索价值高但学习稀疏(不确定)的设计。"""
+        pred = self.predict(X)
+        sp = self._sparsity(X)
+        sp_n = (sp - sp.min()) / (sp.max() - sp.min() + 1e-9)
+        ucb = pred + lam * sp_n
+        return np.argsort(-ucb)[:k]
+
+    def select_topk_diverse(self, X, k, lam=0.3):
+        """多样性选样: 价值 + λ×多样性(覆盖更广设计空间, 不密集扎堆同类型)。"""
+        pred = self.predict(X)
+        Xa = np.asarray(X, dtype=float)
+        n = len(Xa)
+        order = np.argsort(-pred)
+        chosen, bools = [], np.zeros(n, dtype=bool)
+        for _ in range(min(k, n)):
+            best, best_score = None, -1e18
+            for i in order:
+                if bools[i]:
+                    continue
+                # 多样性: 距已选近邻的最小距离(越大越多样化)
+                score = pred[i]
+                if chosen:
+                    dmin = float(np.min(np.linalg.norm(Xa[chosen] - Xa[i], axis=1)))
+                    score += lam * dmin
+                if score > best_score:
+                    best_score, best = score, i
+            if best is None:
+                break
+            chosen.append(best)
+            bools[best] = True
+        return np.array(chosen, dtype=int)
