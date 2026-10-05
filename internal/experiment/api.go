@@ -201,6 +201,9 @@ type Opts struct {
 	Workers  int
 	Baseline *baseline.Baseline
 	Progress func(method string, seed int, res search.Result, seconds float64)
+	// KnowledgeWarm 是 evolution_knowledge 的整代播种（上一轮 registry 学到的最优设计）。
+	// 为空时 evolution_knowledge 退化为冷 evolution。
+	KnowledgeWarm [][]float64
 }
 
 const (
@@ -345,6 +348,9 @@ func RunBenchmark(reg *registry.Registry, spec config.Spec, opt Opts) (*Report, 
 			o.BaselineScore = baseRec.Score
 			if m == warmStartMethod {
 				o.WarmStart = append([]float64(nil), baseDesign...)
+			}
+			if m == search.AlgorithmEvolutionKnowledge && len(opt.KnowledgeWarm) > 0 {
+				o.WarmPopulation = opt.KnowledgeWarm
 			}
 			started := time.Now()
 			res, err := search.Run(m, sc, o)

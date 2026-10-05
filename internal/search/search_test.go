@@ -193,7 +193,7 @@ func sameResult(got, want Result, strictIDs bool) string {
 }
 
 func allMethods() []string {
-	return []string{AlgorithmRandom, AlgorithmLHS, AlgorithmEvolution, AlgorithmEvolutionWarm}
+	return []string{AlgorithmRandom, AlgorithmLHS, AlgorithmEvolution, AlgorithmEvolutionWarm, AlgorithmEvolutionKnowledge}
 }
 
 // checkInsideBoxAndCanonical 断言交给 scorer 的每个设计都在
@@ -249,8 +249,8 @@ func TestDefaultOptionsMatchesDocumentedDefaults(t *testing.T) {
 }
 
 func TestConstantsCoverMethods(t *testing.T) {
-	if len(Methods) != 4 {
-		t.Fatalf("Methods has %d entries, want 4: %v", len(Methods), MethodNames())
+	if len(Methods) != 5 {
+		t.Fatalf("Methods has %d entries, want 5: %v", len(Methods), MethodNames())
 	}
 	want := allMethods()
 	sort.Strings(want)
@@ -934,5 +934,34 @@ func TestToyScorerSanity(t *testing.T) {
 	r2 := sc.Score(hi, runner.Meta{EvalIndex: 1})
 	if r1.DesignID != "D0001" || r2.DesignID != "D0002" {
 		t.Fatalf("toy ids = %q, %q, want D0001, D0002", r1.DesignID, r2.DesignID)
+	}
+}
+
+// TestWarmPopulationSeedsFirstGen: evolution_knowledge 用 WarmPopulation 铺满首代。
+// 给一个已知高分的种群, 小预算下 best 应直接命中它(继承), 而不是冷随机起步。
+func TestWarmPopulationSeedsFirstGen(t *testing.T) {
+	spec := config.DefaultSpec()
+	// 手工构造 16 个可行设计(全在盒内、canonical)当 WarmPopulation
+	pop := make([][]float64, 0, 16)
+	for i := 0; i < 16; i++ {
+		d := make([]float64, spec.NParams())
+		for j := range d {
+			lo, hi := spec.Lower()[j], spec.Upper()[j]
+			d[j] = lo + (hi-lo)*float64((i+j)%10)/10.0
+		}
+		pop = append(pop, d)
+	}
+	opt := toyOptions(spec, 30, 0)
+	opt.WarmPopulation = pop
+	res, err := Run(AlgorithmEvolutionKnowledge, newToyScorer(spec), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Algorithm != AlgorithmEvolutionKnowledge {
+		t.Fatalf("Algorithm = %q, want %q", res.Algorithm, AlgorithmEvolutionKnowledge)
+	}
+	// WarmPopulation 非空 ⟹ 首代就评估了 16 个, 不可能是纯随机起步
+	if res.NEvals < 16 {
+		t.Fatalf("NEvals = %d, want >= 16 (WarmPopulation should seed first gen)", res.NEvals)
 	}
 }

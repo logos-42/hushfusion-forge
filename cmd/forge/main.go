@@ -90,7 +90,7 @@ const (
 	tolSolvers = 1e-9 // 相对, analytic vs discrete Biot–Savart
 )
 
-var allMethods = []string{"random", "lhs", "evolution", "evolution_warm"}
+var allMethods = []string{"random", "lhs", "evolution", "evolution_warm", "evolution_knowledge"}
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -282,6 +282,46 @@ func openExistingRegistry(path string) (*registry.Registry, error) {
 		return nil, fmt.Errorf("registry %s does not exist (run 'forge benchmark' or 'forge run' first)", path)
 	}
 	return openRegistry(path)
+}
+
+// topDesigns 从 registry 读 feasible 且 score 最高的前 K 个设计, 转成搜索设计向量。
+// 这是 evolution_knowledge 的整代播种来源 —— 继承上一轮学到的最优, 而非人工基线。
+func topDesigns(reg *registry.Registry, spec config.Spec, k int) ([][]float64, error) {
+	recs, err := reg.Records()
+	if err != nil {
+		return nil, err
+	}
+	// 收集 feasible 记录, 按 score 降序
+	feasible := make([]registry.Record, 0, len(recs))
+	for _, r := range recs {
+		if r.Feasible {
+			feasible = append(feasible, r)
+		}
+	}
+	sort.Slice(feasible, func(i, j int) bool { return feasible[i].Score > feasible[j].Score })
+	if k > len(feasible) {
+		k = len(feasible)
+	}
+	if k == 0 {
+		return nil, nil
+	}
+	nCoils := len(feasible[0].Params.RadiusM)
+	out := make([][]float64, 0, k)
+	for _, r := range feasible[:k] {
+		d := make([]float64, 0, 3*nCoils)
+		d = append(d, r.Params.RadiusM...)
+		if len(r.Params.ZM) == nCoils {
+			d = append(d, r.Params.ZM...)
+		}
+		if len(r.Params.CurrentA) == nCoils {
+			d = append(d, r.Params.CurrentA...)
+		}
+		if len(d) != spec.NParams() {
+			continue // 结构不匹配的设计向量跳过(不应发生, 防御性)
+		}
+		out = append(out, d)
+	}
+	return out, nil
 }
 
 func resolveCommit() string {
@@ -1722,6 +1762,7 @@ func cmdBenchmark(args []string) int {
 	out := fs.String("out", defRunDir, "run directory: registry.jsonl and results.json land here")
 	tag := fs.String("tag", "", "run tag (default: the base name of --out)")
 	workers := fs.Int("workers", 1, "evaluation workers")
+	knowledgeDir := fs.String("knowledge", "", "registry dir to seed evolution_knowledge from (reads feasible top-K designs by score)")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
@@ -1769,14 +1810,34 @@ func cmdBenchmark(args []string) int {
 	note("benchmark: tag=%s budget=%d seeds=%v methods=%v workers=%d", runTag, *budget, seedList, methodList, *workers)
 	note("human baseline score: %v", baseScore)
 	note("registry: %s", regPath)
+	// 知识复用(evolution_knowledge): 从 --knowledge 指定的 registry 读 feasible 且
+	// score 最高的前 K 个设计作为整代播种。K 取 mu(默认 16) —— 铺满首代。
+	var knowledgeWarm [][]float64
+	if *knowledgeDir != "" {
+		kpath := filepath.Join(*knowledgeDir, "registry.jsonl")
+		kreg, err := openRegistry(kpath)
+		if err != nil {
+			return fail("--knowledge: %v", err)
+		}
+		know, err := topDesigns(kreg, spec, 16)
+		if err != nil {
+			return fail("--knowledge: %v", err)
+		}
+		if len(know) == 0 {
+			return fail("--knowledge: no feasible designs in %s", kpath)
+		}
+		knowledgeWarm = know
+		note("--knowledge: seeding %d designs from %s", len(know), kpath)
+	}
 	start := time.Now()
 	rep, err := experiment.RunBenchmark(reg, spec, experiment.Opts{
-		Budget:   *budget,
-		Seeds:    seedList,
-		Methods:  methodList,
-		Tag:      runTag,
-		Workers:  *workers,
-		Baseline: &base,
+		Budget:        *budget,
+		Seeds:         seedList,
+		Methods:       methodList,
+		Tag:           runTag,
+		Workers:       *workers,
+		Baseline:      &base,
+		KnowledgeWarm: knowledgeWarm,
 		Progress: func(method string, seed int, res search.Result, seconds float64) {
 			note("  %-16s seed=%-4d evals=%-6d best_score=%-24v %.1fs",
 				method, seed, res.NEvals, res.BestScore, seconds)

@@ -29,6 +29,7 @@ type member struct {
 
 // evolutionRun 是 Evolution 的主体, warm-start 设计与算法名
 // 由外部传入。warm 为空时初始种群是纯 i.i.d. 随机。
+// opt.WarmPopulation 非空时, 首代直接铺这份(整代播种, 知识复用实验 A)。
 func evolutionRun(sc runner.Scorer, opt Options, name string, warm []float64) Result {
 	spec := opt.Spec
 	budget := budgetOf(opt)
@@ -45,7 +46,17 @@ func evolutionRun(sc runner.Scorer, opt Options, name string, warm []float64) Re
 	// --- 第 0 代: 初始种群(warm start 最先抽出) --------------------------
 	nInit := min(mu, budget)
 	xs := make([][]float64, 0, nInit)
-	for i := 0; i < nInit; i++ {
+	// 知识复用(实验 A 真目标): 若给了整代播种集合, 首代就铺这份(上一轮学到的最优),
+	// 而不是单点 warm + 随机补。空则退回原单点语义(行为逐位不变)。
+	if len(opt.WarmPopulation) > 0 {
+		for _, w := range opt.WarmPopulation {
+			if len(xs) >= nInit {
+				break
+			}
+			xs = append(xs, Canonicalise(append([]float64(nil), w...), spec))
+		}
+	}
+	for i := len(xs); i < nInit; i++ {
 		if i == 0 && len(warm) == d {
 			xs = append(xs, Canonicalise(append([]float64(nil), warm...), spec))
 			continue

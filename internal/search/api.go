@@ -43,6 +43,10 @@ const (
 	AlgorithmLHS           = "lhs"
 	AlgorithmEvolution     = "evolution"
 	AlgorithmEvolutionWarm = "evolution_warm"
+	// evolution_knowledge = 真·知识复用: 初始种群由**上一轮 search 学到的最优设计**
+	// 播种(从 registry 读 feasible 且 score 最高的前 K 个), 而非人工基线。这是
+	// 文档"知识复用"实验 A 的核心对照 —— 继承学到的东西, 不继承教科书。
+	AlgorithmEvolutionKnowledge = "evolution_knowledge"
 )
 
 // 文档化的默认值(由 DefaultOptions 镜像)。
@@ -67,8 +71,13 @@ type Options struct {
 	Sigma0        float64 // evolution: 初始 mutation 幅度(盒子的比例)
 	SigmaFloor    float64 // evolution: mutation 最小幅度
 	WarmStart     []float64
-	Workers       int // <=1 串行; >1 时并发评估一代
-	Algorithm     string
+	// WarmPopulation 是可选的"整代播种"：进化策略的**首代**直接用这份设计集合
+	// 铺满（feasible 且从上一轮 registry 学到的最优设计），而不是从单点 + 随机补。
+	// 语义：非空时优先于 WarmStart；为空则退回原来的单点 + 随机补齐（行为逐位不变）。
+	// 这是文档"知识复用"实验 A 的真目标 —— 继承上一轮学到的最优，而非人工基线。
+	WarmPopulation [][]float64
+	Workers        int // <=1 串行; >1 时并发评估一代
+	Algorithm      string
 }
 
 // DefaultOptions 镜像 Python reference 与报告中写明的设置:
@@ -191,12 +200,20 @@ func EvolutionWarm(sc runner.Scorer, opt Options) Result {
 	return evolutionRun(sc, opt, AlgorithmEvolutionWarm, warm)
 }
 
+// EvolutionKnowledge 是 Evolution 用**上一轮学到的最优**播种首代(整代)。
+// 它不依赖 opt.WarmStart(那是人工基线); 依赖 opt.WarmPopulation(调用方从
+// registry 读出 top-K 设计后填入)。WarmPopulation 为空时退化为冷 evolution。
+func EvolutionKnowledge(sc runner.Scorer, opt Options) Result {
+	return evolutionRun(sc, opt, AlgorithmEvolutionKnowledge, nil)
+}
+
 // Methods 把方法名映射到其实现。
 var Methods = map[string]func(runner.Scorer, Options) Result{
-	AlgorithmRandom:        Random,
-	AlgorithmLHS:           LHS,
-	AlgorithmEvolution:     Evolution,
-	AlgorithmEvolutionWarm: EvolutionWarm,
+	AlgorithmRandom:             Random,
+	AlgorithmLHS:                LHS,
+	AlgorithmEvolution:          Evolution,
+	AlgorithmEvolutionWarm:      EvolutionWarm,
+	AlgorithmEvolutionKnowledge: EvolutionKnowledge,
 }
 
 // MethodNames 返回已知方法名, 已排序(供 CLI 帮助与错误
