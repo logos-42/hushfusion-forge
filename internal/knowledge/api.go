@@ -39,6 +39,11 @@ type MineOpts struct {
 	MinN      int
 	MinAbsRho float64
 	TopK      int
+	// MinAgreement 是同号 run 的最低占比门槛(0~1)。默认 1.0 = 必须每一轮 run 都同号。
+	// 降到 <1.0(如 0.8)会放宽到"多数 run 同号", 让 field/mirror/volume 这类在 high-score
+	// 设计里有权衡(符号会翻转)的项也能挖出候选规则 —— 代价是每条规则带 sign_agreement
+	// 明确标出强度, 使用者自行决定信不信。默认 1.0 保持历史行为逐位不变。
+	MinAgreement float64
 }
 
 // 默认阈值，在 MineOpts 的某个字段留成零值时生效。
@@ -209,6 +214,9 @@ func MineRules(recs []registry.Record, spec config.Spec, opt MineOpts) []Rule {
 	if opt.TopK <= 0 {
 		opt.TopK = defaultTopK
 	}
+	if opt.MinAgreement <= 0 {
+		opt.MinAgreement = 1.0
+	}
 	perRunMin := opt.MinN / 8
 	if perRunMin < minRecordsPerRun {
 		perRunMin = minRecordsPerRun
@@ -276,8 +284,9 @@ func MineRules(recs []registry.Record, spec config.Spec, opt MineOpts) []Rule {
 				rhos = append(rhos, Spearman(xs, ys))
 			}
 			majority, agree := majoritySign(rhos)
-			if majority == 0 || agree != len(rhos) {
-				continue // 未在每一轮运行中以同一符号复现
+			agreeFrac := float64(agree) / float64(len(rhos))
+			if majority == 0 || agreeFrac < opt.MinAgreement {
+				continue // 未在足够比例的 run 中以同一符号复现
 			}
 			minAbs := math.Abs(rhos[0])
 			for _, r := range rhos[1:] {

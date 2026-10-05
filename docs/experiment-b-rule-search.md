@@ -83,6 +83,31 @@ field/mirror/volume/ripple，所以 Rule 方法只能优化成本一个维度，
 - 测试：方法数断言 5→7。
 - 数据：`runs/phaseB/b{10..1000}/`（每次 4 方法 × 5 seeds）。
 
+
+## 7. 加厚规则的尝试 —— 诚实的负面结论
+
+为"加厚规则"给 `forge rules` 加了 `--min-agreement`（同号 run 占比门槛，默认 1.0 保持历史行为）。
+但实测表明 **field/mirror/volume 在这个目标函数里不存在稳定的参数-项单调规则**：
+
+| 门槛 | 挖出规则 | 覆盖 term |
+|---|---|---|
+| min-n=30, ρ≥0.2, agree=1.0 | 3 条 | 全 cost |
+| min-n=150, ρ≥0.2, agree=0.8 | 3 条 | 全 cost |
+| min-n=150, ρ≥0.1, agree=0.8 | **5 条** | 全 cost（I_0..I_3, r_2 → cost） |
+
+即使把 |ρ| 门槛降到 0.1、同号降到 80%，**没有任何一条 field/mirror/volume 规则被挖出**。
+⟹ 这是目标函数结构决定的，不是挖掘方法太严：
+
+> **cost 是唯一存在稳定参数→项单调关系的项**。field/mirror/volume 在 high-score 设计里是强权衡的
+> （最优解落在权衡前沿上），任何单参数对它们的单调性都不跨 run 成立。
+
+所以"规则"天然偏向 cost。这直接解释了 Phase B 为什么 Rule 弱：**可用规则只能优化成本一维**，
+够不到驱动高分的 field/mirror/volume。要让规则有用，必须把"参数→项"升级为"参数→score"（多变量，
+含权衡），或引入非线性/交互项 —— 那是比挖单调规则更深的一步，留给 Phase D（主动选实验）之后。
+
+**Phase C 的现实**：既然规则只有 3 条 cost 规则（"降 I_0/I_1/I_3"），跨 spec 测试就测这 3 条
+在 S1/S2/S3 还成不成立 —— 这是可执行的，且有信息量（若跨 spec 失效，说明规则是 task-specific heuristic）。
+
 ## 6. 下一步（文档 Day 11-14 / Phase C 前）
 
 1. **加厚规则**：用更大的 registry（phase1 全 12001 条，不只 min-n=150）挖覆盖 field/mirror/volume/ripple 的规则。

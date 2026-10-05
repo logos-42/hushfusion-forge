@@ -286,6 +286,25 @@ func openExistingRegistry(path string) (*registry.Registry, error) {
 	return openRegistry(path)
 }
 
+// findVariant 在 experiment.SpecVariants 里按名字查找一个扰动。
+func findVariant(name string) (experiment.Variant, bool) {
+	for _, v := range experiment.SpecVariants {
+		if v.Name == name {
+			return v, true
+		}
+	}
+	return experiment.Variant{}, false
+}
+
+// variantNames 返回所有可用扰动的名字。
+func variantNames() string {
+	names := make([]string, 0, len(experiment.SpecVariants))
+	for _, v := range experiment.SpecVariants {
+		names = append(names, v.Name)
+	}
+	return strings.Join(names, ", ")
+}
+
 // topDesigns 从 registry 读 feasible 且 score 最高的前 K 个设计, 转成搜索设计向量。
 // 这是 evolution_knowledge 的整代播种来源 —— 继承上一轮学到的最优, 而非人工基线。
 func topDesigns(reg *registry.Registry, spec config.Spec, k int) ([][]float64, error) {
@@ -1883,6 +1902,7 @@ func cmdBenchmark(args []string) int {
 	knowledgeDir := fs.String("knowledge", "", "registry dir to seed evolution_knowledge from (reads feasible top-K designs by score)")
 	ruleFile := fs.String("rule", "", "design_rules.md to seed evolution_rule / evolution_champion_rule from")
 	target := fs.Float64("target", 0.0, "target score for Evals-to-Target report (0 = disabled)")
+	specVariant := fs.String("spec-variant", "", "apply a spec variant for Knowledge Survival: one of b_ref=0.8T / b_ref=1.2T / z_cell=0.60m / z_cell=1.00m / r_plasma=0.12m / r_plasma=0.18m")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
@@ -1914,6 +1934,19 @@ func cmdBenchmark(args []string) int {
 	}
 
 	spec := defaultSpec()
+	if *specVariant != "" {
+		v, ok := findVariant(*specVariant)
+		if !ok {
+			return fail("--spec-variant: unknown %q (known: %s)", *specVariant, variantNames())
+		}
+		applied, err := experiment.ApplyVariant(spec, v)
+		if err != nil {
+			return fail("--spec-variant: %v", err)
+		}
+		spec = applied
+		note("--spec-variant: applied %s (b_ref=%.2f z_cell=%.2f r_plasma=%.2f)",
+			*specVariant, spec.BRef, spec.ZCell, spec.RPlasma)
+	}
 	base, err := baselineDesign()
 	if err != nil {
 		return fail("%v", err)
@@ -2078,6 +2111,7 @@ func cmdRules(args []string) int {
 	minN := fs.Int("min-n", 150, "minimum designs per run for a run to count")
 	minRho := fs.Float64("min-abs-rho", 0.20, "minimum worst-case |rho| for a rule to be kept")
 	topK := fs.Int("top-k", 12, "maximum number of rules to keep")
+	minAgree := fs.Float64("min-agreement", 1.0, "minimum sign-agreement fraction (0-1); <1.0 allows rules with tradeoff terms like field/mirror/volume")
 	tag := fs.String("tag", "", "tag recorded in the knowledge base (default: the registry's directory)")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
@@ -2101,14 +2135,14 @@ func cmdRules(args []string) int {
 	}
 
 	rules := knowledge.MineRules(recs, spec, knowledge.MineOpts{
-		MinN: *minN, MinAbsRho: *minRho, TopK: *topK,
+		MinN: *minN, MinAbsRho: *minRho, TopK: *topK, MinAgreement: *minAgree,
 	})
 	if err := knowledge.WriteRulesMD(rules, *out, spec, len(recs), runTag); err != nil {
 		return fail("knowledge.WriteRulesMD: %v", err)
 	}
 
 	note("rules: %d mined from %d records (%s)", len(rules), len(recs), *regPath)
-	note("thresholds: min_n=%d min_abs_rho=%v top_k=%d", *minN, *minRho, *topK)
+	note("thresholds: min_n=%d min_abs_rho=%v top_k=%d min_agreement=%.2f", *minN, *minRho, *topK, *minAgree)
 	if len(rules) > 0 {
 		note("%-8s %-10s %-10s %-10s %-10s %-8s %-8s", "rule", "parameter", "term", "rho", "agree", "n_design", "n_runs")
 		for _, r := range rules {
