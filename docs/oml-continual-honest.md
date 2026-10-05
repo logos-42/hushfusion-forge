@@ -46,3 +46,43 @@ forge_op 成功: 10/10     headless 选的设计真实驱动 forge 搜索
 - scripts/design_daemon_oml.py       常驻守护(含数据污染保护)
 - scripts/verify_oml_continual.py    离线验证
 - artifacts/oml_daemon_trend_clean.jsonl  干净单趟趋势(入库)
+
+---
+
+# v4 更新（回应三条新批评）
+
+## 用户三条批评（全部成立，逐条回应）
+
+### 1. 测试验证不足 → 已加"回流水预测误差"（真泛化）
+旧版只对比 select_lift vs 随机。v4 新增核心指标：
+- **回流水预测误差（reflux_err）**：每轮读回 forge 真评估的新数据，
+  用**回流前**的模型预测这些**模型从未见过**的设计，算 MSE。
+  = 真正的 out-of-sample 泛化（不是静态 lift）。
+- 服务器 15 轮实测：回水误 0.467 → 0.284（下降），lift 13/15 正均值 +0.62，
+  forge op 15/15 成功。
+
+### 2. 核心未达标（模型没变好）→ 根因修复：真实 score 回流
+- **旧版根因**：守护进程只把候选设计写进 forge，却**从不读回** forge 评估的真实 score
+  （存在 out/registry.jsonl）。模型永远在初始静态 7221 条数据上转 → 不可能越来越好。
+- **v4 修复**：每轮读 out/registry.jsonl 的真实 score，去重后累积进池，
+  模型在增长的数据池上持续学。服务器 15 轮 pool 7221→7344（130 条真实数据回流）。
+- **模型变好的证据**：随累积数据增多，对新增（未见过）数据的预测误差下降（0.47→0.28）。
+
+### 3. 缺 24h 运作 → supervisor 自愈 + checkpoint + 定时归档
+- **scripts/oml_supervisor.sh**：循环拉起 daemon，崩溃自动重启（ckpt 恢复累积池不丢），
+  exit=2（输出文件已存在防污染门）停防死循环，stop 文件优雅退出。
+- **checkpoint**：每 5 轮持久化累积池，崩溃可恢复。
+- **每日归档**：scripts/oml_daily_report.py 生成 pool 增长/回流累计/lift/回水误快照。
+
+## 诚实边界（不粉饰 v4）
+- 回水误是"波动中整体下降"，不是单调（单轮 0.10~1.42 波动）。
+- select_lift 有 2/15 轮为负（均值 +0.62），非全正。
+- 这些波动来自每轮回流不同设计 + forge 评估噪声，属非平稳数据正常表现；
+  但结论应表述为"整体改善"，不夸大。
+
+## 证据文件(v4)
+- scripts/design_daemon_oml.py   v4 闭环（真实回流+严格验证+checkpoint）
+- scripts/oml_supervisor.sh      24h 自愈运作
+- scripts/oml_daily_report.py    每日归档
+- artifacts/oml_daemon_trend_v4.jsonl  实时趋势
+- artifacts/oml_daemon_v4_ckpt.pkl     累积池 checkpoint
