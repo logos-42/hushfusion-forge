@@ -163,28 +163,64 @@ def run_forge_eval(forge_root: Path, seed_registry: Path, budget: int = 50, seed
 
 # ───────────────────────── [B] 学习核心 ─────────────────────────
 class HeadlessDesignAgent:
-    """用 headless 持续学习价值函数 + 选样器，学"哪个设计值得评估"。"""
+    """用 headless 的非线性价值函数（PLNHead，非 GVF 线性）学"哪个设计值得评估"。
 
-    def __init__(self, feature_dim: int, seed: int = 0):
-        # GVF: 设计价值函数(设计向量 → 价值)。+1 是偏置项。
-        self.gvf = GVF(name="design_value", dim=feature_dim + 1, seed=seed)
+    为什么换：实验证明 GVF（线性 TD value=w·φ）抓不住 12 维电磁设计空间的组合结构
+    （真 forge 评估 lift -0.137，被随机打败）。PLNHead 是 Linear→Tanh→Linear 非线性
+    MLP + per-feature 步长(Meta-SGD) + OML 双循环 —— headless 真正的非线性持续学习组件。
+    """
+
+    def __init__(self, feature_dim: int, seed: int = 0, d_model: int = 64,
+                 lr: float = 1e-3, device: str = "cpu"):
+        import torch
+        from hibs_lnn.pln_head import PLNHead
+        torch.manual_seed(seed)
         self.feature_dim = feature_dim
         self.seed = seed
-        self.history = []   # (设计, score, gvf预测)
+        self.device = device
+        self.net = PLNHead(input_dim=feature_dim, d_model=d_model, n_classes=1).to(device)
+        self.opt = torch.optim.Adam(self.net.parameters(), lr=lr)
+        self.loss_fn = torch.nn.MSELoss()
+        self.history = []
 
-    def _phi(self, design) -> np.ndarray:
-        """设计向量 → GVF 特征（+1 偏置）。"""
-        return np.r_[1.0, design]
+    def learn(self, design, score, epochs: int = 5):
+        """在线学习几条 (设计→score) 经验（用梯度下降拟合，替代 GVF 的线性 TD）。"""
+        import torch
+        x = torch.tensor(np.array([design], dtype=float), dtype=torch.float32,
+                         device=self.device)
+        y = torch.tensor([[float(score)]], dtype=torch.float32, device=self.device)
+        x = x.detach().requires_grad_(False)
+        for _ in range(epochs):
+            self.opt.zero_grad()
+            pred = self.net(x)
+            loss = self.loss_fn(pred, y)
+            loss.backward()
+            self.opt.step()
+        self.history.append((design, score, float(pred.detach().cpu().item())))
 
-    def learn(self, design, score):
-        """在线学习一条 (设计→score) 经验。TD(λ)：phi_next=phi(视为自助)。"""
-        phi = self._phi(design)
-        # 用当前设计自身作 next（简化自助），score 作为即时奖励
-        self.gvf.update(phi, float(score), phi)
-        self.history.append((design, score, self.gvf.predict(phi)))
+    def learn_batch(self, designs, scores, epochs: int = 3):
+        """批量学习一组 (设计→score)，一次更新用多样本（更稳定）。"""
+        import torch
+        if not designs:
+            return
+        X = torch.tensor(np.array(designs, dtype=float), dtype=torch.float32, device=self.device)
+        Y = torch.tensor(np.array(scores, dtype=float).reshape(-1, 1),
+                         dtype=torch.float32, device=self.device)
+        for _ in range(epochs):
+            self.opt.zero_grad()
+            pred = self.net(X)
+            loss = self.loss_fn(pred, Y)
+            loss.backward()
+            self.opt.step()
+            if torch.isnan(loss):
+                break  # 防炸
+        self.history.extend(zip(designs, scores))
 
     def predict(self, design) -> float:
-        return self.gvf.predict(self._phi(design))
+        import torch
+        x = torch.tensor([design], dtype=torch.float32, device=self.device)
+        with torch.no_grad():
+            return float(self.net(x).detach().cpu().item())
 
     def select_topk(self, candidates, k: int) -> list[int]:
         """从候选里选预测价值最高的 k 个（利用）—— headless 作为"设计/操作"选择器。"""
@@ -226,11 +262,13 @@ def run_round(agent, registry_path: Path, n_cand: int = 200, k: int = 10,
         rand_res = run_forge_eval(forge_root, rand_reg, budget=50, seed=round_i)
         sel_score = sel_res["best_score"] if sel_res["best_score"] is not None else float("nan")
         rand_score = rand_res["best_score"] if rand_res["best_score"] is not None else float("nan")
-        # headless 用 forge 评估的全部 feasible 设计回流学习(不只 top-K —— 大幅增学习量)
-        for (feat, s) in sel_res.get("evaluated", []):
-            agent.learn(feat, s)
-        for (feat, s) in rand_res.get("evaluated", []):
-            agent.learn(feat, s)
+        # headless 用 forge 评估的全部 feasible 设计回流学习(批量, 更稳定)
+        all_feats = [f for (f, s) in sel_res.get("evaluated", [])] + \
+                    [f for (f, s) in rand_res.get("evaluated", [])]
+        all_scores = [s for (f, s) in sel_res.get("evaluated", [])] + \
+                     [s for (f, s) in rand_res.get("evaluated", [])]
+        if all_feats:
+            agent.learn_batch(all_feats, all_scores)
     else:
         # 软验证: 用已知设计的最近邻 score 当 oracle（新候选 forge 没真算）
         oracle_scores = np.array([
