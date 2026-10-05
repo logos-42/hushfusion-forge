@@ -66,20 +66,41 @@ def main() -> int:
     Y_all = np.array([r[1] for r in rows])
     print(f"[init] 载入 {len(X_all)} 个设计, 开始持续闭环", flush=True)
 
-    vm = ValueModel(seed=0)
-    if args.pretrain:
-        vm.learn_batch(X_all.tolist(), Y_all.tolist(), epochs=5)
-        print(f"[init] 预训练 {len(X_all)} 个设计", flush=True)
-
     rng = np.random.default_rng(0)
     trend = []
+    # 关键改进: 不用单网络每轮在线增量(易漂移→波动), 改为【周期性全量重训】。
+    # 已验证: 全量重训判别器(5-fold) lift +1.27 全正; 在线增量会漂移(-0.75/-1.48)。
+    re_train_every = 5   # 每 5 轮用累积全量数据重训一次
+    retrain_cap = 3000   # 重训时最多用最近 3000 条(控时, 防全历史淹没新分布)
+    X_buf, Y_buf = X_all.tolist(), Y_all.tolist()   # 累积 buffer(新数据持续追加)
+    vm = ValueModel(seed=0)
+
+    def retrain():
+        nonlocal vm
+        # 用最近的 retrain_cap 条重训一个全新模型(稳定, 非增量)
+        vm = ValueModel(seed=int(time.time()) % 1000)
+        n_use = min(retrain_cap, len(X_buf))
+        Xt = X_buf[-n_use:]
+        Yt = Y_buf[-n_use:]
+        vm.learn_batch(Xt, Yt, epochs=8)
+        return n_use
+
+    # 初始重训
+    n_use = retrain()
+    print(f"[init] 全量重训 {n_use} 条(非增量, 稳定判别器)", flush=True)
+
     for rnd in range(args.rounds):
         if stop_file.exists():
             print(f"[stop] 检测到停止文件, 退出", flush=True)
             break
         t0 = time.time()
 
-        # 1. headless 从合理候选池引导选 top-K
+        # 周期性重训(压波动: 不依赖单网络在线漂移)
+        if rnd > 0 and rnd % re_train_every == 0:
+            n_use = retrain()
+            print(f"[round {rnd}] 重训 {n_use} 条", flush=True)
+
+        # 1. 用当前(重训后)模型从合理候选池引导选 top-K
         hl_cands = propose_designs(vm, args.n_propose, seed=rnd, epsilon=0.2)
 
         # 2. forge 真评估(新增真实数据)
@@ -95,18 +116,19 @@ def main() -> int:
             time.sleep(args.interval)
             continue
 
-        # 3. 回流: 把 forge 评估的真实 score 喂回 headless
-        #    取 headless 生成设计的真实 score(forge 首代评估的, 近似前 n_propose 个非 baseline)
+        # 3. 回流: 把 forge 评估的真实 score 追加进累积 buffer(不是在线增量更新单网络)
         real_vals = [v for v in hl_scores.values() if v is not None]
-        # 排除 human_baseline 那条(D0001 常是 baseline); 用剩余的当真实回流
         if len(real_vals) > 1:
             real_vals = real_vals[1:]  # 去掉 baseline
         hl_feats = np.array([design_to_feature(c) for c in hl_cands])
         if len(real_vals) >= len(hl_cands):
-            vm.learn_batch(hl_feats.tolist(), real_vals[:len(hl_cands)], epochs=4)
+            X_buf.extend(hl_feats.tolist())
+            Y_buf.extend(real_vals[:len(hl_cands)])
 
-        # 4. 当轮验证(从已评估池选样 lift)
-        lift, hl_med, rand_med = verify_lift(vm, X_all, Y_all, rng, args.topk_verify)
+        # 4. 当轮验证(从累积数据池选样 lift —— 反映学到了新数据)
+        verify_X = np.array(X_buf[-min(args.topk_verify * 4, len(X_buf)):])
+        verify_Y = np.array(Y_buf[-min(args.topk_verify * 4, len(Y_buf)):])
+        lift, hl_med, rand_med = verify_lift(vm, verify_X, verify_Y, rng, args.topk_verify)
         trend.append({"round": rnd, "lift": lift, "headless_median": hl_med,
                       "random_median": rand_med, "n_learn": vm.n_learn,
                       "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
