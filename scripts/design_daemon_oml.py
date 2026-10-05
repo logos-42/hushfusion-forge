@@ -126,6 +126,7 @@ def main() -> int:
         hl_cands = [list(feature_to_design(pool[i])) for i in sel[:kk]]
         op = {}
         new_reflux = 0
+        outd = None
         try:
             import os as _os, subprocess as _sub
             op_dir = pathlib.Path(args.forge_root) / "runs" / f"oml_v4_{int(time.time()*1000)}"
@@ -174,7 +175,25 @@ def main() -> int:
         except Exception as _e:
             op = {"exit": -1, "err": str(_e)[:200]}
 
-        # 5. 验证: 在【本轮新增回流数据】上算预测误差(未见过 → 真泛化)
+        # 5. 效果验证(核心): 读 forge results.json 提取真实产出指标
+        #    best_score = 这轮 forge 找到的最优设计(持续学习让 forge 找得更好?)
+        #    evals_to_beat = 达到超越 baseline 需要的评估次数(越小越好)
+        #    跨轮追踪: best_score 应上升 / evals_to_beat 应下降 = 模型在让 forge 变好
+        best_score, evals_to_beat = None, None
+        if op.get("exit") == 0 and outd is not None and outd.exists():
+            resj = outd / "results.json"
+            if resj.exists():
+                try:
+                    rj = json.loads(open(resj).read())
+                    if rj.get("best"):
+                        best_score = float(rj["best"]["score"])
+                    agg = rj.get("aggregate", {}).get("evolution_knowledge", {})
+                    if agg.get("evals_to_beat_mean") is not None:
+                        evals_to_beat = float(agg["evals_to_beat_mean"])
+                except Exception:
+                    pass
+
+        # 5b. 辅助: 在【本轮新增回流数据】上算预测误差(未见过 → 真泛化)
         reflux_err = None
         if new_reflux > 0:
             newX = np.array(pool_X[-new_reflux:], dtype=float)
@@ -185,6 +204,7 @@ def main() -> int:
         trend.append({"round": rnd, "query_mse": loss_before, "query_mse_adapted": loss_adapted,
                       "select_lift": lift_pool, "pool_size": n, "new_reflux": new_reflux,
                       "reflux_err": reflux_err, "forge_op": op.get("exit"),
+                      "best_score": best_score, "evals_to_beat": evals_to_beat,
                       "strategy": args.strategy,
                       "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
         with open(out, "a") as f:
@@ -197,8 +217,9 @@ def main() -> int:
 
         recent_lift = np.mean([t["select_lift"] for t in trend[-5:]])
         print(f"[round {rnd}] pool={n} reflux={new_reflux} "
-              f"(回流水误差{reflux_err:.3f}) select_lift={lift_pool:+.3f}"
-              f"(近5轮{recent_lift:+.3f}) [op={op.get('exit')} {time.time()-t0:.0f}s]",
+              f"(回水误{reflux_err:.3f}) lift={lift_pool:+.3f}"
+              f"(近5{recent_lift:+.3f}) best={best_score:.3f} evals_to_beat={evals_to_beat}"
+              f" [op={op.get('exit')} {time.time()-t0:.0f}s]",
               flush=True)
         time.sleep(args.interval)
 
@@ -214,6 +235,15 @@ def main() -> int:
         if len(errs) >= 4:
             print(f"回流预测误差: 前3 {np.mean(errs[:3]):.3f} → 后3 {np.mean(errs[-3:]):.3f}"
                   f" (下降=模型随累积数据变准)", flush=True)
+        # 效果指标: forge 真实产出趋势(持续学习让 forge 变好?)
+        bs = [t["best_score"] for t in trend if t.get("best_score") is not None]
+        eb = [t["evals_to_beat"] for t in trend if t.get("evals_to_beat") is not None]
+        if len(bs) >= 4:
+            print(f"forge best_score: 前3 {np.mean(bs[:3]):.3f} → 后3 {np.mean(bs[-3:]):.3f}"
+                  f" (上升=持续学习让forge找得更好)", flush=True)
+        if len(eb) >= 4:
+            print(f"evals_to_beat: 前3 {np.mean(eb[:3]):.1f} → 后3 {np.mean(eb[-3:]):.1f}"
+                  f" (下降=更快超越baseline)", flush=True)
     return 0
 
 
