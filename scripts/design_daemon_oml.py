@@ -46,13 +46,20 @@ def main() -> int:
     out = pathlib.Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    # ── 数据污染保护: 输出文件若已存在, 拒绝启动(防多次运行同一序列追加污染) ──
+    if out.exists() and out.stat().st_size > 0:
+        print(f"[FATAL] 输出文件已存在: {out}", file=sys.stderr, flush=True)
+        print(f"[FATAL] 请先用新文件名(--out)或确认清空后再启动。", file=sys.stderr, flush=True)
+        print("[FATAL] 这是防数据污染的硬门: 固定种子+append 同一序列=重复假数据", file=sys.stderr, flush=True)
+        return 2
+
     rows = load_designs(pathlib.Path(args.registry))
     X_all = np.array([r[0] for r in rows])
     Y_all = np.array([r[1] for r in rows]).astype(np.float32)
     print(f"[init] 载入 {len(X_all)} 个设计, OML 持续学习闭环启动", flush=True)
 
     model = OMLDesignLearner(in_dim=X_all.shape[1])
-    rng = np.random.default_rng(0)
+    rng = np.random.default_rng(int(time.time()) % 10_000)  # 启动时间戳做种子, 防多实例同序列
     trend = []
 
     for rnd in range(args.rounds):
