@@ -142,13 +142,21 @@ def main() -> int:
                        if m in ("evolution", "evolution_warm")]
                 cands = [(m, b, s, None, None, None) for m in METHODS for b in BUDGETS for s in SEEDS] + cue
             r = rng.random()
-            if r < 0.3:  # ε探索
+            if r < 0.15:  # 低ε纯随机兜底
                 method, budget, seed = cands[rng.choice(len(cands))][:3]
                 mu, lam, sigma0 = (None, None, None)
-            else:  # 利用: 打分选预测最高
+            else:  # UCB: 预测值 + λ×探索项(配置评估次数少=不确定=值得探索), 替代argmax
                 feats = np.array([config_feature(*c) for c in cands])
                 pred = model.predict(feats)
-                best = cands[int(np.argmax(pred))]
+                # 探索项: 该配置已评估次数(越低越探索); 从累积池按最近5~9维特征统计
+                pool_arr = np.array(pool_X, dtype=float)
+                counts = np.array([
+                    np.sum(np.all(np.abs(pool_arr - cfgf) < 1e-6, axis=1))
+                    for cfgf in feats], dtype=float)
+                beta = 0.5  # 探索系数(独立于超参lam)
+                explore = np.exp(-counts)  # 0次=1, 次数多→趋0
+                ucb = pred + beta * explore
+                best = cands[int(np.argmax(ucb))]
                 method, budget, seed = best[0], best[1], best[2]
                 mu, lam, sigma0 = (best[3:6] if len(best) > 3 else (None, None, None))
 
