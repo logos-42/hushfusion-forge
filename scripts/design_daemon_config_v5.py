@@ -127,7 +127,11 @@ def main() -> int:
                     mu, lam, sigma0 = None, None, None
                     if m in ("evolution", "evolution_warm"):
                         mu, lam, sigma0 = int(rng.choice(MUS)), int(rng.choice(LAMS)), float(rng.choice(SIGMAS))
-                    sc, err = run_forge(m, s, b, args.forge_root, mu, lam, sigma0)
+                    # evolution_knowledge 初始就必须带知识播种(否则被记录成低分, 推荐器永不选它)
+                    kb_seed_init = kb_dir if (m == "evolution_knowledge"
+                                              and kb_reg.exists() and kb_reg.stat().st_size > 0) else None
+                    sc, err = run_forge(m, s, b, args.forge_root, mu, lam, sigma0,
+                                        knowledge_dir=kb_seed_init, registry_path=str(kb_reg))
                     if sc is not None:
                         pool_X.append(config_feature(m, b, s, mu, lam, sigma0))
                         pool_Y.append(float(sc))
