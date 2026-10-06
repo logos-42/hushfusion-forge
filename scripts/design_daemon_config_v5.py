@@ -91,6 +91,7 @@ def main() -> int:
 
     import os
     import pickle
+    rng = np.random.default_rng(int(time.time()) % 10_000)
     pool_X, pool_Y = [], []
     if ckpt.exists():
         with open(ckpt, "rb") as f:
@@ -98,18 +99,21 @@ def main() -> int:
         print(f"[ckpt] 恢复 {len(pool_X)} 个配置经验", flush=True)
     else:
         # 初始种子: 覆盖 method × {最小,最大budget} × seed(省时间但学到budget效应)
-        print("[init] 初始探索配置空间(budgets={50,400})...", flush=True)
+        # ★特征一致性: evolution系列必须带真实超参评估(不能用中性, 否则推荐器被假高分误导)
+        print("[init] 初始探索配置空间(budgets={50,400}, evolution带真实超参)...", flush=True)
         for m in METHODS:
-            for b in [50, 400]:  # 最小+最大: 学 budget 单调方向
+            for b in [50, 400]:
                 for s in SEEDS:
-                    sc, err = run_forge(m, s, b, args.forge_root)
+                    mu, lam, sigma0 = None, None, None
+                    if m in ("evolution", "evolution_warm"):
+                        mu, lam, sigma0 = int(rng.choice(MUS)), int(rng.choice(LAMS)), float(rng.choice(SIGMAS))
+                    sc, err = run_forge(m, s, b, args.forge_root, mu, lam, sigma0)
                     if sc is not None:
-                        pool_X.append(config_feature(m, b, s))
+                        pool_X.append(config_feature(m, b, s, mu, lam, sigma0))
                         pool_Y.append(float(sc))
         print(f"[init] 累积池 {len(pool_X)} 个配置经验", flush=True)
 
     model = OMLDesignLearner(in_dim=len(pool_X[0]))
-    rng = np.random.default_rng(int(time.time()) % 10_000)
     trend = []
 
     for rnd in range(args.rounds):
