@@ -1813,6 +1813,7 @@ func cmdRun(args []string) int {
 	mu := fs.Int("mu", search.DefaultMu, "evolution parent count (v5 config space)")
 	lam := fs.Int("lam", search.DefaultLam, "evolution children per gen (v5 config space)")
 	sigma0 := fs.Float64("sigma0", search.DefaultSigma0, "initial mutation scale (v5 config space)")
+	knowledgeDir := fs.String("knowledge", "", "registry dir to seed evolution_knowledge from (reads feasible top-K designs by score)")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
@@ -1834,6 +1835,24 @@ func cmdRun(args []string) int {
 	}
 
 	opt := runOptions(spec, *method, *seed, *budget, *workers, baseScore, base.Design, *mu, *lam, *sigma0)
+
+	// 知识复用(evolution_knowledge): 从 --knowledge 指定 registry 读 feasible 且 score 最高的前 K 个设计整代播种。
+	if *knowledgeDir != "" {
+		kpath := filepath.Join(*knowledgeDir, "registry.jsonl")
+		kreg, err := openRegistry(kpath)
+		if err != nil {
+			return fail("--knowledge: %v", err)
+		}
+		know, err := topDesigns(kreg, spec, 16)
+		if err != nil {
+			return fail("--knowledge: %v", err)
+		}
+		if len(know) == 0 {
+			return fail("--knowledge: no feasible designs in %s", kpath)
+		}
+		opt.WarmPopulation = know
+		note("--knowledge: seeding %d designs from %s", len(know), kpath)
+	}
 
 	rn := runner.New(reg, ev, *tag)
 	before := reg.Len()

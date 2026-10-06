@@ -34,7 +34,7 @@ sys.path.insert(0, str(HEADLESS))
 sys.path.insert(0, str(ROOT / "scripts"))
 from oml_continual_core import OMLDesignLearner  # noqa: E402
 
-METHODS = ["random", "lhs", "evolution", "evolution_warm"]
+METHODS = ["random", "lhs", "evolution", "evolution_warm", "evolution_knowledge"]
 BUDGETS = [50, 100, 200, 400]
 SEEDS = [0, 1, 2]
 # 连续超参(仅 evolution 系列生效; random/lhs 忽略)
@@ -55,8 +55,12 @@ def config_feature(method, budget, seed, mu=None, lam=None, sigma0=None):
     return f
 
 
-def run_forge(method, seed, budget, forge_root, mu=None, lam=None, sigma0=None):
-    """跑一次 forge 搜索, 返回 best_score(确定性)。"""
+def run_forge(method, seed, budget, forge_root, mu=None, lam=None, sigma0=None, knowledge_dir=None, registry_path=None):
+    """跑一次 forge 搜索, 返回 best_score(确定性)。
+
+    knowledge_dir: 若给, 用 evolution_knowledge 从该目录 registry 读 top-K 播种
+    registry_path: registry 输出(累积知识库); 默认 /tmp 临时
+    """
     import os
     env = dict(os.environ)  # 继承(fix: 缺HOME/GOCACHE致go build失败)
     env["PATH"] = "/work/liuyuanjie/go1.24/bin:/work/liuyuanjie/go/bin:" + env.get("PATH", "")
@@ -64,9 +68,11 @@ def run_forge(method, seed, budget, forge_root, mu=None, lam=None, sigma0=None):
     env["GOPROXY"] = "https://goproxy.cn,direct"
     cmd = ["go", "run", "./cmd/forge", "run",
            "--method", method, "--seed", str(seed), "--budget", str(budget),
-           "--registry", "/tmp/oml_v5_scratch.jsonl"]
+           "--registry", registry_path or "/tmp/oml_v5_scratch.jsonl"]
     if mu is not None:
         cmd += ["--mu", str(mu), "--lam", str(lam), "--sigma0", str(sigma0)]
+    if knowledge_dir is not None:
+        cmd += ["--knowledge", str(knowledge_dir)]
     r = subprocess.run(cmd, cwd=str(forge_root), capture_output=True, text=True, env=env)
     import re
     m = re.search(r"best_score=([-\d.eE]+)", r.stdout)
@@ -88,6 +94,20 @@ def main() -> int:
     out = pathlib.Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     ckpt = pathlib.Path(args.ckpt)
+
+    # 知识库初始化: v5_knowledge/registry.jsonl 若不存在, 用 phase1 registry 作种子
+    # (让第一轮就有12001条知识可播种, 而非空库退化)
+    kb_dir = pathlib.Path(args.forge_root) / "runs" / "v5_knowledge"
+    kb_dir.mkdir(parents=True, exist_ok=True)
+    kb_reg = kb_dir / "registry.jsonl"
+    if not kb_reg.exists():
+        phase1 = pathlib.Path(args.forge_root) / "runs" / "phase1" / "registry.jsonl"
+        if phase1.exists():
+            kb_reg.write_text(open(phase1).read())
+            print(f"[init] 知识库建立: phase1 {sum(1 for _ in open(kb_reg))} 条作种子", flush=True)
+        else:
+            kb_reg.write_text("")
+            print("[init] 无 phase1, 知识库从空开始", flush=True)
 
     import os
     import pickle
@@ -160,8 +180,12 @@ def main() -> int:
                 method, budget, seed = best[0], best[1], best[2]
                 mu, lam, sigma0 = (best[3:6] if len(best) > 3 else (None, None, None))
 
-        # 跑 forge
-        score, err = run_forge(method, seed, budget, args.forge_root, mu, lam, sigma0)
+        # 跑 forge: 只有 evolution_knowledge 用知识库播种(其他方法无知识=对照)
+        # 这样 warm 推荐器学会选 knowledge 方法 → 真闭环"持续学习学会用知识库"
+        kb_seed = kb_dir if (method == "evolution_knowledge"
+                             and kb_reg.exists() and kb_reg.stat().st_size > 0) else None
+        score, err = run_forge(method, seed, budget, args.forge_root, mu, lam, sigma0,
+                               knowledge_dir=kb_seed, registry_path=str(kb_reg))
         if score is None:
             print(f"[round {rnd}] forge失败: {err}", flush=True)
             time.sleep(args.interval)
