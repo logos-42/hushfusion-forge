@@ -113,10 +113,19 @@ def main() -> int:
     import pickle
     rng = np.random.default_rng(int(time.time()) % 10_000)
     pool_X, pool_Y = [], []
+    model_state = None  # 模型权重(重启恢复已学到的推荐器, 24h不间断不冷启动)
     if ckpt.exists():
-        with open(ckpt, "rb") as f:
-            pool_X, pool_Y = pickle.load(f)
-        print(f"[ckpt] 恢复 {len(pool_X)} 个配置经验", flush=True)
+        try:
+            with open(ckpt, "rb") as f:
+                data = pickle.load(f)
+            if len(data) == 3:
+                pool_X, pool_Y, model_state = data
+            else:  # 旧格式(仅池)
+                pool_X, pool_Y = data
+        except Exception as e:
+            print(f"[ckpt] 读取失败({e}), 从init开始", flush=True)
+            pool_X, pool_Y = [], []
+        print(f"[ckpt] 恢复 {len(pool_X)} 个配置经验, 模型={'有' if model_state else '无(需重建)'}", flush=True)
     else:
         # 初始种子: 覆盖 method × {最小,最大budget} × seed(省时间但学到budget效应)
         # ★特征一致性: evolution系列必须带真实超参评估(不能用中性, 否则推荐器被假高分误导)
@@ -138,6 +147,14 @@ def main() -> int:
         print(f"[init] 累积池 {len(pool_X)} 个配置经验", flush=True)
 
     model = OMLDesignLearner(in_dim=len(pool_X[0]))
+    if model_state is not None:
+        import torch
+        try:
+            model.head.load_state_dict(model_state["head"])
+            model.opt.load_state_dict(model_state["opt"])
+            print("[ckpt] 推荐器模型权重已恢复(不冷启动)", flush=True)
+        except Exception as e:
+            print(f"[ckpt] 模型恢复失败({e}), 用新模型", flush=True)
     trend = []
 
     for rnd in range(args.rounds):
@@ -219,7 +236,8 @@ def main() -> int:
 
         if rnd % 5 == 0:
             with open(ckpt, "wb") as f:
-                pickle.dump((pool_X, pool_Y), f)
+                pickle.dump((pool_X, pool_Y,
+                     {"head": model.head.state_dict(), "opt": model.opt.state_dict()}), f)
 
         mode = "cold" if is_cold else "warm"
         hp = f"/mu{mu}/lam{lam}/sig{sigma0}" if mu is not None else ""
