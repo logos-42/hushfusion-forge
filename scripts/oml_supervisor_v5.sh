@@ -37,5 +37,10 @@ while true; do
     echo "[supervisor-v5] daemon 退出 exit=$EC (restarts=$RESTARTS)"
     [ -f "$STOP" ] && break
     sleep 5
+    # ── 定时归档快照(24h不间断的长期成果可见) ──
+    "$PY" scripts/oml_daily_report_v5.py \
+        --trend "$OUT" --kb "/work/liuyuanjie/forge/runs/v5_knowledge/registry.jsonl" \
+        --out-dir "/work/liuyuanjie/forge/artifacts/daily" \
+        >> /work/liuyuanjie/oml_daily_v5.log 2>&1 || true
 done
 echo "[supervisor-v5] 结束, 共拉起 $RESTARTS 次"
