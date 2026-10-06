@@ -125,7 +125,7 @@ def main() -> int:
             for b in [50, 400]:
                 for s in SEEDS:
                     mu, lam, sigma0 = None, None, None
-                    if m in ("evolution", "evolution_warm"):
+                    if m in ("evolution", "evolution_warm", "evolution_knowledge"):
                         mu, lam, sigma0 = int(rng.choice(MUS)), int(rng.choice(LAMS)), float(rng.choice(SIGMAS))
                     # evolution_knowledge 初始就必须带知识播种(否则被记录成低分, 推荐器永不选它)
                     kb_seed_init = kb_dir if (m == "evolution_knowledge"
@@ -154,7 +154,7 @@ def main() -> int:
             budget = int(rng.choice(BUDGETS))
             seed = int(rng.choice(SEEDS))
             mu, lam, sigma0 = None, None, None
-            if method in ("evolution", "evolution_warm"):
+            if method in ("evolution", "evolution_warm", "evolution_knowledge"):
                 mu, lam, sigma0 = int(rng.choice(MUS)), int(rng.choice(LAMS)), float(rng.choice(SIGMAS))
         else:
             # 推荐器: 扩展配置空间(方法×budget×seed×超参)打分, ε探索
@@ -163,7 +163,7 @@ def main() -> int:
                 cue = [(m, b, s, mu, la, sg)
                        for m in METHODS for b in BUDGETS for s in SEEDS
                        for mu in MUS for la in LAMS for sg in SIGMAS
-                       if m in ("evolution", "evolution_warm")]
+                       if m in ("evolution", "evolution_warm", "evolution_knowledge")]
                 cands = [(m, b, s, None, None, None) for m in METHODS for b in BUDGETS for s in SEEDS] + cue
             r = rng.random()
             if r < 0.15:  # 低ε纯随机兜底
