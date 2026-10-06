@@ -369,7 +369,7 @@ func TestWarmStartIsOnlyInjectedForTheWarmMethod(t *testing.T) {
 		warm[i] = float64(i)
 	}
 	for _, m := range allMethods {
-		opt := runOptions(spec, m, 7, 123, 2, -0.2905708161, warm)
+		opt := runOptions(spec, m, 7, 123, 2, -0.2905708161, warm, search.DefaultMu, search.DefaultLam, search.DefaultSigma0)
 		if opt.Algorithm != m || opt.Seed != 7 || opt.Budget != 123 || opt.Workers != 2 {
 			t.Errorf("%s: options were not passed through: %+v", m, opt)
 		}
@@ -394,7 +394,7 @@ func TestWarmStartIsOnlyInjectedForTheWarmMethod(t *testing.T) {
 	}
 
 	// 这个决定必须跟随冻结的 algorithm 名称, 而不是一个字面量。
-	opt := runOptions(spec, search.AlgorithmEvolution, 0, 10, 1, 0, warm)
+	opt := runOptions(spec, search.AlgorithmEvolution, 0, 10, 1, 0, warm, search.DefaultMu, search.DefaultLam, search.DefaultSigma0)
 	if opt.WarmStart != nil {
 		t.Errorf("evolution got a warm start: %v", opt.WarmStart)
 	}

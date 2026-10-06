@@ -1809,6 +1809,10 @@ func cmdRun(args []string) int {
 	tag := fs.String("tag", defRunTag, "run tag written into every record")
 	workers := fs.Int("workers", 1, "evaluation workers (>1 evaluates a generation concurrently)")
 	out := fs.String("out", "", "optional path to write the search.Result as JSON")
+	// v5 配置空间扩展: 连续超参(mu/lam/sigma0) 注入 search.Options —— 默认=当前默认, 不破坏G7
+	mu := fs.Int("mu", search.DefaultMu, "evolution parent count (v5 config space)")
+	lam := fs.Int("lam", search.DefaultLam, "evolution children per gen (v5 config space)")
+	sigma0 := fs.Float64("sigma0", search.DefaultSigma0, "initial mutation scale (v5 config space)")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
@@ -1829,7 +1833,7 @@ func cmdRun(args []string) int {
 		return fail("%v", err)
 	}
 
-	opt := runOptions(spec, *method, *seed, *budget, *workers, baseScore, base.Design)
+	opt := runOptions(spec, *method, *seed, *budget, *workers, baseScore, base.Design, *mu, *lam, *sigma0)
 
 	rn := runner.New(reg, ev, *tag)
 	before := reg.Len()
@@ -1875,13 +1879,16 @@ func cmdRun(args []string) int {
 // 连冷变体也注入 baseline, 就会悄悄删掉这个对比, 让两种方法变成同一个 (stage E 的
 // harness 采用同样的规则)。
 func runOptions(spec config.Spec, method string, seed, budget, workers int,
-	baselineScore float64, warmDesign []float64) search.Options {
+	baselineScore float64, warmDesign []float64, mu, lam int, sigma0 float64) search.Options {
 	opt := search.DefaultOptions(spec)
 	opt.Algorithm = method
 	opt.Seed = seed
 	opt.Budget = budget
 	opt.Workers = workers
 	opt.BaselineScore = baselineScore
+	opt.Mu = mu
+	opt.Lam = lam
+	opt.Sigma0 = sigma0
 	if method == search.AlgorithmEvolutionWarm {
 		opt.WarmStart = append([]float64(nil), warmDesign...)
 	}
