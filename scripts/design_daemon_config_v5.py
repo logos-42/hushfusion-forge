@@ -37,26 +37,37 @@ from oml_continual_core import OMLDesignLearner  # noqa: E402
 METHODS = ["random", "lhs", "evolution", "evolution_warm"]
 BUDGETS = [50, 100, 200, 400]
 SEEDS = [0, 1, 2]
+# 连续超参(仅 evolution 系列生效; random/lhs 忽略)
+MUS = [8, 16, 32]
+LAMS = [24, 48, 96]
+SIGMAS = [0.12, 0.25, 0.5]
 
 
-def config_feature(method, budget, seed):
-    """配置 → 特征向量 [method_onehot(4), log_budget, seed_mod3]"""
+def config_feature(method, budget, seed, mu=None, lam=None, sigma0=None):
+    """配置 → 特征向量 [method_onehot(4), log_budget, seed_mod3, norm_mu, norm_lam, norm_sigma]"""
     mi = METHODS.index(method)
-    return [1.0 if i == mi else 0.0 for i in range(len(METHODS))] + \
+    f = [1.0 if i == mi else 0.0 for i in range(len(METHODS))] + \
         [np.log10(budget), float(seed % 3)]
+    # 超参归一化(evolution 系列才有意义; 否则给中性 0.5)
+    f += [float((mu or 16)) / 32.0,
+          float((lam or 48)) / 96.0,
+          float((sigma0 or 0.25)) / 0.5]
+    return f
 
 
-def run_forge(method, seed, budget, forge_root):
+def run_forge(method, seed, budget, forge_root, mu=None, lam=None, sigma0=None):
     """跑一次 forge 搜索, 返回 best_score(确定性)。"""
     import os
     env = dict(os.environ)  # 继承(fix: 缺HOME/GOCACHE致go build失败)
     env["PATH"] = "/work/liuyuanjie/go1.24/bin:/work/liuyuanjie/go/bin:" + env.get("PATH", "")
     env["GOTOOLCHAIN"] = "local"
     env["GOPROXY"] = "https://goproxy.cn,direct"
-    r = subprocess.run(["go", "run", "./cmd/forge", "run",
-                        "--method", method, "--seed", str(seed), "--budget", str(budget),
-                        "--registry", "/tmp/oml_v5_scratch.jsonl"],
-                       cwd=str(forge_root), capture_output=True, text=True, env=env)
+    cmd = ["go", "run", "./cmd/forge", "run",
+           "--method", method, "--seed", str(seed), "--budget", str(budget),
+           "--registry", "/tmp/oml_v5_scratch.jsonl"]
+    if mu is not None:
+        cmd += ["--mu", str(mu), "--lam", str(lam), "--sigma0", str(sigma0)]
+    r = subprocess.run(cmd, cwd=str(forge_root), capture_output=True, text=True, env=env)
     import re
     m = re.search(r"best_score=([-\d.eE]+)", r.stdout)
     if not m:
@@ -109,33 +120,43 @@ def main() -> int:
 
         is_cold = (rnd % 2 == 1)
 
-        # 选配置: warm=推荐器, cold=随机
+        # 选配置: warm=推荐器, cold=随机(method/budget/seed + 超参)
         if is_cold:
             method = rng.choice(METHODS)
             budget = int(rng.choice(BUDGETS))
             seed = int(rng.choice(SEEDS))
+            mu, lam, sigma0 = None, None, None
+            if method in ("evolution", "evolution_warm"):
+                mu, lam, sigma0 = int(rng.choice(MUS)), int(rng.choice(LAMS)), float(rng.choice(SIGMAS))
         else:
-            # 推荐器: 全配置空间打分, 选预测最高(带ε探索, 探索新budget区)
+            # 推荐器: 扩展配置空间(方法×budget×seed×超参)打分, ε探索
             cands = [(m, b, s) for m in METHODS for b in BUDGETS for s in SEEDS]
+            if len(pool_X) >= 8:  # 有经验后才启用超参维(否则空间太大瞎猜)
+                cue = [(m, b, s, mu, la, sg)
+                       for m in METHODS for b in BUDGETS for s in SEEDS
+                       for mu in MUS for la in LAMS for sg in SIGMAS
+                       if m in ("evolution", "evolution_warm")]
+                cands = [(m, b, s, None, None, None) for m in METHODS for b in BUDGETS for s in SEEDS] + cue
             r = rng.random()
-            if r < 0.4:  # ε探索: 倾向试中等budget(100/200, 初始池未覆盖)
-                mid = [c for c in cands if c[1] in (100, 200)]
-                method, budget, seed = (mid[rng.choice(len(mid))] if mid else
-                                        cands[rng.choice(len(cands))])
+            if r < 0.3:  # ε探索
+                method, budget, seed = cands[rng.choice(len(cands))][:3]
+                mu, lam, sigma0 = (None, None, None)
             else:  # 利用: 打分选预测最高
-                feats = np.array([config_feature(m, b, s) for m, b, s in cands])
+                feats = np.array([config_feature(*c) for c in cands])
                 pred = model.predict(feats)
-                method, budget, seed = cands[int(np.argmax(pred))]
+                best = cands[int(np.argmax(pred))]
+                method, budget, seed = best[0], best[1], best[2]
+                mu, lam, sigma0 = (best[3:6] if len(best) > 3 else (None, None, None))
 
         # 跑 forge
-        score, err = run_forge(method, seed, budget, args.forge_root)
+        score, err = run_forge(method, seed, budget, args.forge_root, mu, lam, sigma0)
         if score is None:
             print(f"[round {rnd}] forge失败: {err}", flush=True)
             time.sleep(args.interval)
             continue
 
-        # 回流进累积池
-        fx = config_feature(method, budget, seed)
+        # 回流进累积池(含超参特征)
+        fx = config_feature(method, budget, seed, mu, lam, sigma0)
         pool_X.append(fx)
         pool_Y.append(float(score))
         n = len(pool_X)
@@ -150,7 +171,8 @@ def main() -> int:
 
         # 验证(只限 warm): 推荐配置得到的 score 是否在改善
         trend.append({"round": rnd, "is_cold": is_cold, "method": method,
-                      "budget": budget, "seed": seed, "best_score": score,
+                      "budget": budget, "seed": seed, "mu": mu, "lam": lam, "sigma0": sigma0,
+                      "best_score": score,
                       "pool_size": n, "ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
         with open(out, "a") as f:
             f.write(json.dumps(trend[-1]) + "\n")
@@ -160,7 +182,8 @@ def main() -> int:
                 pickle.dump((pool_X, pool_Y), f)
 
         mode = "cold" if is_cold else "warm"
-        print(f"[round {rnd}][{mode}] {method}/{budget}/{seed} → best={score:.3f} "
+        hp = f"/mu{mu}/lam{lam}/sig{sigma0}" if mu is not None else ""
+        print(f"[round {rnd}][{mode}] {method}/{budget}{hp}/s{seed} → best={score:.3f} "
               f"pool={n} [{time.time()-t0:.0f}s]", flush=True)
         time.sleep(args.interval)
 
