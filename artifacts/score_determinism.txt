@@ -1,0 +1,14 @@
+forge score 确定性验证 (2026-10-05)
+====================================
+方法: forge run --method random --seed 42 --budget 50, 重复 3 次
+结果:
+  run 1: best_score=0.21999724645261837
+  run 2: best_score=0.21999724645261837
+  run 3: best_score=0.21999724645261837
+  三次逐位一致 ⟹ G7 可复现门通过, score 确定性。
+
+结论:
+  1. score 确定性 ⟹ 排除"score噪声大"假设(ρ弱不是噪声)
+  2. 根因转向: 设计→score 是确定性但复杂的映射(log/max/阶跃可行性),
+     OML MLP 学不动 (ρ≈0.05)
+  3. 不是 score 噪声问题, 是模型表达/特征不足以捕捉这个复合 objective
