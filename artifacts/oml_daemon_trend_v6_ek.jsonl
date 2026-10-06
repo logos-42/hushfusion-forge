@@ -1,0 +1,9 @@
+{"round": 0, "is_cold": false, "method": "random", "budget": 100, "seed": 0, "mu": null, "lam": null, "sigma0": null, "best_score": -0.04993123772534114, "pool_size": 31, "ts": "2026-10-06T11:09:43"}
+{"round": 1, "is_cold": true, "method": "random", "budget": 400, "seed": 2, "mu": null, "lam": null, "sigma0": null, "best_score": 0.20917119414056085, "pool_size": 32, "ts": "2026-10-06T11:10:14"}
+{"round": 2, "is_cold": false, "method": "evolution_knowledge", "budget": 50, "seed": 0, "mu": 8, "lam": 24, "sigma0": 0.5, "best_score": 0.9856508396734942, "pool_size": 33, "ts": "2026-10-06T11:10:45"}
+{"round": 3, "is_cold": true, "method": "random", "budget": 50, "seed": 0, "mu": null, "lam": null, "sigma0": null, "best_score": -0.08104793558681592, "pool_size": 34, "ts": "2026-10-06T11:11:15"}
+{"round": 4, "is_cold": false, "method": "evolution_knowledge", "budget": 50, "seed": 0, "mu": 8, "lam": 48, "sigma0": 0.5, "best_score": 0.9856508396734942, "pool_size": 35, "ts": "2026-10-06T11:11:47"}
+{"round": 5, "is_cold": true, "method": "evolution", "budget": 50, "seed": 1, "mu": 16, "lam": 96, "sigma0": 0.25, "best_score": 0.21502920824103236, "pool_size": 36, "ts": "2026-10-06T11:12:17"}
+{"round": 6, "is_cold": false, "method": "evolution_knowledge", "budget": 100, "seed": 0, "mu": 8, "lam": 24, "sigma0": 0.5, "best_score": 0.9856508396734942, "pool_size": 37, "ts": "2026-10-06T11:12:48"}
+{"round": 7, "is_cold": true, "method": "evolution_knowledge", "budget": 50, "seed": 1, "mu": 32, "lam": 48, "sigma0": 0.12, "best_score": 0.9856508396734942, "pool_size": 38, "ts": "2026-10-06T11:13:20"}
+{"round": 8, "is_cold": false, "method": "evolution_knowledge", "budget": 50, "seed": 0, "mu": 16, "lam": 24, "sigma0": 0.5, "best_score": 0.9856508396734942, "pool_size": 39, "ts": "2026-10-06T11:13:51"}
