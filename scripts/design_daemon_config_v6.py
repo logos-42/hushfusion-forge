@@ -117,7 +117,7 @@ def main() -> int:
     ap.add_argument("--interval", type=float, default=20.0)
     args = ap.parse_args()
 
-    stop_file = pathlib.Path("/work/liuyuanjie/design_daemon_oml.stop")
+    stop_file = pathlib.Path("/work/liuyuanjie/design_daemon_v6.stop")
     out = pathlib.Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     ckpt = pathlib.Path(args.ckpt)

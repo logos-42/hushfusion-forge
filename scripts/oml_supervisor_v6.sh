@@ -7,7 +7,7 @@ set -u
 FORGE_ROOT="/work/liuyuanjie/forge"
 PY="/work/liuyuanjie/envs/vllm-cu128/bin/python"
 LOG="/work/liuyuanjie/oml_v6.log"
-STOP="/work/liuyuanjie/design_daemon_oml.stop"
+STOP="/work/liuyuanjie/design_daemon_v6.stop"
 CKPT="/work/liuyuanjie/forge/artifacts/oml_daemon_v6_ckpt.pkl"
 
 echo "[supervisor-v6 $(date +%FT%T)] 启动"
