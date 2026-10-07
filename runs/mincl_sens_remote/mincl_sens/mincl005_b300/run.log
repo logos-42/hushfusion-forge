@@ -1,0 +1,30 @@
+benchmark: tag=mincl005_b300 budget=300 seeds=[0 1 2] methods=[random lhs evolution evolution_warm] workers=1
+human baseline score: -0.29057081610977586
+registry: /work/liuyuanjie/forge/runs/mincl_sens/mincl005_b300/registry.jsonl
+  random           seed=0    evals=300    best_score=0.2271261954833156       0.1s
+  random           seed=1    evals=300    best_score=0.2945906877784489       0.1s
+  random           seed=2    evals=300    best_score=0.20917119414056085      0.1s
+  lhs              seed=0    evals=300    best_score=0.586217695158328        0.1s
+  lhs              seed=1    evals=300    best_score=0.21003868101432543      0.1s
+  lhs              seed=2    evals=300    best_score=0.14593976900532202      0.1s
+  evolution        seed=0    evals=300    best_score=0.6117538048822765       0.1s
+  evolution        seed=1    evals=300    best_score=0.8107461326339799       0.1s
+  evolution        seed=2    evals=300    best_score=0.607716513045639        0.1s
+  evolution_warm   seed=0    evals=300    best_score=0.675107690919448        0.1s
+  evolution_warm   seed=1    evals=300    best_score=0.8107461326339799       0.1s
+  evolution_warm   seed=2    evals=300    best_score=0.6048885881260695       0.1s
+
+method           seeds  best_mean                best_std     n_beat   frac     to_beat  budget          
+evolution        3      0.6767388168539652       0.1160712946566333 3        1.000    12       300             
+evolution_warm   3      0.6969141372264991       0.10464689667215794 3        1.000    17       300             
+lhs              3      0.3140653817259918       0.23785989344593994 3        1.000    26       300             
+random           3      0.24362935913410844      0.045037631833855736 3        1.000    9        300             
+
+baseline: textbook_mirror score=-0.29057081610977586 feasible=true design_id=D0001
+best: D2359 score=0.8107461326339799 algorithm=evolution seed=1 feasible=true
+delta_vs_human=1.1013169487437557
+registry summary: 3601 records, 2237 feasible, best=0.8107461326339799 (D2359, evolution)
+elapsed: 1.36s
+results JSON: /work/liuyuanjie/forge/runs/mincl_sens/mincl005_b300/results.json
+next: forge rules --registry /work/liuyuanjie/forge/runs/mincl_sens/mincl005_b300/registry.jsonl --out knowledge/design_rules.md
+next: forge report --results /work/liuyuanjie/forge/runs/mincl_sens/mincl005_b300/results.json --out /work/liuyuanjie/forge/runs/mincl_sens/mincl005_b300/report.md

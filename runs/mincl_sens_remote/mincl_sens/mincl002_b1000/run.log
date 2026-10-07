@@ -1,0 +1,31 @@
+--spec-variant: applied min_clearance=0.02m (b_ref=1.00 z_cell=0.80 r_plasma=0.15 min_clearance=0.02)
+benchmark: tag=mincl002_b1000 budget=1000 seeds=[0 1 2] methods=[random lhs evolution evolution_warm] workers=1
+human baseline score: -0.29057081610977586
+registry: /work/liuyuanjie/forge/runs/mincl_sens/mincl002_b1000/registry.jsonl
+  random           seed=0    evals=1000   best_score=0.5230028340472826       0.3s
+  random           seed=1    evals=1000   best_score=0.6176340483542322       0.3s
+  random           seed=2    evals=1000   best_score=0.7051365275827148       0.3s
+  lhs              seed=0    evals=1000   best_score=0.6355770638423491       0.3s
+  lhs              seed=1    evals=1000   best_score=0.6461189215654066       0.3s
+  lhs              seed=2    evals=1000   best_score=0.32876550054753906      0.3s
+  evolution        seed=0    evals=1000   best_score=0.8526486154725709       0.3s
+  evolution        seed=1    evals=1000   best_score=0.9378973837591329       0.3s
+  evolution        seed=2    evals=1000   best_score=0.908142187513263        0.3s
+  evolution_warm   seed=0    evals=1000   best_score=0.9711456295783732       0.3s
+  evolution_warm   seed=1    evals=1000   best_score=0.9486615499500937       0.3s
+  evolution_warm   seed=2    evals=1000   best_score=0.9309641786520203       0.3s
+
+method           seeds  best_mean                best_std     n_beat   frac     to_beat  budget          
+evolution        3      0.8995627289149889       0.04326711749092618 3        1.000    12       1000            
+evolution_warm   3      0.9502571193934957       0.02013818837490767 3        1.000    17       1000            
+lhs              3      0.5368204953184317       0.18025799102370021 3        1.000    16       1000            
+random           3      0.6152578033280766       0.09109009543047439 3        1.000    9        1000            
+
+baseline: textbook_mirror score=-0.29057081610977586 feasible=true design_id=D0001
+best: D9975 score=0.9711456295783732 algorithm=evolution_warm seed=0 feasible=true
+delta_vs_human=1.2617164456881491
+registry summary: 12001 records, 7940 feasible, best=0.9711456295783732 (D9975, evolution_warm)
+elapsed: 4.28s
+results JSON: /work/liuyuanjie/forge/runs/mincl_sens/mincl002_b1000/results.json
+next: forge rules --registry /work/liuyuanjie/forge/runs/mincl_sens/mincl002_b1000/registry.jsonl --out knowledge/design_rules.md
+next: forge report --results /work/liuyuanjie/forge/runs/mincl_sens/mincl002_b1000/results.json --out /work/liuyuanjie/forge/runs/mincl_sens/mincl002_b1000/report.md

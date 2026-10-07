@@ -1,0 +1,23 @@
+[start 2026-10-07T01:07:27] mincl002 budget=300
+[done  2026-10-07T01:07:28] mincl002 budget=300 rc=0
+[start 2026-10-07T01:07:28] mincl002 budget=1000
+[done  2026-10-07T01:07:33] mincl002 budget=1000 rc=0
+[start 2026-10-07T01:07:33] mincl005 budget=300
+[done  2026-10-07T01:07:33] mincl005 budget=300 rc=1
+--- tail /work/liuyuanjie/forge/runs/mincl_sens/mincl005_b300/run.log ---
+forge: error: --spec-variant: unknown "min_clearance=0.05m" (known: b_ref=0.8T, b_ref=1.2T, z_cell=0.60m, z_cell=1.00m, r_plasma=0.12m, r_plasma=0.18m, min_clearance=0.02m, min_clearance=0.10m, min_clearance=0.15m)
+exit status 1
+[start 2026-10-07T01:07:33] mincl005 budget=1000
+[done  2026-10-07T01:07:33] mincl005 budget=1000 rc=1
+--- tail /work/liuyuanjie/forge/runs/mincl_sens/mincl005_b1000/run.log ---
+forge: error: --spec-variant: unknown "min_clearance=0.05m" (known: b_ref=0.8T, b_ref=1.2T, z_cell=0.60m, z_cell=1.00m, r_plasma=0.12m, r_plasma=0.18m, min_clearance=0.02m, min_clearance=0.10m, min_clearance=0.15m)
+exit status 1
+[start 2026-10-07T01:07:33] mincl010 budget=300
+[done  2026-10-07T01:07:34] mincl010 budget=300 rc=0
+[start 2026-10-07T01:07:34] mincl010 budget=1000
+[done  2026-10-07T01:07:39] mincl010 budget=1000 rc=0
+[start 2026-10-07T01:07:39] mincl015 budget=300
+[done  2026-10-07T01:07:40] mincl015 budget=300 rc=0
+[start 2026-10-07T01:07:40] mincl015 budget=1000
+[done  2026-10-07T01:07:45] mincl015 budget=1000 rc=0
+[ALL DONE 2026-10-07T01:07:45]
