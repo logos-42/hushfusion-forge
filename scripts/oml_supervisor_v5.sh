@@ -12,6 +12,20 @@ CKPT="/work/liuyuanjie/forge/artifacts/oml_daemon_v5_ckpt.pkl"
 
 echo "[supervisor-v5 $(date +%FT%T)] 启动"
 rm -f "$STOP"
+# 独立后台归档循环(每小时快照; daemon健康前台跑时也有归档) —— 真24h不间断
+(
+  while true; do
+    sleep 3600
+    LATEST=$(ls -t "$FORGE_ROOT/artifacts/oml_daemon_trend_v5_"*.jsonl 2>/dev/null | head -1)
+    if [ -n "$LATEST" ]; then
+      "$PY" "$FORGE_ROOT/scripts/oml_daily_report_v5.py" \
+        --trend "$LATEST" --kb "$FORGE_ROOT/runs/v5_knowledge/registry.jsonl" \
+        --out-dir "$FORGE_ROOT/artifacts/daily" >> /work/liuyuanjie/oml_daily_v5.log 2>&1
+    fi
+  done
+) &
+ARCH_PID=$!
+echo "[supervisor-v5] 后台归档循环 PID=$ARCH_PID (每小时)"
 RESTARTS=0
 while true; do
     if [ -f "$STOP" ]; then
