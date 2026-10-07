@@ -1814,6 +1814,7 @@ func cmdRun(args []string) int {
 	lam := fs.Int("lam", search.DefaultLam, "evolution children per gen (v5 config space)")
 	sigma0 := fs.Float64("sigma0", search.DefaultSigma0, "initial mutation scale (v5 config space)")
 	knowledgeDir := fs.String("knowledge", "", "registry dir to seed evolution_knowledge from (reads feasible top-K designs by score)")
+	specVariant := fs.String("spec-variant", "", "apply a spec variant: one of b_ref=0.8T / b_ref=1.2T / z_cell=0.60m / z_cell=1.00m / r_plasma=0.12m / r_plasma=0.18m / min_clearance=0.02m / min_clearance=0.10m / min_clearance=0.15m")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
@@ -1821,6 +1822,19 @@ func cmdRun(args []string) int {
 		return fail("--budget must be positive, got %d", *budget)
 	}
 	spec := defaultSpec()
+	if *specVariant != "" {
+		v, ok := findVariant(*specVariant)
+		if !ok {
+			return fail("--spec-variant: unknown %q (known: %s)", *specVariant, variantNames())
+		}
+		applied, err := experiment.ApplyVariant(spec, v)
+		if err != nil {
+			return fail("--spec-variant: %v", err)
+		}
+		spec = applied
+		note("--spec-variant: applied %s (b_ref=%.2f z_cell=%.2f r_plasma=%.2f min_clearance=%.2f)",
+			*specVariant, spec.BRef, spec.ZCell, spec.RPlasma, spec.MinClearance)
+	}
 
 	base, err := baselineDesign()
 	if err != nil {
