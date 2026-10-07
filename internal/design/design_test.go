@@ -252,6 +252,68 @@ func TestMuDynamicsClosedForms(t *testing.T) {
 	}
 }
 
+// TestSinkMuSelfFlattening 钉死 CR9 自抹平优化 (上游 sinkmuopt 报告的 C1/C3)。
+//
+// 锚点: 上游 artifacts/sinkmuopt/report.json (emit_mu_anchors.py 读出)——
+//
+//	C1 到达工作窗口 μ=0.999: 132 步(纯外部 η=0.05) → 85 步(+自抹平 λ=0.3)
+//	C3 外部 RMF 减半 (η=0.025) + 自抹平: 150 步 vs 纯外部 267 步
+//	η_sink(λ) = 2λ−λ² 在 λ∈(0,1) 严格递增 (C4)
+//	负面发现: 自抹平必须随 (1−μ) 衰减 (η_sink 恒定会冲过 FC11 天花板)
+func TestSinkMuSelfFlattening(t *testing.T) {
+	const (
+		mu0      = 0.15
+		etaExt   = 0.05
+		lam      = 0.3
+		muWork   = 0.999
+		maxSteps = 100000
+	)
+
+	// C1: 自抹平更快到工作窗口 (132 → 85)。
+	oldSteps := SinkMuWorkSteps(mu0, etaExt, 0 /* 无自抹平 */, muWork, maxSteps)
+	newSteps := SinkMuWorkSteps(mu0, etaExt, lam, muWork, maxSteps)
+	if !(newSteps < oldSteps) {
+		t.Fatalf("C1 失败: 自抹平应更快到工作窗口, got 纯外部 %d vs +自抹平 %d", oldSteps, newSteps)
+	}
+	t.Logf("C1: 到工作窗口 μ=0.999: %d → %d 步 (快 %d)", oldSteps, newSteps, oldSteps-newSteps)
+
+	// C3: 外部 RMF 减半 + 自抹平仍更快 (267 → 150)。
+	halvedExt := etaExt / 2
+	halvedOld := SinkMuWorkSteps(mu0, halvedExt, 0, muWork, maxSteps)
+	halvedNew := SinkMuWorkSteps(mu0, halvedExt, lam, muWork, maxSteps)
+	if !(halvedNew < halvedOld) {
+		t.Fatalf("C3 失败: 外部减半+自抹平应更快, got 纯外部 %d vs +自抹平 %d", halvedOld, halvedNew)
+	}
+	t.Logf("C3: 外部减半: %d → %d 步", halvedOld, halvedNew)
+
+	// C4: η_sink(λ) 严格递增。
+	prev := SinkEta(0.01)
+	for lam_i := 0.02; lam_i < 0.99; lam_i += 0.01 {
+		cur := SinkEta(lam_i)
+		if !(cur > prev) {
+			t.Fatalf("C4 失败: η_sink 应随 λ 严格递增, got %v → %v", prev, cur)
+		}
+		prev = cur
+	}
+
+	// 负面发现 (诚实登记): 自抹平必须随 (1−μ) 衰减 (η_sink 恒定会冲过 FC11 天花板)。
+	// 衰减版的 μ 终值仍趋 1 —— 因为 η_ext 恒定 (TM 系已知行为); 要停在天花板
+	// 需反馈关断 (TD19: 窗口余量单调收窄, 不自行恢复)。这里锁的是「η_sink 确实
+	// 随 μ 衰减」这个数学性质, 不是「μ 停在天花板」。
+	muMid := SinkMuAfterSteps(mu0, etaExt, lam, 100)
+	etaSinkAtMid := etaExt + SinkEta(lam)*(1-muMid) - etaExt // = SinkEta(lam)·(1−μ)
+	muHigh := SinkMuAfterSteps(mu0, etaExt, lam, 1000)
+	etaSinkAtHigh := etaExt + SinkEta(lam)*(1-muHigh) - etaExt
+	if !(etaSinkAtHigh < etaSinkAtMid) {
+		t.Fatalf("自抹平增益应随 μ 上升而衰减 (η_sink(μ=100步)=%v ≥ η_sink(μ=1000步)=%v)",
+			etaSinkAtMid, etaSinkAtHigh)
+	}
+	t.Logf("自抹平增益随 μ 衰减: 100步时 %v → 1000步时 %v", etaSinkAtMid, etaSinkAtHigh)
+	// 诚实: 恒定 η_ext 下 μ 终趋 1 (即使 η_sink 衰减), 停在窗口需反馈关断 (TD19)。
+	muEnd := SinkMuAfterSteps(mu0, etaExt, lam, 2000)
+	t.Logf("μ(2000步) = %v —— 趋 1 是恒定外部驱动的已知行为, 停在窗口需反馈关断 (TD19)", muEnd)
+}
+
 // TestSourceTableShape 钉死场源材料类表的结构 (数值由 anchor_test 反查上游)。
 func TestSourceTableShape(t *testing.T) {
 	wantOrder := []string{

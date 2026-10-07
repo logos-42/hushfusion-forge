@@ -437,11 +437,44 @@ def gravitycontrol(root: str) -> Dict[str, Any]:
 # --------------------------------------------------------------------------- 组装
 
 
+# --------------------------------------------------------------------------- CR9 自抹平优化
+
+
+def sinkmuopt(root: str) -> Dict[str, Any]:
+    """CR9 自抹平优化：双流环 μ 递推加环流电子自抹平增益（上游 sinkmuopt 报告）。
+
+    读出上游 artifacts/sinkmuopt/report.json 的对比结果：
+      C1 到达工作窗口 μ=0.999 更快 (132→85 步)
+      C3 外部 RMF 减半仍可达 (267→150 步) —— 自供能方向
+      关键负面发现: η_sink 恒定会破坏硬界(μ 冲过 FC11 到 1); 必须随 (1−μ) 衰减。
+    """
+    rel = "artifacts/sinkmuopt/report.json"
+    rep = read_json(os.path.join(root, rel))
+    res = pick(rep, "对比结果", rel)
+
+    return {
+        "report_json": rel,
+        "title": pick(rep, "产物", rel),
+        "candidate_mechanism": pick(rep, "候选机制（诚实标注）", rel),
+        "working_point": pick(rep, "工作点", rel),
+        "comparison": {
+            "n_work_old": res.get("n_work_old"),
+            "n_work_new": res.get("n_work_new"),
+            "n_work_saved": res.get("工作窗口节省步数"),
+            "external_halved_still_reaches": res.get("对外部依赖下降（η_ext 减半仍达工作窗口）"),
+        },
+        "conclusion": pick(rep, "结论", rel),
+        "honesty": pick(rep, "诚实边界", rel),
+        "honesty_note": HONESTY_NOTE,
+    }
+
+
 def build(root: str) -> Dict[str, Any]:
-    """把上游两份 report.json + 三个 Lean 文件的条目名组装成一份锚点。"""
+    """把上游三份 report.json + 三个 Lean 文件的条目名组装成一份锚点。"""
     git = upstream_git(root)
     mudyn = mudynamics(root)
     gc = gravitycontrol(root)
+    sm = sinkmuopt(root)
     lean = lean_entries(root)
 
     now = datetime.now(timezone.utc).astimezone()
@@ -458,6 +491,7 @@ def build(root: str) -> Dict[str, Any]:
             "read_from": [
                 "artifacts/mudynamics/report.json",
                 "artifacts/gravitycontrol/report.json",
+                "artifacts/sinkmuopt/report.json",
                 "ProjectionPhysics/PlasmaDynamics.lean",
                 "ProjectionPhysics/MuFieldCoupling.lean",
                 "ProjectionPhysics/GravityControl.lean",
@@ -480,6 +514,7 @@ def build(root: str) -> Dict[str, Any]:
         },
         "mudynamics": mudyn,
         "gravitycontrol": gc,
+        "sinkmuopt": sm,
         "lean": lean,
     }
 

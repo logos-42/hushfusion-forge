@@ -2,20 +2,21 @@
   "provenance": {
     "generator": "scripts/emit_mu_anchors.py",
     "upstream_root": "/Users/apple/Downloads/lean/ProjectionPhysics",
-    "upstream_commit": "7f47cd0e98bbe1914ff781e85031dfa6bf73a3cf",
-    "upstream_commit_subject": "docs(wiki): 判决漏斗对外公开(改档 self→public)+ 修正 1.29% 口径",
-    "upstream_artifacts_tracked_by_git": 0,
-    "generated_at_utc": "2026-09-27T07:28:05Z",
-    "generated_at_local": "2026-09-27T15:28:05.818999+08:00",
+    "upstream_commit": "3d307199947fd1e3f9e86e385c245ba063d1f9a1",
+    "upstream_commit_subject": "feat(sink-mu): evaluate CR9 self-flattening as two-flow-ring mu source",
+    "upstream_artifacts_tracked_by_git": 30,
+    "generated_at_utc": "2026-10-07T01:39:33Z",
+    "generated_at_local": "2026-10-07T09:39:33.516224+08:00",
     "read_from": [
       "artifacts/mudynamics/report.json",
       "artifacts/gravitycontrol/report.json",
+      "artifacts/sinkmuopt/report.json",
       "ProjectionPhysics/PlasmaDynamics.lean",
       "ProjectionPhysics/MuFieldCoupling.lean",
       "ProjectionPhysics/GravityControl.lean"
     ],
     "skipped_fields": [],
-    "source_of_truth": "上游仓库 commit 7f47cd0e98bbe1914ff781e85031dfa6bf73a3cf 的工作区：两份 report.json 由上游 scripts/verify_gravity_control.py / verify_mu_field_coupling.py 重跑得到（上游 artifacts/ 不入上游 git：同一 commit 的 `git ls-files artifacts/` = 0 个文件）；Lean 条目名直读三个 .lean 源文件。锚点里的数字要么是上游字段原文，要么由本脚本反推并自证（带 inferred 标记）。",
+    "source_of_truth": "上游仓库 commit 3d307199947fd1e3f9e86e385c245ba063d1f9a1 的工作区：两份 report.json 由上游 scripts/verify_gravity_control.py / verify_mu_field_coupling.py 重跑得到（上游 artifacts/ 不入上游 git：同一 commit 的 `git ls-files artifacts/` = 30 个文件）；Lean 条目名直读三个 .lean 源文件。锚点里的数字要么是上游字段原文，要么由本脚本反推并自证（带 inferred 标记）。",
     "check_note": "上游是**活的**（leo 会持续在里面计算），所以 --check 分两级：数值/判决值/键集合变了 → 红（FAIL，必须重发锚点并复核）；只有 provenance（commit/时间/路径）或 Lean 条目名集合变了 → 黄（WARN，不拦门）。这样「上游 HEAD 前进但数字没动」不会造成假红。",
     "tolerance_note": "上游字段是逐位拷贝；Go 侧**复算**的派生量（μ 轨道、交换子见证、闭式解）与上游差~2e-15 相对（递推 vs 闭式、求和次序的差别），因此 anchor_test.go 用 rel 1e-12 锚定。"
   },
@@ -420,6 +421,35 @@
       "基元选择由四条判据支撑，不是从公理推出",
       "控制器的物理实现（μ 主动产生）= 第二输入缺口未变",
       "无新物理预言"
+    ],
+    "honesty_note": "上游报告自写的诚实边界，原文照录（上游口径，不是本仓库的结论）"
+  },
+  "sinkmuopt": {
+    "report_json": "artifacts/sinkmuopt/report.json",
+    "title": "双流环 μ 优化对比（CR9 自抹平候选）",
+    "candidate_mechanism": {
+      "η_sink = 2λ − λ²": "CR9 平方衰减 (1−λ)² 的实现（收缩一次抹掉 2λ−λ² 起伏）",
+      "λ（环流电子收敛度）": "输入参数 = 第二输入缺口，不是推导值",
+      "建模性质": "候选机制进装置模型，不是已证物理"
+    },
+    "working_point": {
+      "mu0": 0.15,
+      "eta_ext": 0.05,
+      "lam": 0.3,
+      "eta_sink": 0.51
+    },
+    "comparison": {
+      "n_work_old": 132,
+      "n_work_new": 85,
+      "n_work_saved": 47,
+      "external_halved_still_reaches": true
+    },
+    "conclusion": "CR9 自抹平候选（η_sink 随起伏衰减）让 μ 更快到达工作窗口 μ=0.999，且外部 RMF 减半仍可达（自供能方向）；自抹平随 (1−μ) 衰减 ⟹ 不越 FC11 天花板（硬界保持）。λ 仍是输入（第二输入缺口）。",
+    "honesty": [
+      "λ 是输入参数（第二输入缺口），不是推导值",
+      "η_sink = 2λ−λ² 是 CR9 平方衰减的候选实现，不是唯一映射",
+      "离散格点定理是代数种子；连续 3D 逐点对应未形式化",
+      "无新物理预言；这是候选机制进装置模型的数值评估"
     ],
     "honesty_note": "上游报告自写的诚实边界，原文照录（上游口径，不是本仓库的结论）"
   },

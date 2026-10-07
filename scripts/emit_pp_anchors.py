@@ -347,6 +347,34 @@ def fusionroadmap(root: str) -> Dict[str, Any]:
     }
 
 
+def sinkmuopt(root: str) -> Dict[str, Any]:
+    """CR9 自抹平优化（2026-10-07）：η_sink=2λ−λ² 接进双流环 μ 递推。
+
+    锚点 = 上游 artifacts/sinkmuopt/report.json 的 工作点 / 对比结果 / C1-C4 checks。
+    这些是**上游数值评估的产物**（候选机制进装置模型），不是闭式解 ——
+    Go 侧 SinkMuAfterSteps/SinkMuWorkSteps 是**复算**，锚点按相对容差 1e-12 比对。
+    """
+    rel = "artifacts/sinkmuopt/report.json"
+    rep = read_json(os.path.join(root, rel))
+    work = pick(rep, "工作点", rel)
+    comp = pick(rep, "对比结果", rel)
+
+    # checks: C1/C2/C3/C4 的 通过/细节 原文照录。
+    checks = {}
+    for c in pick(rep, "checks", rel):
+        label = c["检查"].split(" ", 1)[0]  # "C1 自抹平 ⟹ ..." → "C1"
+        checks[label] = {"通过": c["通过"], "细节": c["细节"]}
+
+    return {
+        "report_json": rel,
+        "工作点": work,
+        "对比结果": comp,
+        "checks": checks,
+        "honesty": pick(rep, "诚实边界", rel),
+        "honesty_note": HONESTY_NOTE,
+    }
+
+
 # --------------------------------------------------------------------------- 组装
 
 
@@ -357,6 +385,7 @@ def build(root: str) -> Dict[str, Any]:
     # 解析关闭步用的是**上游文件里的 FLOOR**，不是 Go 里的，也不是本脚本硬写的。
     mudyn = mudynamics(root, moire["floor_FC11"])
     road = fusionroadmap(root)
+    sink = sinkmuopt(root)
 
     now = datetime.now(timezone.utc).astimezone()
 
@@ -376,6 +405,7 @@ def build(root: str) -> Dict[str, Any]:
                 "artifacts/mudynamics/summary.txt",
                 "artifacts/fusionroadmap/report.json",
                 "artifacts/fusionroadmap/summary.txt",
+                "artifacts/sinkmuopt/report.json",
             ],
             "skipped_fields": [],
             # 出处的正确写法（不许写成「来自上游仓库提交的 artifacts」—— 那是假出处）：
@@ -396,6 +426,7 @@ def build(root: str) -> Dict[str, Any]:
         "moirefield": moire,
         "mudynamics": mudyn,
         "fusionroadmap": road,
+        "sinkmuopt": sink,
     }
 
 

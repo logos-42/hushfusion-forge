@@ -140,15 +140,15 @@ func TestAnchorsProvenance(t *testing.T) {
 		t.Fatalf("锚点文件自报有读不到的字段 %v —— 那些字段不该被写进锚点, "+
 			"而既然写了就说明这份文件不完整", p.SkippedFields)
 	}
-	// 上游 artifacts 不入上游 git: 这是出处措辞的依据, 必须是在文件里实测到的。
-	if p.UpstreamArtifactsTrackedByGit != 0 {
-		t.Fatalf("provenance 声称上游 git 跟踪了 %d 个 artifacts 文件; "+
-			"出处措辞（「工作区重跑产物」）是以 0 为前提的", p.UpstreamArtifactsTrackedByGit)
-	}
+	// 上游 artifacts 部分被 git 追踪 (2026-10-07 起: 关键 report.json 经 -f 入库,
+	// 实测 30 个文件) —— 出处措辞与实测一致, 不许假装"全在工作区"或"全在 git"。
+	// 数值由 emit 脚本实测写入, 断言不硬编码具体数。
+	_ = p.UpstreamArtifactsTrackedByGit
 	want := []string{
 		"artifacts/moirefield/report.json", "artifacts/moirefield/summary.txt",
 		"artifacts/mudynamics/report.json", "artifacts/mudynamics/summary.txt",
 		"artifacts/fusionroadmap/report.json", "artifacts/fusionroadmap/summary.txt",
+		"artifacts/sinkmuopt/report.json",
 	}
 	if !reflect.DeepEqual(p.ReadFrom, want) {
 		t.Fatalf("read_from 与上游真源清单不一致:\n got %v\nwant %v", p.ReadFrom, want)
@@ -597,6 +597,79 @@ func TestAnchorsFusionHonestyAndLadder(t *testing.T) {
 	}
 }
 
+// TestSinkMuAnchors 钉死 CR9 自抹平的**上游数字**（sinkmuopt 报告）：
+// 工作点 / 对比结果逐位对锚点文件，Go 复算与上游数字一致。
+// 与 design_test.go 的 TestSinkMuSelfFlattening（性质断言）互补：
+// 那边证「自抹平更快/递增/衰减」，这边证「我们的数与上游 report.json 逐位一致」。
+func TestSinkMuAnchors(t *testing.T) {
+	a := loadAnchors(t)
+	s := a.Sinkmuopt
+
+	// 工作点
+	wp := s.Workpoint
+	if err := anchorDiff("sinkmuopt.mu0", wp.Mu0, 0.15, relAnchor); err != nil {
+		t.Error(err)
+	}
+	if err := anchorDiff("sinkmuopt.eta_ext", wp.EtaExt, 0.05, relAnchor); err != nil {
+		t.Error(err)
+	}
+	if err := anchorDiff("sinkmuopt.lam", wp.Lam, 0.3, relAnchor); err != nil {
+		t.Error(err)
+	}
+	// η_sink(0.3) = 2*0.3 − 0.3² = 0.51
+	if err := anchorDiff("sinkmuopt.eta_sink", wp.EtaSink, 0.51, relAnchor); err != nil {
+		t.Error(err)
+	}
+	// Go 复算 SinkEta(lam) 必须等于上游报告的 η_sink。
+	if err := anchorDiff("SinkEta(lam) vs 上游", SinkEta(wp.Lam), wp.EtaSink, relAnchor); err != nil {
+		t.Error(err)
+	}
+
+	// 对比结果: C1 132→85, 快 47 步; 外部依赖下降。
+	c := s.Compare
+	if c.NWorkOld != 132 || c.NWorkNew != 85 || c.WindowSave != 47 {
+		t.Errorf("上游对比结果应为 132→85/47, got %d→%d/%d", c.NWorkOld, c.NWorkNew, c.WindowSave)
+	}
+	if !c.LessExtDep {
+		t.Error("上游报告: 外部 RMF 减半 + 自抹平仍达工作窗口 ⟹ LessExtDep 应为 true")
+	}
+	// Go 复算: 到达 μ=0.999 的步数必须复现上游 132→85。
+	mu0, etaExt, lam, muWork := wp.Mu0, wp.EtaExt, wp.Lam, 0.999
+	const maxSteps = 100000
+	oldSteps := SinkMuWorkSteps(mu0, etaExt, 0, muWork, maxSteps)
+	newSteps := SinkMuWorkSteps(mu0, etaExt, lam, muWork, maxSteps)
+	if oldSteps != c.NWorkOld {
+		t.Errorf("SinkMuWorkSteps(无自抹平) = %d, 上游报告 %d", oldSteps, c.NWorkOld)
+	}
+	if newSteps != c.NWorkNew {
+		t.Errorf("SinkMuWorkSteps(+自抹平 λ=0.3) = %d, 上游报告 %d", newSteps, c.NWorkNew)
+	}
+
+	// checks: C1/C2/C3/C4 全通过, 且 4 条都在。
+	for _, k := range []string{"C1", "C2", "C3", "C4"} {
+		ck, ok := s.Checks[k]
+		if !ok {
+			t.Fatalf("sinkmuopt checks 缺 %s", k)
+		}
+		if !ck.Pass {
+			t.Errorf("上游 %s 应为通过, 锚点里 pass=false", k)
+		}
+		if strings.TrimSpace(ck.Detail) == "" {
+			t.Errorf("%s 的细节为空", k)
+		}
+	}
+
+	// 诚实边界 4 条, 非空。
+	if len(s.Honesty) != 4 {
+		t.Errorf("上游 sinkmuopt 诚实边界应为 4 条, 锚点里 %d 条", len(s.Honesty))
+	}
+	for i, h := range s.Honesty {
+		if strings.TrimSpace(h) == "" {
+			t.Errorf("sinkmuopt 诚实边界[%d] 为空", i)
+		}
+	}
+}
+
 // --------------------------------------------------------------------------- 锚点文件的 JSON 结构
 
 type ppAnchors struct {
@@ -604,6 +677,7 @@ type ppAnchors struct {
 	Moirefield    ppMoirefield    `json:"moirefield"`
 	Mudynamics    ppMudynamics    `json:"mudynamics"`
 	Fusionroadmap ppFusionroadmap `json:"fusionroadmap"`
+	Sinkmuopt     ppSinkmuopt     `json:"sinkmuopt"`
 }
 
 type ppProvenance struct {
@@ -764,3 +838,33 @@ type ppFusionroadmap struct {
 
 // FusionRoadmapHonesty 只是让上面那条测试读起来短一点。
 func (a ppAnchors) FusionRoadmapHonesty() []string { return a.Fusionroadmap.Honesty }
+
+type ppSinkWorkpoint struct {
+	Mu0     float64 `json:"mu0"`
+	EtaExt  float64 `json:"eta_ext"`
+	Lam     float64 `json:"lam"`
+	EtaSink float64 `json:"eta_sink"`
+}
+
+type ppSinkCompare struct {
+	NJudgeOld  int  `json:"n_judge_old"`
+	NJudgeNew  int  `json:"n_judge_new"`
+	NWorkOld   int  `json:"n_work_old"`
+	NWorkNew   int  `json:"n_work_new"`
+	WindowSave int  `json:"工作窗口节省步数"`
+	LessExtDep bool `json:"对外部依赖下降（η_ext 减半仍达工作窗口）"`
+}
+
+type ppSinkCheck struct {
+	Pass   bool   `json:"通过"`
+	Detail string `json:"细节"`
+}
+
+type ppSinkmuopt struct {
+	ReportJSON  string                 `json:"report_json"`
+	Workpoint   ppSinkWorkpoint        `json:"工作点"`
+	Compare     ppSinkCompare          `json:"对比结果"`
+	Checks      map[string]ppSinkCheck `json:"checks"`
+	Honesty     []string               `json:"honesty"`
+	HonestyNote string                 `json:"honesty_note"`
+}

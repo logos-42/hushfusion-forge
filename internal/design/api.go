@@ -365,25 +365,28 @@ func VRel(b, bRef float64) float64 { return 1.0 / PRel(b, bRef) }
 // 某个调用点才发现。这些函数的实现按契约 §4 分派在 confinement.go / mudynamics.go /
 // sources.go 里。
 var (
-	_ func(b float64) float64                         = NMax
-	_ func(n, beta float64) float64                   = BMin
-	_ func(b float64) float64                         = NOp
-	_ func(n float64) float64                         = TauLawson
-	_ func(a float64) float64                         = Tau0
-	_ func(b, a float64) float64                      = XReq
-	_ func(a float64) float64                         = BDeath
-	_ func(b, a float64) float64                      = ChiMu
-	_ func(b, bRef float64) float64                   = PRel
-	_ func(b, bRef float64) float64                   = VRel
-	_ func(mu0, eta float64, n int) float64           = MuAfterSteps
-	_ func(mu0, eta, meOverMi float64) float64        = WindowCloseStep
-	_ func(mu0, eta, meOverMi float64) int            = FirstClosedStep
-	_ func(mu float64) float64                        = LockingFactor
-	_ func(g float64) float64                         = MuFromGain
-	_ func(mu float64) float64                        = Rci
-	_ func(delta float64) float64                     = MuMinFromDelta
-	_ func(k, decades float64) float64                = PowerMultiple
-	_ func() []Source                                 = SourceTable
-	_ func(key string) (Source, bool)                 = LookupSource
-	_ func(config.Spec, physics.Metrics, Input) Scope = Review
+	_ func(b float64) float64                                  = NMax
+	_ func(n, beta float64) float64                            = BMin
+	_ func(b float64) float64                                  = NOp
+	_ func(n float64) float64                                  = TauLawson
+	_ func(a float64) float64                                  = Tau0
+	_ func(b, a float64) float64                               = XReq
+	_ func(a float64) float64                                  = BDeath
+	_ func(b, a float64) float64                               = ChiMu
+	_ func(b, bRef float64) float64                            = PRel
+	_ func(b, bRef float64) float64                            = VRel
+	_ func(mu0, eta float64, n int) float64                    = MuAfterSteps
+	_ func(mu0, eta, meOverMi float64) float64                 = WindowCloseStep
+	_ func(mu0, eta, meOverMi float64) int                     = FirstClosedStep
+	_ func(lam float64) float64                                = SinkEta
+	_ func(mu0, etaExt, lam float64, n int) float64            = SinkMuAfterSteps
+	_ func(mu0, etaExt, lam, muWork float64, maxSteps int) int = SinkMuWorkSteps
+	_ func(mu float64) float64                                 = LockingFactor
+	_ func(g float64) float64                                  = MuFromGain
+	_ func(mu float64) float64                                 = Rci
+	_ func(delta float64) float64                              = MuMinFromDelta
+	_ func(k, decades float64) float64                         = PowerMultiple
+	_ func() []Source                                          = SourceTable
+	_ func(key string) (Source, bool)                          = LookupSource
+	_ func(config.Spec, physics.Metrics, Input) Scope          = Review
 )

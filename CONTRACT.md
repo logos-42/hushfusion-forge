@@ -34,7 +34,7 @@ Phase 0 的验收问题只有一个：
 
 | Stage | 包/路径 | 所有者 |
 |---|---|---|
-| root | `go.mod` `LICENSE` `README.md` `README.en.md` `PLAN.md` `CONTRACT.md` `CHANGELOG.md`（2026-10-01 新增） `.gitignore` `internal/config/` `internal/owners/` `testdata/` `scripts/` `knowledge/` | parent |
+| root | `go.mod` `LICENSE` `README.md` `README.en.md` `PLAN.md` `CONTRACT.md` `CHANGELOG.md`（2026-10-01 新增） `.gitignore` `internal/config/` `internal/owners/` `testdata/` `scripts/` `knowledge/` `artifacts/`（2026-10-07 新增：持续学习 daemon 的趋势/ckpt 产物，归 parent） | parent |
 | wiki | `docs/` `manifests/` `AGENTS.md` `CLAUDE.md` `.cursorrules` `.windsurfrules` `.claude/` `.github/` | parent（2026-09-26 接入 wiki-first 知识系统时新增） |
 | A | `internal/physics/` | agent-A |
 | B | `internal/objective/` `internal/baseline/` | agent-B |

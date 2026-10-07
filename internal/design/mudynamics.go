@@ -77,6 +77,53 @@ func FirstClosedStep(mu0, eta, meOverMi float64) int {
 	return int(math.Ceil(n))
 }
 
+// SinkEta is CR9 自抹平增益 η_sink(λ) = 2λ − λ²。
+//
+// 出处: 上游 artifacts/sinkmuopt/report.json 的「候选机制（诚实标注）」——
+// 向心收缩一次把起伏抹掉 2λ−λ² (CR9 sinkContract_fluctuation_scale 的 (1−λ)² 实现)。
+// 诚实边界: λ(环流电子收敛度)是**输入参数**(第二输入缺口), 不是推导值;
+// η_sink = 2λ−λ² 是 CR9 平方衰减的**候选实现**, 不是唯一映射。
+func SinkEta(lam float64) float64 {
+	return 2*lam - lam*lam
+}
+
+// SinkMuAfterSteps 是带自抹平的 μ 递推数值迭代: μ' = μ + [η_ext + η_sink·(1−μ)]·(1−μ)。
+//
+// 自抹平随 (1−μ) 衰减 (TD18: 满增益⟺零代价⟺区域已平坦 —— 起伏→0 时抹平失去对象)。
+// 这是**数值迭代**, 不是闭式 —— η 随 μ 变, 闭式解不存在 (与 MuAfterSteps 不同)。
+//
+// 诚实边界: 上游数值验证 (sinkmuopt 报告 C1/C3):
+//
+//	C1 到达工作窗口 μ=0.999: 132 步(纯外部) → 85 步(+自抹平 λ=0.3)
+//	C3 外部 RMF 减半仍可达: 267 步(纯外部) → 150 步(+自抹平)
+//	负面发现: η_sink 恒定会破坏硬界(μ 冲过 FC11 到 1); 必须随 (1−μ) 衰减。
+func SinkMuAfterSteps(mu0, etaExt, lam float64, n int) float64 {
+	mu := mu0
+	for i := 0; i < n; i++ {
+		eta := etaExt + SinkEta(lam)*(1-mu)
+		mu = mu + eta*(1-mu)
+	}
+	return mu
+}
+
+// SinkMuWorkSteps 是带自抹平的 μ 到达工作窗口 μ_work 的步数 (数值迭代, 上限 maxSteps)。
+//
+// 工作窗口 μ_work = 0.999 是聚变级目标 (FC11 天花板 0.99978 之下的工作区)。
+// 返回: 首次 μ ≥ μ_work 的步数; 若 maxSteps 内未达返回 -1 (与 FirstClosedStep 同语义)。
+//
+// 出处: 上游 sinkmuopt 报告的 C1 (132→85 步)。
+func SinkMuWorkSteps(mu0, etaExt, lam, muWork float64, maxSteps int) int {
+	mu := mu0
+	for i := 0; i <= maxSteps; i++ {
+		if mu >= muWork {
+			return i
+		}
+		eta := etaExt + SinkEta(lam)*(1-mu)
+		mu = mu + eta*(1-mu)
+	}
+	return -1
+}
+
 // LockingFactor 是锁定因子 1/√(1−μ_n)。
 //
 // 分母恒正 (TD8: μ < 1) 且随 n 单调递增 (TD20: 逼近发散点) —— 上游 N15 三条

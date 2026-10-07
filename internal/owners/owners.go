@@ -44,6 +44,7 @@ var Stages = []Stage{
 			"testdata/",
 			"scripts/",
 			"knowledge/",
+			"artifacts/",
 		},
 	},
 	{

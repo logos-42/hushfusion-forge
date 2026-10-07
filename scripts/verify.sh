@@ -113,8 +113,11 @@ _opt "G13 python 辅助层测试" '[ -d python/tests ]' \
   python3 -m pytest python/tests -q
 
 # G14: 规则对账 —— scipy 独立复算挖出来的 Spearman rho 与同号 run 占比。
-_opt "G14 规则对账（scipy）" "[ -f knowledge/design_rules.md ] && [ -f runs/$TAG/registry.jsonl ]" \
-  python3 python/aux/rules_check.py --rules knowledge/design_rules.md --registry "runs/$TAG/registry.jsonl"
+#      注意: knowledge/design_rules.md 是 phase1 判据挖的 (文件头写 tag phase1),
+#      所以对账必须用 phase1 registry, 不能跟 $TAG —— 拿 phase0 (0.1.0 判据) 对
+#      phase1 规则 = 用错了尺子 (0.1.2 版本模型, docs/version-0.1.2.md §3)。
+_opt "G14 规则对账（scipy）" "[ -f knowledge/design_rules.md ] && [ -f runs/phase1/registry.jsonl ]" \
+  python3 python/aux/rules_check.py --rules knowledge/design_rules.md --registry "runs/phase1/registry.jsonl"
 
 # G15: 出图 + 最强的一次廉价复核：报告声称基线和机器最优各得了多少分，这里用
 #      numpy/scipy 从设计向量重新算一遍（并对齐 Go 的 5 mm 钳位半径）。两者不一致

@@ -94,8 +94,12 @@ def run_forge(method, seed, budget, forge_root, mu=None, lam=None, sigma0=None,
     if knowledge_dir is not None:
         cmd += ["--knowledge", str(knowledge_dir)]
     if min_clearance is not None:
-        mc_name = MC_NAMES[min_clearance]
-        cmd += ["--spec-variant", mc_name]
+        if min_clearance == 0.05:
+            # 0.05 是默认判据, 不在 SpecVariants 变体列表里 —— 不传 variant 即默认
+            pass
+        else:
+            mc_name = MC_NAMES[min_clearance]
+            cmd += ["--spec-variant", mc_name]
     r = subprocess.run(cmd, cwd=str(forge_root), capture_output=True, text=True, env=env)
     import re
     m = re.search(r"best_score=([-\d.eE]+)", r.stdout)
@@ -119,23 +123,21 @@ def main() -> int:
     ckpt = pathlib.Path(args.ckpt)
 
     # 知识库: v6 用独立目录 runs/v6_knowledge/ (与 v5 分开, 避免双写同一 registry)
-    # 初始化时从 v5 知识库复制一份作种子(继承已积累的设计知识), 之后独立生长
+    # 初始化从 phase1(12001 条)作种子 —— 不用 v5 的 28 万条大库: init 要跑 120 次
+    # forge run(4判据×5方法×2budget×3seed), 每次 evolution_knowledge 全量扫库找
+    # top-16, 28万条会在 init 阶段把启动拖死(实测 7 分钟 0 轮)。phase1 轻、够用,
+    # v6 知识库之后自己生长。
     kb_dir = pathlib.Path(args.forge_root) / "runs" / "v6_knowledge"
     kb_dir.mkdir(parents=True, exist_ok=True)
     kb_reg = kb_dir / "registry.jsonl"
     if not kb_reg.exists():
-        v5_kb = pathlib.Path(args.forge_root) / "runs" / "v5_knowledge" / "registry.jsonl"
-        if v5_kb.exists() and v5_kb.stat().st_size > 0:
-            kb_reg.write_text(open(v5_kb).read())
-            print(f"[init] 知识库建立: 从 v5 复制 {sum(1 for _ in open(kb_reg))} 条作种子", flush=True)
+        phase1 = pathlib.Path(args.forge_root) / "runs" / "phase1" / "registry.jsonl"
+        if phase1.exists():
+            kb_reg.write_text(open(phase1).read())
+            print(f"[init] 知识库建立: phase1 {sum(1 for _ in open(kb_reg))} 条作种子", flush=True)
         else:
-            phase1 = pathlib.Path(args.forge_root) / "runs" / "phase1" / "registry.jsonl"
-            if phase1.exists():
-                kb_reg.write_text(open(phase1).read())
-                print(f"[init] 知识库建立: phase1 {sum(1 for _ in open(kb_reg))} 条作种子", flush=True)
-            else:
-                kb_reg.write_text("")
-                print("[init] 无 v5/phase1, 知识库从空开始", flush=True)
+            kb_reg.write_text("")
+            print("[init] 无 phase1, 知识库从空开始", flush=True)
 
     import os
     import pickle
