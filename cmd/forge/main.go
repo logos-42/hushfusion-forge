@@ -1928,7 +1928,7 @@ func cmdBenchmark(args []string) int {
 	knowledgeDir := fs.String("knowledge", "", "registry dir to seed evolution_knowledge from (reads feasible top-K designs by score)")
 	ruleFile := fs.String("rule", "", "design_rules.md to seed evolution_rule / evolution_champion_rule from")
 	target := fs.Float64("target", 0.0, "target score for Evals-to-Target report (0 = disabled)")
-	specVariant := fs.String("spec-variant", "", "apply a spec variant for Knowledge Survival: one of b_ref=0.8T / b_ref=1.2T / z_cell=0.60m / z_cell=1.00m / r_plasma=0.12m / r_plasma=0.18m")
+	specVariant := fs.String("spec-variant", "", "apply a spec variant for Knowledge Survival: one of b_ref=0.8T / b_ref=1.2T / z_cell=0.60m / z_cell=1.00m / r_plasma=0.12m / r_plasma=0.18m / min_clearance=0.02m / min_clearance=0.10m / min_clearance=0.15m")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
@@ -1970,8 +1970,8 @@ func cmdBenchmark(args []string) int {
 			return fail("--spec-variant: %v", err)
 		}
 		spec = applied
-		note("--spec-variant: applied %s (b_ref=%.2f z_cell=%.2f r_plasma=%.2f)",
-			*specVariant, spec.BRef, spec.ZCell, spec.RPlasma)
+		note("--spec-variant: applied %s (b_ref=%.2f z_cell=%.2f r_plasma=%.2f min_clearance=%.2f)",
+			*specVariant, spec.BRef, spec.ZCell, spec.RPlasma, spec.MinClearance)
 	}
 	base, err := baselineDesign()
 	if err != nil {

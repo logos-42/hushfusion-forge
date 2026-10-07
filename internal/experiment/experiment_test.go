@@ -93,9 +93,9 @@ func TestApplyVariantEmptyOverrideIsIdentity(t *testing.T) {
 	}
 }
 
-func TestSpecVariantsAreSixSingleKeyPerturbations(t *testing.T) {
-	if len(SpecVariants) != 6 {
-		t.Fatalf("SpecVariants has %d entries, the generalisation probe is defined with 6", len(SpecVariants))
+func TestSpecVariantsAreNineSingleKeyPerturbations(t *testing.T) {
+	if len(SpecVariants) != 9 {
+		t.Fatalf("SpecVariants has %d entries, the generalisation probe is defined with 9", len(SpecVariants))
 	}
 	spec := config.DefaultSpec()
 	seen := map[string]bool{}
@@ -124,8 +124,11 @@ func TestSpecVariantsAreSixSingleKeyPerturbations(t *testing.T) {
 		if out.RPlasma != spec.RPlasma {
 			changed["r_plasma"] = out.RPlasma
 		}
+		if out.MinClearance != spec.MinClearance {
+			changed["min_clearance"] = out.MinClearance
+		}
 		if len(changed) != 1 {
-			t.Errorf("variant %q changed %d of the 3 supported keys, want 1", v.Name, len(changed))
+			t.Errorf("variant %q changed %d of the 4 supported keys, want 1", v.Name, len(changed))
 			continue
 		}
 		for k, got := range changed {

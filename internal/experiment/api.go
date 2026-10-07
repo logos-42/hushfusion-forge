@@ -45,7 +45,7 @@ type Variant struct {
 	Override map[string]float64 `json:"override"`
 }
 
-// SpecVariants 是泛化探针使用的六次扰动。
+// SpecVariants 是泛化探针使用的九次扰动。
 var SpecVariants = []Variant{
 	{Name: "b_ref=0.8T", Override: map[string]float64{"b_ref": 0.8}},
 	{Name: "b_ref=1.2T", Override: map[string]float64{"b_ref": 1.2}},
@@ -53,14 +53,16 @@ var SpecVariants = []Variant{
 	{Name: "z_cell=1.00m", Override: map[string]float64{"z_cell": 1.00}},
 	{Name: "r_plasma=0.12m", Override: map[string]float64{"r_plasma": 0.12}},
 	{Name: "r_plasma=0.18m", Override: map[string]float64{"r_plasma": 0.18}},
+	{Name: "min_clearance=0.02m", Override: map[string]float64{"min_clearance": 0.02}},
+	{Name: "min_clearance=0.10m", Override: map[string]float64{"min_clearance": 0.10}},
+	{Name: "min_clearance=0.15m", Override: map[string]float64{"min_clearance": 0.15}},
 }
 
-// variantKeys 是 Variant 允许覆盖的 spec 键。新增一个键属于契约变更
-// （Python 辅助层会镜像这份列表）。
-var variantKeys = []string{"b_ref", "z_cell", "r_plasma"}
+// variantKeys 是 Variant 允许覆盖的 spec 键。
+var variantKeys = []string{"b_ref", "z_cell", "r_plasma", "min_clearance"}
 
 // ApplyVariant 返回应用了该 variant 覆盖项之后的 spec。
-// 支持的键：b_ref、z_cell、r_plasma。未知键必须报错，
+// 支持的键：b_ref、z_cell、r_plasma、min_clearance。未知键必须报错，
 // 而不是被静默忽略。
 //
 // 整个覆盖集合会在写入任何东西之前先整体校验，因此一旦报错，返回的 spec
@@ -87,6 +89,8 @@ func ApplyVariant(spec config.Spec, v Variant) (config.Spec, error) {
 			out.ZCell = v.Override[k]
 		case "r_plasma":
 			out.RPlasma = v.Override[k]
+		case "min_clearance":
+			out.MinClearance = v.Override[k]
 		}
 	}
 	return out, nil
