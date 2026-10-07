@@ -14,4 +14,5 @@
 - [fusion-program-roadmap-v2.md](./fusion-program-roadmap-v2.md) — 可复用制造系统与物理判决漏斗
 - [fusion-program-roadmap-v3.md](./fusion-program-roadmap-v3.md) — 物理架构先行的可复用制造与判决漏斗
 - [plan-developmental-learning.md](./plan-developmental-learning.md) — 发育式持续学习（V6.1/7）：模型本身的重塑，深度探索极限
+- [plan-antigravity-control.md](./plan-antigravity-control.md) — 反引力场控制：持续学习选 (η_ext, λ) 控制参数（17× 加速发现）
 - [log.md](./log.md)
