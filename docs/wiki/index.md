@@ -13,4 +13,5 @@
 - [design-two-flow-ring-axial.md](./design-two-flow-ring-axial.md) — 轴向分离双流环设计层：中性面悬空的判据 / 零场面 / 装置包络 / 有限截面修正
 - [fusion-program-roadmap-v2.md](./fusion-program-roadmap-v2.md) — 可复用制造系统与物理判决漏斗
 - [fusion-program-roadmap-v3.md](./fusion-program-roadmap-v3.md) — 物理架构先行的可复用制造与判决漏斗
+- [plan-developmental-learning.md](./plan-developmental-learning.md) — 发育式持续学习（V6.1/7）：模型本身的重塑，深度探索极限
 - [log.md](./log.md)
