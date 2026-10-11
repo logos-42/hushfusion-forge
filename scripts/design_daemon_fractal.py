@@ -179,6 +179,8 @@ class FractalNodeV2:
 
     def train_step(self, X, Y, steps=2):
         self.t += 1
+        # 训练自身 + 门控 (根节点每轮更新)
+        loss_self = None
         for _ in range(steps):
             self.opt.zero_grad()
             y, _ = self.predict_tree(X)
@@ -192,12 +194,24 @@ class FractalNodeV2:
                 loss = mse
             loss.backward()
             self.opt.step()
-        for i in range(len(self.children)):
-            if self.child_warmup[i] > 0:
-                self.child_warmup[i] -= 1
-        self.clean_losses.append(float(mse.detach()))
+            loss_self = float(mse.detach())
+        # 稀疏调度: 仅当 t 命中 update_freq 时才递归训练子节点
+        if self.t % self.update_freq == 0 or self.t == 1:
+            for i, ch in enumerate(self.children):
+                if self.child_warmup[i] > 0:
+                    # warmup 期: 子节点独立训练 (不参与父门控)
+                    ch_opt = torch.optim.Adam(ch.net.parameters(), lr=1e-3)
+                    ch_opt.zero_grad()
+                    yc = ch.net(X)
+                    lc = ((yc - Y) ** 2).mean()
+                    lc.backward()
+                    ch_opt.step()
+                    self.child_warmup[i] -= 1
+                else:
+                    ch.train_step(X, Y, steps=1)
+        self.clean_losses.append(loss_self)
         self.clean_losses = self.clean_losses[-12:]
-        return float(mse.detach())
+        return loss_self
 
     def grow_check(self):
         if len(self.clean_losses) < 6 or self.n_nodes() >= 7:
@@ -245,6 +259,8 @@ def main():
     ap.add_argument("--out", default="/work/liuyuanjie/forge/artifacts/oml_daemon_trend_fractal.jsonl")
     ap.add_argument("--ckpt", default="/work/liuyuanjie/forge/artifacts/oml_daemon_fractal_ckpt.pkl")
     ap.add_argument("--interval", type=float, default=1.0)
+    ap.add_argument("--seed", type=int, default=None,
+                    help="随机种子; 默认 None = 用当前时间(不可复现, 仅生产)。固定种子可复现。")
     args = ap.parse_args()
 
     stop_file = pathlib.Path("/work/liuyuanjie/design_daemon_fractal.stop")
@@ -252,7 +268,10 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     ckpt = pathlib.Path(args.ckpt)
 
-    rng = np.random.default_rng(int(time.time()) % 10000)
+    rng = np.random.default_rng(args.seed if args.seed is not None else int(time.time()) % 10000)
+    if args.seed is not None:
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
     in_dim = 3
 
     # 状态: 两个学习器 + 各自滑动经验池 + 累积统计
