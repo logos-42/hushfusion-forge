@@ -129,6 +129,7 @@ class FractalNodeV2:
         self.gate = nn.Parameter(torch.zeros(1))
         self.children = []
         self.child_warmup = []
+        self.child_opts = []   # 持久子节点优化器 (warmup 期复用, 避免动量清零)
         self.opt = torch.optim.Adam(list(self.net.parameters()) + [self.gate], lr=1e-3)
         self.update_freq = D ** depth
         self.t = 0
@@ -149,6 +150,7 @@ class FractalNodeV2:
                               warmup=self.warmup, ent_reg=self.ent_reg)
         self.children.append(child)
         self.child_warmup.append(self.warmup)
+        self.child_opts.append(None)   # 新子节点优化器未初始化, warmup 首次训练时建
         n = len(self.children) + 1
         self.gate = nn.Parameter(torch.full((n,), math.log(n)))
         self.opt = torch.optim.Adam(list(self.net.parameters()) + [self.gate], lr=1e-3)
@@ -177,7 +179,14 @@ class FractalNodeV2:
         y, _ = self.predict_tree(X)
         return y.flatten().detach().numpy()
 
-    def train_step(self, X, Y, steps=2):
+    def train_step(self, X, Y, steps=2, _counter=None):
+        """训练自身 + 门控, 递归训练子节点 (稀疏调度 t%update_freq)。
+
+        _counter: [总梯度步数] 列表, 本轮所有 optimizer.step() 计数,
+        用于配平: 固定节点每轮补到相同总步数 (matched compute)。
+        """
+        if _counter is None:
+            _counter = [0]
         self.t += 1
         # 训练自身 + 门控 (根节点每轮更新)
         loss_self = None
@@ -194,24 +203,28 @@ class FractalNodeV2:
                 loss = mse
             loss.backward()
             self.opt.step()
+            _counter[0] += 1
             loss_self = float(mse.detach())
         # 稀疏调度: 仅当 t 命中 update_freq 时才递归训练子节点
         if self.t % self.update_freq == 0 or self.t == 1:
             for i, ch in enumerate(self.children):
                 if self.child_warmup[i] > 0:
-                    # warmup 期: 子节点独立训练 (不参与父门控)
-                    ch_opt = torch.optim.Adam(ch.net.parameters(), lr=1e-3)
+                    # warmup 期: 子节点独立训练 (不参与父门控), 复用持久优化器
+                    if self.child_opts[i] is None:
+                        self.child_opts[i] = torch.optim.Adam(ch.net.parameters(), lr=1e-3)
+                    ch_opt = self.child_opts[i]
                     ch_opt.zero_grad()
                     yc = ch.net(X)
                     lc = ((yc - Y) ** 2).mean()
                     lc.backward()
                     ch_opt.step()
+                    _counter[0] += 1
                     self.child_warmup[i] -= 1
                 else:
-                    ch.train_step(X, Y, steps=1)
+                    ch.train_step(X, Y, steps=1, _counter=_counter)
         self.clean_losses.append(loss_self)
         self.clean_losses = self.clean_losses[-12:]
-        return loss_self
+        return loss_self, _counter[0]
 
     def grow_check(self):
         if len(self.clean_losses) < 6 or self.n_nodes() >= 7:
@@ -352,15 +365,12 @@ def main():
         update_pool(px, py, ctrl_feature(pe, pl, mu0), py_)
         update_pool(fx, fy, ctrl_feature(fe, fl, mu0), fy_)
 
-        # 训练 (窗口 64)
-        if len(px) >= 16:
-            Xp = torch.tensor(np.array(px[-64:]), dtype=torch.float32)
-            Yp = torch.tensor(np.array(py[-64:]), dtype=torch.float32).reshape(-1, 1)
-            plain.train_step(Xp, Yp)
+        # 训练 (窗口 64) —— 配平: 固定节点梯度步数 = 分形树本轮总梯度步数
+        matched_steps = 2  # 默认: 双方都 ≥2 步
         if len(fx) >= 16:
             Xf = torch.tensor(np.array(fx[-64:]), dtype=torch.float32)
             Yf = torch.tensor(np.array(fy[-64:]), dtype=torch.float32).reshape(-1, 1)
-            floss = fractal.train_step(Xf, Yf)
+            floss, matched_steps = fractal.train_step(Xf, Yf)
             # 生长: 误差平台 ⟹ 长子树
             if fractal.grow_check():
                 nb = fractal.n_nodes()
@@ -368,6 +378,11 @@ def main():
                 print(f"[生长] round={rnd} 树 {nb}→{fractal.n_nodes()} 节点, "
                       f"深 {fractal.depth_of()}", flush=True)
                 fractal.detector = RelDecayDetector()
+        if len(px) >= 16:
+            Xp = torch.tensor(np.array(px[-64:]), dtype=torch.float32)
+            Yp = torch.tensor(np.array(py[-64:]), dtype=torch.float32).reshape(-1, 1)
+            # 配平核心: 固定节点每轮用与分形树相同的梯度步数
+            plain.train_step(Xp, Yp, steps=max(matched_steps, 1))
 
         # 统计
         if is_cold:
