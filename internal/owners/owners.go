@@ -41,6 +41,8 @@ var Stages = []Stage{
 			".gitignore",
 			"internal/config/",
 			"internal/owners/",
+			"internal/kernelbridge/",
+			"bridge/",
 			"testdata/",
 			"scripts/",
 			"knowledge/",

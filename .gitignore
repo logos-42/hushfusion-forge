@@ -22,3 +22,7 @@ runs/**/*.tmp
 raw/
 raw_local/
 raw_vault/
+
+# Bolloon kernel bridge 依赖 (npm install 产物, 不入库)
+bridge/node_modules/
+
