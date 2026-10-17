@@ -35,7 +35,7 @@ Phase 0 的验收问题只有一个：
 | Stage | 包/路径 | 所有者 |
 |---|---|---|
 | root | `go.mod` `LICENSE` `README.md` `README.en.md` `PLAN.md` `CONTRACT.md` `CHANGELOG.md`（2026-10-01 新增） `.gitignore` `internal/config/` `internal/owners/` `internal/kernelbridge/`（2026-10-12 新增：Bolloon kernel 跨语言 bridge，归 parent） `bridge/`（2026-10-12 新增：Node stdio JSON-RPC server，消费 @bolloon/bolloon-kernel，归 parent） `testdata/` `scripts/` `knowledge/` `artifacts/`（2026-10-07 新增：持续学习 daemon 的趋势/ckpt 产物，归 parent） | parent |
-| wiki | `docs/` `manifests/` `AGENTS.md` `CLAUDE.md` `.cursorrules` `.windsurfrules` `.claude/` `.github/` | parent（2026-09-26 接入 wiki-first 知识系统时新增） |
+| wiki | `docs/` `manifests/` `os/`（2026-10-17 新增：HUSHFUSION OS 决策层——任务池/实验状态机/机会池/决策日志/周复盘，Markdown+脚本，不承载引擎逻辑，归 parent） `AGENTS.md` `CLAUDE.md` `.cursorrules` `.windsurfrules` `.claude/` `.github/` | parent（2026-09-26 接入 wiki-first 知识系统时新增） |
 | A | `internal/physics/` | agent-A |
 | B | `internal/objective/` `internal/baseline/` | agent-B |
 | C | `internal/registry/` `internal/runner/` | agent-C |

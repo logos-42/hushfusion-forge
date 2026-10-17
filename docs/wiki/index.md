@@ -3,6 +3,7 @@
 - [README.md](./README.md)
 - [SCHEMA.md](./SCHEMA.md)
 - [project-overview.md](./project-overview.md)
+- [os-operations.md](./os-operations.md) — HUSHFUSION OS 决策层：任务池 / 证据状态机 / 机会池 / 决策日志 / 周复盘（v0.1，2026-10-17）
 - [current-status.md](./current-status.md)
 - [sources-and-data.md](./sources-and-data.md)
 - [github-and-raw-strategy.md](./github-and-raw-strategy.md)

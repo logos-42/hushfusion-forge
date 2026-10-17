@@ -2,7 +2,7 @@
 title: 当前状态
 source: session
 created: 2026-09-26
-last_confirmed: 2026-10-07
+last_confirmed: 2026-10-17
 audience: self
 stage: current
 schema_version: 2.1
@@ -10,6 +10,8 @@ tags: [status]
 ---
 
 # 当前状态
+
+**HUSHFUSION OS v0.1 已上线（2026-10-17）**：决策层 `os/`（任务池 / 实验五态状态机 / 机会池 / 决策日志 / 周复盘）——**kernel 主导执行**（Bolloon bridge G24），headless 留 `model.acquire` 槽位（T-08，预备不实现）。唯一主任务 **T-01 = G19 世界语义重做（B 项）**，验收标准预注册于 `os/acceptance/t01-g19.md`。见 [os-operations.md](./os-operations.md)。
 
 **版本 v0.2** ｜ 最后确认 2026-10-05 ｜ **版本线跃迁 0.2（判据数字不变，版本税已干净交掉）** ｜ **实验 A：知识复用被证（evolution_knowledge 全档赢，Gain +1.47→+0.11）** ｜ **实验 B：champion 主导、rule 弱（replay system 已成）** ｜ **实验 C：champion 跨任务成立、rule 跨任务失效（当前规则是 task-specific）** ｜ **Phase 0 已完成并验收** ｜ **内部设计判决层已接上游 Hibs-Physics** ｜ **世界协议 v1 已冻结（P0）** ｜ **交换子世界已跑通（P1 第一片，候选）** ｜ **判据变更：可造性进目标函数（0.1.2）** ｜ **计划重编为 v2（0.1.1，仅文档）**
 

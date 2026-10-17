@@ -56,6 +56,10 @@ var Stages = []Stage{
 		Paths: []string{
 			"docs/",
 			"manifests/",
+			// os/: HUSHFUSION OS 决策层（任务池/实验状态机/机会池/决策日志/周复盘）。
+			// 它是 wiki-first 的延伸：Markdown + JSON + 脚本 + Git，不承载引擎逻辑，
+			// 证据的唯一权威仍在 runs/ 与 docs/wiki/。新增 os/ 文件属于合同变更。
+			"os/",
 			"AGENTS.md",
 			"CLAUDE.md",
 			".cursorrules",
