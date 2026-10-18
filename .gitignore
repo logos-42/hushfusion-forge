@@ -17,6 +17,10 @@ venv/
 runs/scratch/
 runs/**/*.tmp
 
+# forge os 双向打通的每次交互证据(带时间戳 JSON, 只作核对用): 决策落盘走
+# os/DECISIONS.md / os/EXPERIMENTS.md 结构化文档, 不进 git
+os/evidence/
+
 # raw 原件(与仓库平级的本地 raw 根,外加编辑器状态): 只进 manifest,不进 git
 .obsidian/
 raw/

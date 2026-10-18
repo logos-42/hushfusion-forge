@@ -39,6 +39,7 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/design"
 	"github.com/logos-42/hushfusion-forge/internal/experiment"
+	"github.com/logos-42/hushfusion-forge/internal/kernelbridge"
 	"github.com/logos-42/hushfusion-forge/internal/knowledge"
 	"github.com/logos-42/hushfusion-forge/internal/objective"
 	"github.com/logos-42/hushfusion-forge/internal/physics"
@@ -128,6 +129,12 @@ func run(args []string) int {
 		return cmdRegistry(rest)
 	case "world":
 		return cmdWorld(rest)
+	case "os":
+		// HUSHFUSION OS 决策层 ↔ Agent Kernel 双向打通:
+		// submit   OS→kernel: 把 os/TASKS.md 里的一个任务投递给 kernel channel 串行执行, 结果落盘
+		// peek     kernel→OS: 从 kernel actor 读回该 channel 的执行状态
+		// sync     双向: submit 后立即 peek, 把两者都落盘 (证据闭环)
+		return cmdOS(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "forge: unknown command %q\n\n", cmd)
 		usage(os.Stderr)
@@ -151,6 +158,7 @@ commands:
   report      render the markdown run report
   registry    inspect a registry and check its integrity
   world       world protocol: serve/replay the design world (docs/world-protocol.md)
+  os          HUSHFUSION OS ↔ Agent Kernel 双向打通: submit / peek / sync (os/SPEC.md §8)
   version     print version, spec shape and frozen schema facts
 
 exit codes: 0 ok, 1 a gate/command failed, 2 usage error.
@@ -2578,4 +2586,224 @@ func cmdWorldServe(args []string) int {
 	}
 	fmt.Fprintf(os.Stderr, "forge world: recorded %s\n", *record)
 	return code
+}
+
+// ---------------------------------------------------------------------------
+// HUSHFUSION OS ↔ Agent Kernel 双向打通 (forge os)
+// ---------------------------------------------------------------------------
+//
+// 双向闭环的机制形状 (协议 = kernelbridge 的 stdio JSON-RPC):
+//
+//	submit   OS→kernel: 把 OS 的一个任务投递给 kernel channel, ChannelActor 串行执行
+//	         (严格 FIFO / 跨 channel 隔离 / 端口未注入 fail-closed —— 机制本体在 kernel,
+//	         OS 只给"做什么"的判定, 不掺"该不该继续")。
+//	peek     kernel→OS: 读回该 channel actor 的状态快照 (上次执行留下了什么)。
+//	sync     submit + peek 一次完成: 提交后立刻读回, 核对 actor 记住了本次的 task/marker
+//	         —— 这就是「双向打通」的证据: OS 说"我提交了", kernel 回读说"我记住了"。
+//
+// 每次调用把证据落盘 os/evidence/ (带时间戳的 JSON)。门禁纪律: 证据文件是唯一被
+// 提交的东西, 它们让"Agent 说完成了"变成"可以核对的事实"。evidence 目录归
+// os/ (wiki stage, parent), 不需要名册变更。
+const defOSEvidenceDir = "os/evidence"
+
+func cmdOS(args []string) int {
+	if len(args) == 0 {
+		osUsage(os.Stderr)
+		return 2
+	}
+	sub, rest := args[0], args[1:]
+	switch sub {
+	case "submit":
+		return cmdOSSubmit(rest)
+	case "peek":
+		return cmdOSPeek(rest)
+	case "sync":
+		return cmdOSSync(rest)
+	case "help", "-h", "--help":
+		osUsage(os.Stdout)
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "forge os: unknown subcommand %q\n\n", sub)
+		osUsage(os.Stderr)
+		return 2
+	}
+}
+
+func osUsage(w *os.File) {
+	fmt.Fprintf(w, `usage: forge os <submit|peek|sync> [flags]
+
+HUSHFUSION OS ↔ Agent Kernel 双向打通 (os/SPEC.md §8):
+
+  submit   OS→kernel: 把一个任务投递给 kernel channel 串行执行, 证据落盘 os/evidence/
+  peek     kernel→OS: 从 kernel actor 读回 channel 状态快照, 证据落盘
+  sync     submit 后立即 peek 并核对 task/marker —— 一次命令完成双向闭环
+`)
+}
+
+// writeOSEvidence 把一次 OS↔kernel 交互的证据落盘 (带时间戳 JSON, 追加目录)。
+func writeOSEvidence(dir, kind string, payload map[string]any) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+	ts := time.Now().UTC().Format("20060102T150405.000000Z")
+	path := filepath.Join(dir, fmt.Sprintf("%s-%s.json", kind, ts))
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal evidence: %w", err)
+	}
+	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write evidence %s: %w", path, err)
+	}
+	note("os: evidence -> %s", path)
+	return nil
+}
+
+func cmdOSSubmit(args []string) int {
+	fs := newFlagSet("os submit", "forge os submit --channel <id> --task <taskID> [--marker <m>] [--sleep-ms <n>] [--evidence <dir>]",
+		"OS→kernel: 把任务投递给 kernel channel, ChannelActor 串行执行。")
+	channel := fs.String("channel", "", "kernel channel id (同 channel 内严格 FIFO)")
+	task := fs.String("task", "", "task id (OS 任务池里的标识, 如 T-01)")
+	marker := fs.String("marker", "", "marker 文本 (kernel actor 状态里回读的记号)")
+	sleepMs := fs.Int("sleep-ms", 0, "模拟任务耗时毫秒 (0 = 立即完成)")
+	evidence := fs.String("evidence", defOSEvidenceDir, "证据落盘目录")
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+	if *channel == "" || *task == "" {
+		fmt.Fprintf(os.Stderr, "forge os submit: --channel 与 --task 必填\n\n")
+		fs.Usage()
+		return 2
+	}
+	c, err := kernelbridge.Create()
+	if err != nil {
+		return fail("os submit: 起 bridge 失败 (node 在 PATH? cd bridge && npm install?): %v", err)
+	}
+	defer c.Close()
+	out, err := c.ChannelSubmit(*channel, *task, *marker, *sleepMs)
+	if err != nil {
+		return fail("os submit: %v", err)
+	}
+	if !boolMap(out, "ok") {
+		return fail("os submit: kernel fail-closed: %v", out)
+	}
+	if err := writeOSEvidence(*evidence, "submit", map[string]any{
+		"direction": "os->kernel",
+		"channel":   *channel,
+		"task":      *task,
+		"marker":    *marker,
+		"sleep_ms":  *sleepMs,
+		"kernel":    out,
+	}); err != nil {
+		return fail("os submit: %v", err)
+	}
+	note("os submit: channel=%s task=%s via=%v", *channel, *task, out["via"])
+	return 0
+}
+
+func cmdOSPeek(args []string) int {
+	fs := newFlagSet("os peek", "forge os peek --channel <id> [--evidence <dir>]",
+		"kernel→OS: 读回 kernel actor 的状态快照。")
+	channel := fs.String("channel", "", "kernel channel id")
+	evidence := fs.String("evidence", defOSEvidenceDir, "证据落盘目录")
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+	if *channel == "" {
+		fmt.Fprintf(os.Stderr, "forge os peek: --channel 必填\n\n")
+		fs.Usage()
+		return 2
+	}
+	c, err := kernelbridge.Create()
+	if err != nil {
+		return fail("os peek: 起 bridge 失败 (node 在 PATH? cd bridge && npm install?): %v", err)
+	}
+	defer c.Close()
+	state, err := c.ChannelPeek(*channel)
+	if err != nil {
+		return fail("os peek: %v", err)
+	}
+	if !boolMap(state, "ok") {
+		// 独立 bridge 会话: 上一个 forge os 进程退出后 actor 就不存在了。
+		// 这是 ChannelActor mailbox 的机制本义 (状态在进程内), 不是故障。
+		// 要核对历史证据去读 os/evidence/ 落盘文件。
+		detail, _ := state["detail"].(string)
+		if strings.Contains(detail, "actor 不存在") {
+			return fail("os peek: %v —— 每个 forge os 调用是独立 bridge 会话, actor 状态只在进程内存在; 要核对历史提交请读 %s/ 里的落盘证据", detail, *evidence)
+		}
+		return fail("os peek: kernel fail-closed: %v", state)
+	}
+	if err := writeOSEvidence(*evidence, "peek", map[string]any{
+		"direction": "kernel->os",
+		"channel":   *channel,
+		"kernel":    state,
+	}); err != nil {
+		return fail("os peek: %v", err)
+	}
+	b, _ := json.Marshal(state)
+	note("os peek: channel=%s state=%s", *channel, b)
+	return 0
+}
+
+func cmdOSSync(args []string) int {
+	fs := newFlagSet("os sync", "forge os sync --channel <id> --task <taskID> [--marker <m>] [--sleep-ms <n>] [--evidence <dir>]",
+		"双向闭环: submit 后立即 peek, 核对 kernel actor 记住了本次提交的 task/marker。")
+	channel := fs.String("channel", "", "kernel channel id")
+	task := fs.String("task", "", "task id")
+	marker := fs.String("marker", "", "marker 文本 (回读核对用)")
+	sleepMs := fs.Int("sleep-ms", 0, "模拟任务耗时毫秒")
+	evidence := fs.String("evidence", defOSEvidenceDir, "证据落盘目录")
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+	if *channel == "" || *task == "" {
+		fmt.Fprintf(os.Stderr, "forge os sync: --channel 与 --task 必填\n\n")
+		fs.Usage()
+		return 2
+	}
+	c, err := kernelbridge.Create()
+	if err != nil {
+		return fail("os sync: 起 bridge 失败 (node 在 PATH? cd bridge && npm install?): %v", err)
+	}
+	defer c.Close()
+	out, err := c.ChannelSubmit(*channel, *task, *marker, *sleepMs)
+	if err != nil {
+		return fail("os sync: submit: %v", err)
+	}
+	if !boolMap(out, "ok") {
+		return fail("os sync: kernel fail-closed: %v", out)
+	}
+	state, err := c.ChannelPeek(*channel)
+	if err != nil {
+		return fail("os sync: peek: %v", err)
+	}
+	if !boolMap(state, "ok") {
+		return fail("os sync: kernel fail-closed: %v", state)
+	}
+	// 双向核对: actor 状态必须记住本次提交的 task 与 marker。
+	actorState, _ := state["state"].(map[string]any)
+	lastTask, _ := actorState["lastTask"].(map[string]any)
+	gotTask, _ := lastTask["taskId"].(string)
+	gotMarker, _ := lastTask["marker"].(string)
+	if gotTask != *task || gotMarker != *marker {
+		return fail("os sync: 双向核对失败: 提交 task=%q marker=%q, kernel 回读 task=%q marker=%q —— 闭环没合上", *task, *marker, gotTask, gotMarker)
+	}
+	if err := writeOSEvidence(*evidence, "sync", map[string]any{
+		"direction": "os<->kernel",
+		"channel":   *channel,
+		"task":      *task,
+		"marker":    *marker,
+		"submit":    out,
+		"peek":      state,
+		"verified":  true,
+	}); err != nil {
+		return fail("os sync: %v", err)
+	}
+	note("os sync: channel=%s task=%s 双向核对通过 (kernel 记住了本次提交)", *channel, *task)
+	return 0
+}
+
+// boolMap 读 map 里的 bool 字段 (kernel 响应的 ok 标志)。
+func boolMap(m map[string]any, key string) bool {
+	v, _ := m[key].(bool)
+	return v
 }

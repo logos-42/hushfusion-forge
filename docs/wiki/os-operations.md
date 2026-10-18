@@ -26,6 +26,11 @@ OS 是**决策层，不是新平台**：Markdown + JSON + 脚本 + Git，挂在�
 **headless 预留**：headless（SSM+OML 持续学习，`~/Downloads/headless`）未来注入 kernel 作为核心——
 预留槽位 = `model.acquire` 租约（headless 实现 `openConnection`）；本版只留接口不实现（T-08）。
 
+**双向打通（2026-10-18，已实现）**：`forge os <submit|peek|sync>` 把决策层接到 kernel——
+submit 投递任务（OS→kernel）、peek 读回 actor 状态（kernel→OS）、sync 做「提交→回读→核对
+task/marker」的双向闭环；证据落盘 `os/evidence/`（gitignore，scratch 性质），决策落盘走结构化文档。
+诚实边界：每次调用是独立 bridge 会话（actor 状态进程内）；sleep-ms 是机制演示，真实负载未挂。
+
 ## 结构
 
 ```

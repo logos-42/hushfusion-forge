@@ -35,6 +35,7 @@
 | 日常检查 | `bash os/tools/daily_check.sh`（编译+名册+wiki 三连+脏树提醒） | **v0.1 新增** |
 | 周复盘草稿 | `bash os/tools/weekly_review.sh`（收集本周证据→生成复盘初稿） | **v0.1 新增** |
 | headless 注入 | 预留槽位 = kernel `model.acquire` 租约（T-08，**不实现**） | proposed |
+| OS↔kernel 双向 | `forge os <submit\|peek\|sync>`（os/SPEC.md §8.3），证据落盘 `os/evidence/`（gitignore） | **已真跑**（2026-10-18 sync 核对通过） |
 
 ## 5. 系统如何变好？
 

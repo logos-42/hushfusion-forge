@@ -28,6 +28,33 @@
         },
         "via": "kernel-run-lifecycle"
       }
+    },
+    {
+      "at": "2026-10-18T14:00:24Z",
+      "channel": "os",
+      "taskId": "T-01",
+      "marker": "os:T-01",
+      "kernel": {
+        "finishedAt": 1792332024342,
+        "ok": true,
+        "result": {
+          "at": 1792332024342,
+          "marker": "os:T-01",
+          "sleepMs": 0,
+          "taskId": "T-01"
+        },
+        "startedAt": 1792332024342,
+        "via": "kernel-channel-actor"
+      },
+      "lifecycle": {
+        "ok": true,
+        "op": "record-step",
+        "port": "recordStep",
+        "result": {
+          "ok": true
+        },
+        "via": "kernel-run-lifecycle"
+      }
     }
   ]
 }

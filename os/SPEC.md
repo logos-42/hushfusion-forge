@@ -141,3 +141,25 @@ os/
 - **预留语义边界（与 headless 的既有进程边界一致）**：本仓世界协议（`docs/world-protocol.md`）只搬运 + 校验，不添加 shaping / 惩罚 / 归一化；headless 注入 kernel 同样只走机制，不掺业务判定。
 - **状态**：`proposed`（预留在 TASKS.md T-08）。不写代码、不建服务、不占门。等最小闭环真运转 + leo 拍板注入时机再激活。
 - 相关：`docs/wiki/os-operations.md`、T-08、`~/Downloads/headless` README。
+
+### 8.3 OS ↔ kernel 双向打通（已实现，forge os，2026-10-18）
+
+`forge os <submit|peek|sync>` 把决策层接到 kernel 上，双向闭环：
+
+| 命令 | 方向 | 做什么 | 证据落盘 |
+|:--|:--|:--|:--|
+| `forge os submit --channel <id> --task <taskID> [--marker <m>] [--sleep-ms <n>]` | OS→kernel | 把 OS 任务投递给 kernel channel，ChannelActor 串行执行（严格 FIFO / 跨 channel 隔离 / 端口未注入 fail-closed） | `os/evidence/submit-<ts>.json` |
+| `forge os peek --channel <id>` | kernel→OS | 读回该 channel actor 的状态快照 | `os/evidence/peek-<ts>.json` |
+| `forge os sync ...` | 双向 | submit 后立即 peek，**核对 kernel 记住了本次提交的 task/marker**——这就是打通的证据 | `os/evidence/sync-<ts>.json` |
+
+**语义（与 kernel SDK 纪律一致）**：OS 只给「做什么」（task/marker），kernel 只执行机制（串行、隔离、fail-closed），**不判「该不该继续」**——判据仍是门禁与 leo。
+
+**与 `os/tools/ossubmit` 的分工（2026-10-18，同一底层 kernelbridge）**：
+- `ossubmit`（os/tools/）是**编排闭环**：读 TASKS.md 找唯一 active 任务 → 提交 → 回执落盘 `os/kernel_receipts/<id>.json` → `--settle` 验收勾验 + 翻态回写；oscheck 门（T1–T8/E1/A1/K1–K2）随 G5 强制它。
+- `forge os`（cmd/forge）是**机制核对原语**：不绑定 TASKS.md，任意 channel 可 submit/peek/sync；sync 做「提交→读回 actor 状态→核对 task/marker」的显式双向证据（ossubmit 没有读回 actor 状态这一步）。
+- 共用 `internal/kernelbridge` 同一客户端，无重复代码；日常流程走 ossubmit，机制核对/调试走 forge os。
+
+**诚实边界（实测确认）**：
+1. 每个 `forge os` 调用是**独立 bridge 会话**——ChannelActor 状态只在进程内存在，进程退出后 actor 即消失。所以 `sync` 是同一进程内完成双向核对；跨进程「读回上次提交」不存在，要核对历史去读 `os/evidence/` 落盘文件（peek 在 actor 不存在时会给出这条提示，不假装成功）。
+2. `--sleep-ms` 目前是**机制演示**：kernel 侧执行的是「串行等待 + 记 marker」，不是真实物理计算。真实任务执行（把 verify/run 挂进 channel）是下一步——先证明机制双向通，再挂负载。
+3. `os/evidence/` 已 gitignore（scratch 性质）。**决策落盘走结构化文档**（DECISIONS / EXPERIMENTS / TASKS 状态机），evidence 只作核对用。
