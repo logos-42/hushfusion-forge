@@ -76,6 +76,9 @@ Phase 0 的验收问题——**"机器能不能找到一个比人工基线更好
 | G21 交换子世界门（实测 A 对定理） | 三条一起判：控制组（旧世界参数盒语义、无夹取）必须 `A ≡ 0`；交换子世界的**实测 A 必须等于闭式预测**（逐对）；定理说该为零的层状对必须精确为 0、该非零的部分重叠对必须 > 0。抓的失败模式：**结构只进了观测没进目标**（上一轮实测栽在这里，四档 A 分布逐位相同）、尺子坏、以及「换一组动作集合就变绿」 |
 | G22 世界协议 v3 门（mu 世界） | Go/Python 两侧逐字节回放 mu 黄金 trace（含非 ASCII 的 hello —— 字节 vs 字符的试金石）；mu 世界必须**拒绝 protocol 2** 的握手（它是另一条世界，不是 v2 的别名）；把 hello 的 `declaration.sha256` 改一位必须让回放非零退出（`scripts/world_hello_tamper.py`） |
 | G16 逐位复现 | 用存档 meta 里记录的参数（不硬编码）重跑一遍，剔除 `tag`/`timestamp` 后 12001 条记录必须**逐位相同**。没有这道门，"机器赢了人工基线"只是一次性观测 |
+| G23 可造性门 | 基线可行 + 退化解被咬住 + 几何两条独立路径 |
+| G24 Bolloon kernel bridge（2026-10-12） | 真 Node 进程 + 真 @bolloon/bolloon-kernel：channel 串行 / 跨 channel 隔离 / fail-closed / 命名端口，七条真跑 |
+| G25 OS↔kernel 双向门（2026-10-18） | CLI 端到端：`forge os sync` 双向核对通过 + 证据 `verified:true` 落盘 + 独立会话 peek 必须 fail-closed |
 
 ## 内部设计判决层（2026-09-26，接上游 ProjectionPhysics）
 

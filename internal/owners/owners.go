@@ -42,6 +42,7 @@ var Stages = []Stage{
 			"internal/config/",
 			"internal/owners/",
 			"internal/kernelbridge/",
+			"internal/ai/",
 			"bridge/",
 			"testdata/",
 			"scripts/",
@@ -211,9 +212,10 @@ func IsTracked(rel string) bool {
 	// .kilo/ .kilocode/: 别的 agent 工具在仓里留下的 worktree 检出(未跟踪, 不受本仓名册
 	// 管辖)。名册门的名字说的是"每个被跟踪文件", 判别人的检出只会让它长期假红 ——
 	// 假红比没有门更伤。新增跳过项时必须同时加一条"真文件仍然可见"的断言。
+	// .hermes/: Hermes agent 的临时产物目录(提交信息草稿等), 同样不归名册管辖。
 	for _, frag := range []string{
 		"runs/", "__pycache__/", ".pytest_cache/", ".venv/", "node_modules/", ".DS_Store",
-		".egg-info/", "go-build/", ".kilo/", ".kilocode/",
+		".egg-info/", "go-build/", ".kilo/", ".kilocode/", ".hermes/",
 	} {
 		if strings.Contains(rel, frag) {
 			return false

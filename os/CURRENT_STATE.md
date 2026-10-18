@@ -36,6 +36,7 @@
 | 周复盘草稿 | `bash os/tools/weekly_review.sh`（收集本周证据→生成复盘初稿） | **v0.1 新增** |
 | headless 注入 | 预留槽位 = kernel `model.acquire` 租约（T-08，**不实现**） | proposed |
 | OS↔kernel 双向 | `forge os <submit\|peek\|sync>`（os/SPEC.md §8.3），证据落盘 `os/evidence/`（gitignore） | **已真跑**（2026-10-18 sync 核对通过） |
+| AI Provider 接入 | `forge ai <list\|chat\|models>`（docs/wiki/ai-provider-design.md），多 provider 声明式接入 | **已真跑**（2026-10-18 zai 经 goaichat 代理回「通了」） |
 
 ## 5. 系统如何变好？
 

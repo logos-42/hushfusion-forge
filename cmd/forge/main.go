@@ -21,6 +21,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -35,6 +36,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/baseline"
 	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/design"
@@ -135,6 +137,14 @@ func run(args []string) int {
 		// peek     kernel→OS: 从 kernel actor 读回该 channel 的执行状态
 		// sync     双向: submit 后立即 peek, 把两者都落盘 (证据闭环)
 		return cmdOS(rest)
+	case "ai":
+		// 多 provider AI 接入层 (internal/ai, docs/ai-provider-design.md):
+		// list    列出已注册 provider (内置 + 用户自定义覆盖)
+		// chat    向一个 provider 发一次对话 (OpenAI-compatible chat/completions)
+		// models  拉一个 provider 的模型列表
+		// 设计借鉴 hermes-agent 的 ProviderProfile: 声明式 profile + 注册表别名 +
+		// OpenAI-compatible 默认 transport, 一个客户端覆盖大多数 provider。
+		return cmdAI(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "forge: unknown command %q\n\n", cmd)
 		usage(os.Stderr)
@@ -159,6 +169,7 @@ commands:
   registry    inspect a registry and check its integrity
   world       world protocol: serve/replay the design world (docs/world-protocol.md)
   os          HUSHFUSION OS ↔ Agent Kernel 双向打通: submit / peek / sync (os/SPEC.md §8)
+  ai          multi-provider AI gateway: list / chat / models (docs/ai-provider-design.md)
   version     print version, spec shape and frozen schema facts
 
 exit codes: 0 ok, 1 a gate/command failed, 2 usage error.
@@ -2806,4 +2817,152 @@ func cmdOSSync(args []string) int {
 func boolMap(m map[string]any, key string) bool {
 	v, _ := m[key].(bool)
 	return v
+}
+
+// ---------------------------------------------------------------------------
+// 多 provider AI 接入层 (forge ai)
+// ---------------------------------------------------------------------------
+// 设计借鉴 hermes-agent 的 ProviderProfile 架构 (providers/base.py):
+// 声明式 profile + 注册表别名 + OpenAI-compatible 默认 transport ——
+// 一个客户端覆盖大多数 provider, 新增 provider 只是加一份声明, 不用写客户端。
+// 文档: docs/ai-provider-design.md
+func cmdAI(args []string) int {
+	// 内置目录每次进程都注册 (幂等), 之后用户自定义可覆盖。
+	if err := ai.RegisterBuiltins(); err != nil {
+		return fail("ai: 注册内置 provider: %v", err)
+	}
+	if len(args) == 0 {
+		aiUsage(os.Stderr)
+		return 2
+	}
+	sub, rest := args[0], args[1:]
+	switch sub {
+	case "list":
+		return cmdAIList(rest)
+	case "chat":
+		return cmdAIChat(rest)
+	case "models":
+		return cmdAIModels(rest)
+	case "help", "-h", "--help":
+		aiUsage(os.Stdout)
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "forge ai: unknown subcommand %q\n\n", sub)
+		aiUsage(os.Stderr)
+		return 2
+	}
+}
+
+func aiUsage(w *os.File) {
+	fmt.Fprintf(w, `usage: forge ai <list|chat|models> [flags]
+
+multi-provider AI gateway (internal/ai, docs/ai-provider-design.md):
+
+  list      列出已注册 provider (内置 + 运行时 Register 覆盖)
+  chat      向一个 provider 发一次对话 (OpenAI-compatible chat/completions)
+  models    拉一个 provider 的模型列表 (GET {base}/models)
+
+设计借鉴 hermes-agent ProviderProfile: 声明式 profile + 注册表别名 +
+OpenAI-compatible 默认 transport —— 一个客户端覆盖大多数 provider。
+
+API key 只从环境变量解析 (profile.EnvVars 顺序), 值不进代码/日志
+(local-credential-handoff 纪律)。
+`)
+}
+
+func cmdAIList(args []string) int {
+	fs := newFlagSet("ai list", "forge ai list", "列出已注册 provider")
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+	ps := ai.List()
+	note("%-12s %-28s %-28s %s", "NAME", "DISPLAY", "DEFAULT MODEL", "API MODE")
+	for _, p := range ps {
+		note("%-12s %-28s %-28s %s", p.Name, p.DisplayName, p.DefaultModel, p.APIMode)
+	}
+	note("")
+	note("%d provider(s) 已注册 (含别名: 可用名字或别名 Lookup)", len(ps))
+	return 0
+}
+
+func cmdAIChat(args []string) int {
+	fs := newFlagSet("ai chat", "forge ai chat --provider <name> [--model <m>] [--base-url <url>] [--api-key-env <VAR>] --prompt <text>",
+		"向一个 provider 发一次对话 (OpenAI-compatible chat/completions)。")
+	provider := fs.String("provider", "", "provider 名字或别名 (如 zai / glm / deepseek / custom)")
+	model := fs.String("model", "", "模型 id (缺省用 provider 的 DefaultModel)")
+	baseURL := fs.String("base-url", "", "覆盖 provider.BaseURL (custom/内部代理场景)")
+	apiKeyEnv := fs.String("api-key-env", "", "指定 API key 的环境变量名 (覆盖 profile.EnvVars)")
+	prompt := fs.String("prompt", "", "用户消息文本")
+	system := fs.String("system", "", "可选 system 消息")
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+	if *provider == "" || *prompt == "" {
+		fmt.Fprintf(os.Stderr, "forge ai chat: --provider 与 --prompt 必填\n\n")
+		fs.Usage()
+		return 2
+	}
+	p, err := ai.Resolve(*provider)
+	if err != nil {
+		return fail("ai chat: %v", err)
+	}
+	if *apiKeyEnv != "" {
+		// 显式 key 环境变量覆盖 profile 默认 (local-credential-handoff: 值只从 env 读, 不进命令行)。
+		p = cloneProfileWithKeyEnv(p, *apiKeyEnv)
+	}
+	msgs := make([]ai.Message, 0, 2)
+	if *system != "" {
+		msgs = append(msgs, ai.Message{Role: "system", Content: *system})
+	}
+	msgs = append(msgs, ai.Message{Role: "user", Content: *prompt})
+	resp, err := ai.Chat(context.Background(), p.Name, ai.ChatRequest{
+		Model:    *model,
+		Messages: msgs,
+	}, ai.ClientOptions{BaseURL: *baseURL})
+	if err != nil {
+		return fail("ai chat: %v", err)
+	}
+	note("%s", resp.Content)
+	if resp.Usage.TotalTokens > 0 {
+		note("")
+		note("model=%s usage=%d tokens (prompt %d + completion %d)",
+			resp.Model, resp.Usage.TotalTokens, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	}
+	return 0
+}
+
+func cmdAIModels(args []string) int {
+	fs := newFlagSet("ai models", "forge ai models --provider <name> [--base-url <url>]",
+		"拉一个 provider 的模型列表 (GET {base}/models)。")
+	provider := fs.String("provider", "", "provider 名字或别名")
+	baseURL := fs.String("base-url", "", "覆盖 provider.BaseURL")
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+	if *provider == "" {
+		fmt.Fprintf(os.Stderr, "forge ai models: --provider 必填\n\n")
+		fs.Usage()
+		return 2
+	}
+	p, err := ai.Resolve(*provider)
+	if err != nil {
+		return fail("ai models: %v", err)
+	}
+	ids, err := ai.ListModels(context.Background(), p.Name, ai.ClientOptions{BaseURL: *baseURL})
+	if err != nil {
+		return fail("ai models: %v", err)
+	}
+	note("%s (%s) 模型列表:", p.Name, p.DisplayName)
+	for _, id := range ids {
+		note("  %s", id)
+	}
+	return 0
+}
+
+// cloneProfileWithKeyEnv 复制 profile 并把 EnvVars 换成显式指定的环境变量
+// (不改动注册表里的原 profile —— 用户级 key 配置是进程级覆盖, 不是全局状态)。
+func cloneProfileWithKeyEnv(p *ai.Profile, envVar string) *ai.Profile {
+	cp := *p
+	cp.EnvVars = []string{envVar}
+	return &cp
 }

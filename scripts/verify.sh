@@ -329,6 +329,24 @@ _opt "G24 Bolloon kernel bridge（串行/隔离/fail-closed/命名端口，七�
   '[ -f bridge/server.mjs ] && [ -d bridge/node_modules/@bolloon ] && command -v node >/dev/null' \
   go test ./internal/kernelbridge/ -count=1
 
+# G25: OS↔kernel 双向门 —— CLI 端到端 (forge os sync), 不是单元测试。
+#   抓的失败模式:
+#     (a) 双向闭环断 —— forge os sync 必须退出 0 且打印 "双向核对通过"
+#         (channel.submit + channel.peek + marker/task 逐字核对, kernel 记住了本次提交);
+#     (b) 说通了但没证据 —— 证据目录必须出现 sync-*.json 且 verified == true
+#         (可核对的落盘文件是"双向打通"的唯一证物);
+#     (c) 独立会话假装读回 —— 新会话 peek 一个不存在的 channel 必须非零退出
+#         (actor 状态进程内, 跨进程读回不存在; 不许假装成功, 与 G24c 同一 fail-closed 哲学,
+#         但这一条走 CLI 层, G24 是包测试层)。
+#   前置同 G24: node && bridge/node_modules。
+_opt "G25 OS↔kernel 双向门（forge os sync CLI 端到端 + 证据落盘 + 独立会话 fail-closed）" \
+  '[ -f cmd/forge/main.go ] && [ -d bridge/node_modules/@bolloon ] && command -v node >/dev/null' \
+  bash -c 'set -e; out=$(mktemp -d); trap "rm -rf $out" EXIT; export PATH="$HOME/.local/bin:$PATH" GOTOOLCHAIN=local; \
+    go run ./cmd/forge os sync --channel "g25-$$" --task T-G25 --marker "G25-双向" --sleep-ms 3 --evidence "$out" >/dev/null; \
+    f=$(ls "$out"/sync-*.json | head -1); \
+    python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d.get(\"verified\") is True, d" "$f"; \
+    if go run ./cmd/forge os peek --channel "g25-missing-$$" --evidence "$out" >/dev/null 2>&1; then echo \"G25: 独立会话 peek 不存在 channel 应 fail-closed\" >&2; exit 1; fi'
+
 echo "=== 汇总: $pass 通过, $fail 失败, $skip 跳过 ==="
 if [ "$fail" -ne 0 ]; then
   printf 'failed: %s\n' "${failed_names[*]}"

@@ -139,6 +139,7 @@ func TestIsTrackedSkipsForeignCheckoutsButNotSources(t *testing.T) {
 	for _, rel := range []string{
 		".kilo/worktrees/immense-drop/internal/world/world.go",
 		".kilocode/cache/x.json",
+		".hermes/commitmsg_os_kernel.md",
 		".git/config",
 		"runs/phase0/registry.jsonl",
 	} {

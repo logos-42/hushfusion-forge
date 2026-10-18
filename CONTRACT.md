@@ -34,7 +34,7 @@ Phase 0 的验收问题只有一个：
 
 | Stage | 包/路径 | 所有者 |
 |---|---|---|
-| root | `go.mod` `LICENSE` `README.md` `README.en.md` `PLAN.md` `CONTRACT.md` `CHANGELOG.md`（2026-10-01 新增） `.gitignore` `internal/config/` `internal/owners/` `internal/kernelbridge/`（2026-10-12 新增：Bolloon kernel 跨语言 bridge，归 parent） `bridge/`（2026-10-12 新增：Node stdio JSON-RPC server，消费 @bolloon/bolloon-kernel，归 parent） `testdata/` `scripts/` `knowledge/` `artifacts/`（2026-10-07 新增：持续学习 daemon 的趋势/ckpt 产物，归 parent） | parent |
+| root | `go.mod` `LICENSE` `README.md` `README.en.md` `PLAN.md` `CONTRACT.md` `CHANGELOG.md`（2026-10-01 新增） `.gitignore` `internal/config/` `internal/owners/` `internal/kernelbridge/`（2026-10-12 新增：Bolloon kernel 跨语言 bridge，归 parent） `internal/ai/`（2026-10-18 新增：多 provider AI 接入层——声明式 profile + 注册表别名 + OpenAI-compatible transport，归 parent） `bridge/`（2026-10-12 新增：Node stdio JSON-RPC server，消费 @bolloon/bolloon-kernel，归 parent） `testdata/` `scripts/` `knowledge/` `artifacts/`（2026-10-07 新增：持续学习 daemon 的趋势/ckpt 产物，归 parent） | parent |
 | wiki | `docs/` `manifests/` `os/`（2026-10-17 新增：HUSHFUSION OS 决策层——任务池/实验状态机/机会池/决策日志/周复盘，Markdown+脚本，不承载引擎逻辑，归 parent） `AGENTS.md` `CLAUDE.md` `.cursorrules` `.windsurfrules` `.claude/` `.github/` | parent（2026-09-26 接入 wiki-first 知识系统时新增） |
 | A | `internal/physics/` | agent-A |
 | B | `internal/objective/` `internal/baseline/` | agent-B |
@@ -164,6 +164,8 @@ Python 参考实现（已逐条验证过解析锚点）产出的 golden 数值�
 | **G23 可造性门**（0.1.2） | `python3 scripts/check_buildability.py` | 三条一起判：(a) 人工基线可行且 `clearance` 罚项**精确**为 0（抓「把真装置也判死」）；(b) 0.1.0 的最优退化解在 0.1.2 下**不可行**且罚项 > 0（抓「约束没咬住它要咬的东西」——这是本版存在的全部理由）；(c) 净空的闭式解 == 圆环面密采样的独立路径（< 1e-9），且侵入时精确 = −t_pack/2（抓「几何算错」）。它是**判据门**，不依赖某个 run，故不受版本前置条件约束 |
 | G17 内部设计锚点门 | `python3 scripts/emit_pp_anchors.py --check && go test ./internal/design/` | 上游 ProjectionPhysics（`logos-42/Hibs-Physics`）的闭式解逐条复现；锚点来自工作区重跑产物（上游 `artifacts/` 不入 git），出处见 `testdata/projectionphysics_anchors.json` 的 `provenance` |
 | G18 世界协议门（三条一起判） | `forge world serve --replay testdata/world_trace_golden.jsonl` + `python3 python/aux/world_client.py --replay testdata/world_trace_golden.jsonl` + 故意改坏的 hello 必须让客户端非零退出 | (a) Go 把 trace 的每条 req 喂给新世界，响应逐字节相同；(b) Python 客户端同样逐字节相同（**跨语言证据**：证明客户端看到的世界与 Go 写下的是同一个）；(c) 反向断言：改坏的 hello 必须让客户端非零退出且理由是握手。证据 = `testdata/world_trace_golden.jsonl`（由 `--record` 生成；trace 的 `runs/` 目录不入仓，契约 §4） |
+| G24 Bolloon kernel bridge（七条真跑） | `go test ./internal/kernelbridge/` | 真 Node 进程 + 真 @bolloon/bolloon-kernel：(a) channel 串行性（先 sleep 后 0 必须按提交顺序完成）；(b) 跨 channel 隔离（慢任务不拖住别的 channel）；(c) 端口未注入 ⇒ fail-closed；(d) 命名端口注入 ⇒ 真走端口；(e) 未知名端口必须拒；(f) model.acquire 缺 openConnection ⇒ 内核抛错；(g) 响应都是合法 JSON。前置：node && bridge/node_modules（缺前置 SKIP） |
+| G25 OS↔kernel 双向门 | `bash scripts/verify.sh phase0` 内 `forge os sync` + 证据 JSON 断言 + 独立会话 peek 反向断言 | CLI 端到端（不是单元测试）：(a) `forge os sync` 退出 0 且打印「双向核对通过」（channel.submit + channel.peek + marker/task 逐字核对，kernel 记住了本次提交）；(b) 证据目录出现 `sync-*.json` 且 `verified == true`（可核对落盘是「双向打通」的唯一证物）；(c) 独立会话 peek 不存在的 channel 必须非零退出（actor 状态进程内，跨进程读回不存在，不许假装成功——与 G24c 同一 fail-closed 哲学，走 CLI 层）。前置同 G24（缺前置 SKIP） |
 
 ---
 
