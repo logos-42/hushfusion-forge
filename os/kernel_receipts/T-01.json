@@ -1,0 +1,33 @@
+{
+  "task": "T-01",
+  "status": "submitted",
+  "submissions": [
+    {
+      "at": "2026-10-18T08:10:05Z",
+      "channel": "os",
+      "taskId": "T-01",
+      "marker": "os:T-01",
+      "kernel": {
+        "finishedAt": 1792311005839,
+        "ok": true,
+        "result": {
+          "at": 1792311005839,
+          "marker": "os:T-01",
+          "sleepMs": 0,
+          "taskId": "T-01"
+        },
+        "startedAt": 1792311005839,
+        "via": "kernel-channel-actor"
+      },
+      "lifecycle": {
+        "ok": true,
+        "op": "record-step",
+        "port": "recordStep",
+        "result": {
+          "ok": true
+        },
+        "via": "kernel-run-lifecycle"
+      }
+    }
+  ]
+}

@@ -86,7 +86,9 @@ os/
 
 | 自动化 | 位置 | 干什么 | 首次验证 |
 |:--|:--|:--|:--|
-| 日常检查 | `os/tools/daily_check.sh` | 编译 + 名册门 + wiki 三连 + 脏树提醒（2 秒内返回） | 2026-10-17 实测 |
+| 日常检查 | `os/tools/daily_check.sh` | 编译 + 名册门 + **oscheck 决策层一致性门（Go）** + wiki 三连 + 脏树提醒（~3 秒内返回） | 2026-10-17 实测；oscheck 2026-10-18 接入 |
+| 决策层一致性门 | `os/tools/oscheck/`（Go，`go run ./os/tools/oscheck`） | 任务池铁律 T1–T8（active≤1 / P 对账 / 验收文件必在 / 排序）+ kernel 回执 K1/K2（active 必有非 failed 回执 / done 必有 settled 回执）+ 实验不跳态 E1 + 验收文件不孤儿 A1；变异测试随 G5 自动跑 | 2026-10-18 实测：真实任务池 8 件全绿；15 条变异全部能红 |
+| kernel 提交/结算 | `os/tools/ossubmit/`（Go，`go run ./os/tools/ossubmit [--settle ID --evidence runs/…]`） | OS↔kernel 双向环执行面：channel.submit 提交唯一 active 任务、回执落盘 `os/kernel_receipts/`；`--settle` 验收全勾+证据在盘才回写 active→done（fail-closed） | 2026-10-18 真 bridge 实测：T-01 提交成功（回执 verbatim kernel 响应）；未勾验收 settle 被拒（0/6） |
 | 周复盘草稿 | `os/tools/weekly_review.sh` | 收集本周 `runs/` + `os/EXPERIMENTS.md` + `git log` → 生成复盘初稿 | 待 2026-10-23 首次运行 |
 | 全门验收 | `bash scripts/verify.sh phase0` | 22 道门（G19 预期红） | 已 21 绿/1 红 |
 | 提交门 | wiki 三连 + 名册门 | push 前必跑 | 已集成 |
