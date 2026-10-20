@@ -2647,6 +2647,30 @@ func cmdOS(args []string) int {
 		return cmdOSPeek(rest)
 	case "sync":
 		return cmdOSSync(rest)
+	case "show", "dashboard":
+		return cmdOSShow()
+	case "tasks":
+		return cmdOSTasks()
+	case "exps", "experiments":
+		return cmdOSExps()
+	case "opps", "opportunities":
+		return cmdOSOpps()
+	case "decisions":
+		return cmdOSDecisions()
+	case "review":
+		return cmdOSReview()
+	case "check":
+		return cmdOSCheck()
+	case "propose":
+		return cmdOSPropose(rest)
+	case "opp":
+		return cmdOSOpp(rest)
+	case "decide":
+		return cmdOSDecide(rest)
+	case "exp":
+		return cmdOSExp(rest)
+	case "tui":
+		return cmdOSTUI()
 	case "help", "-h", "--help":
 		osUsage(os.Stdout)
 		return 0
@@ -2658,13 +2682,34 @@ func cmdOS(args []string) int {
 }
 
 func osUsage(w *os.File) {
-	fmt.Fprintf(w, `usage: forge os <submit|peek|sync> [flags]
+	fmt.Fprintf(w, `usage: forge os <subcommand> [flags]
 
-HUSHFUSION OS ↔ Agent Kernel 双向打通 (os/SPEC.md §8):
+HUSHFUSION OS ↔ Agent Kernel 双向打通 + 决策层视图 (os/SPEC.md §8):
 
-  submit   OS→kernel: 把一个任务投递给 kernel channel 串行执行, 证据落盘 os/evidence/
-  peek     kernel→OS: 从 kernel actor 读回 channel 状态快照, 证据落盘
-  sync     submit 后立即 peek 并核对 task/marker —— 一次命令完成双向闭环
+  视图（只读）:
+    show          渲染决策层仪表盘（默认）
+    tasks         任务池（候选 + active 详情）
+    exps          实验五态映射
+    opps          机会池
+    decisions     决策日志
+    review        周复盘（最近一次）
+    check         跑 oscheck 一致性门（T1–T8 / K1–K2 / E1 / A1）
+
+  kernel 双向环:
+    submit         OS→kernel: 把任务投递给 kernel channel 串行执行
+    peek           kernel→OS: 读回 channel 状态快照
+    sync           submit 后立即 peek 并核对 task/marker
+
+  安全写入（append-only，保持 oscheck 绿）:
+    propose        新增 proposed 任务（按 P 有序插入，P=floor(I*E*R/C)）
+    opp            追加一条机会
+    decide         追加一条决策
+    exp            新增实验 / 推进实验态（E1 不跳态）
+
+  TUI:
+    tui            零依赖终端 UI 浏览并操作决策层
+
+  注: 文档根默认 ./os；可用 --os <dir> 覆盖（见各子命令）。
 `)
 }
 

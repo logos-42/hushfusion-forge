@@ -44,6 +44,7 @@ var Stages = []Stage{
 			"internal/kernelbridge/",
 			"internal/ai/",
 			"internal/bolloon/", // 2026-10-20 新增：BOLLOON CLI 强类型客户端 + forge bolloon 透传（归 parent）
+			"internal/osview/",  // 2026-10-20 新增：OS 决策层只读视图层（供 forge os 与 TUI 共用，归 parent）
 			"bridge/",
 			"testdata/",
 			"scripts/",

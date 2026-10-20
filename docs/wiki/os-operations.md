@@ -77,6 +77,25 @@ oscheck K1/K2        K1: active 必有非 failed 回执；K2: done 必有 settle
   「active→done 逐条勾验并附证据路径」从纪律变成代码。
 - 回执存 bridge **verbatim 响应**（不加工），与「只搬运不判业务」同一纪律。
 
+## 决策层 CLI + TUI（2026-10-20）
+
+决策层可在命令行直接浏览与操作，并有一个零依赖终端 UI（`forge os`）：
+
+```
+forge os show            # 仪表盘（北极星/当前状态 + 任务池/实验/机会/决策/回执）
+forge os tasks           # 任务池（active 详情 + 候选列表）
+forge os exps            # 实验五态映射（✓/· 显示走到第几态）
+forge os opps            # 机会池
+forge os decisions       # 决策日志
+forge os review          # 周复盘（最近一次）
+forge os check           # 跑 oscheck 一致性门（透传退出码）
+forge os tui             # 零依赖终端 UI：面板导航、Enter 展开、r=check、L=reload、q=退出
+```
+
+**安全写入（append-only，保持 oscheck 绿）**：`propose`（按 P=floor(I×E×R/C) 有序插入候选池）、`opp`（追加机会）、`decide`（追加决策）、`exp new/advance`（守 E1 不跳态）。状态机铁律不变：`active→done` 仍只由 `ossubmit --settle` 执行；`propose/opp/decide/exp` 不碰 active/done。
+
+**实现**：`internal/osview/`（只读视图层，复用 `oscore` 解析层）+ `cmd/forge/oscli.go`（视图/写入）+ `cmd/forge/os_tui.go`（TUI，`stty raw`+ANSI，非 TTY 自动退化成 `show` 文本）。诚实边界：TUI 只「看」与触发只读/已存在的安全操作，不在此直接改 `os/`；不引外部 TUI 库（网络不可用且守仓库零依赖契约）。
+
 ## 状态转换铁律（与门禁同一哲学，已机器化 2026-10-18）
 
 - 任务 `proposed → active` 必须先写验收标准；`active → done` 逐条勾验并附证据路径；
