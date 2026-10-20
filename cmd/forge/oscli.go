@@ -178,27 +178,36 @@ func cmdOSPropose(args []string) int {
 		fs.Usage()
 		return 2
 	}
-	for _, v := range []int{*iS, *eS, *rS, *cS} {
-		if v < 1 || v > 5 {
-			return fail("评分必须在 1..5（got %d）", v)
-		}
-	}
-	p := (*iS) * (*eS) * (*rS) / (*cS)
-	row := fmt.Sprintf("| %s | %s | %d | %d | %d | %d | **%d** | proposed | %s |",
-		*id, *title, *iS, *eS, *rS, *cS, p, *deps)
-
-	path := filepath.Join(osBaseDir(), "TASKS.md")
-	text, err := os.ReadFile(path)
+	p, err := doPropose(osBaseDir(), *id, *iS, *eS, *rS, *cS, *title, *deps)
 	if err != nil {
-		return fail("读 TASKS.md: %v", err)
-	}
-	out := patchTasksTable(string(text), row, p)
-	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
-		return fail("写 TASKS.md: %v", err)
+		return fail("os propose: %v", err)
 	}
 	note("os propose: %s 已插入候选池（P=%d，状态=proposed）", *id, p)
 	note("提醒: 跑 `forge os check` 确认 T1–T8 仍绿")
 	return 0
+}
+
+// doPropose 是 propose 的核心（CLI 与 TUI 共用）：按 P=floor(I*E*R/C) 有序插入
+// proposed 任务到候选池，不碰 active/done 铁律。
+func doPropose(base, id string, i, e, r, c int, title, deps string) (int, error) {
+	for _, v := range []int{i, e, r, c} {
+		if v < 1 || v > 5 {
+			return 0, fmt.Errorf("评分必须在 1..5（got %d）", v)
+		}
+	}
+	p := i * e * r / c
+	row := fmt.Sprintf("| %s | %s | %d | %d | %d | %d | **%d** | proposed | %s |",
+		id, title, i, e, r, c, p, deps)
+	path := filepath.Join(base, "TASKS.md")
+	text, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("读 TASKS.md: %w", err)
+	}
+	out := patchTasksTable(string(text), row, p)
+	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		return 0, fmt.Errorf("写 TASKS.md: %w", err)
+	}
+	return p, nil
 }
 
 // patchTasksTable 在候选池表格里按 P 降序有序插入一行（active 行保持置顶）。
@@ -276,13 +285,17 @@ func cmdOSOpp(args []string) int {
 	if *chance == "" {
 		return fail("os opp: --chance 必填")
 	}
-	row := fmt.Sprintf("| %s | %s | %s | %s | %s | %s |", *chance, *source, *match, *next, *status, *date)
-	path := filepath.Join(osBaseDir(), "OPPORTUNITIES.md")
-	if err := appendTableRow(path, "## 机会池", row); err != nil {
+	if err := doOpp(osBaseDir(), *chance, *source, *match, *next, *status, *date); err != nil {
 		return fail("%v", err)
 	}
 	note("os opp: 已追加机会「%s」", *chance)
 	return 0
+}
+
+// doOpp 是 opp 的核心（CLI 与 TUI 共用）：追加一条机会到 OPPORTUNITIES.md。
+func doOpp(base, chance, source, match, next, status, date string) error {
+	row := fmt.Sprintf("| %s | %s | %s | %s | %s | %s |", chance, source, match, next, status, date)
+	return appendTableRow(filepath.Join(base, "OPPORTUNITIES.md"), "## 机会池", row)
 }
 
 // cmdOSDecide 追加一条决策（DECISIONS.md 决策日志，oscheck 不查，安全）。
@@ -301,19 +314,29 @@ func cmdOSDecide(args []string) int {
 	if *text == "" || *basis == "" {
 		return fail("os decide: --text/--basis 必填")
 	}
-	date := time.Now().Format("2006-01-02")
-	path := filepath.Join(osBaseDir(), "DECISIONS.md")
-	nextID, err := nextDecisionID(path)
+	nextID, err := doDecide(osBaseDir(), *text, *basis, *alt, *consequence, *status)
 	if err != nil {
-		return fail("%v", err)
-	}
-	row := fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s |",
-		nextID, date, *text, *basis, *alt, *consequence, *status)
-	if err := appendTableRow(path, "## 决策日志", row); err != nil {
 		return fail("%v", err)
 	}
 	note("os decide: %s 已追加", nextID)
 	return 0
+}
+
+// doDecide 是 decide 的核心（CLI 与 TUI 共用）：追加一条决策到 DECISIONS.md，
+// 返回新分配的决策 ID。
+func doDecide(base, text, basis, alt, consequence, status string) (string, error) {
+	date := time.Now().Format("2006-01-02")
+	path := filepath.Join(base, "DECISIONS.md")
+	nextID, err := nextDecisionID(path)
+	if err != nil {
+		return "", err
+	}
+	row := fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s |",
+		nextID, date, text, basis, alt, consequence, status)
+	if err := appendTableRow(path, "## 决策日志", row); err != nil {
+		return "", err
+	}
+	return nextID, nil
 }
 
 // cmdOSExp 新增实验或推进实验态（E1 不跳态）。

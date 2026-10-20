@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/logos-42/hushfusion-forge/internal/osview"
 )
@@ -56,9 +57,14 @@ func cmdOSTUI() int {
 
 	panels := buildPanels(snap)
 	sel := 0
-	footer := cyan + "r=check  L=reload  Enter=展开/收起  ↑↓=选择/滚动  q=退出" + ansiReset
+	var form *formState
+	footer := cyan + "r=check  L=reload  n=新任务 o=机会 d=决策  Enter=展开  ↑↓=选择  q=退出" + ansiReset
 
 	draw := func() {
+		if form != nil {
+			drawForm(form, footer)
+			return
+		}
 		renderTUI(panels, sel, footer)
 	}
 
@@ -70,6 +76,34 @@ func cmdOSTUI() int {
 			if err == io.EOF {
 				break
 			}
+			continue
+		}
+		// 表单录入模式：吞掉按键，构造字段。
+		if form != nil {
+			done, cancelled, _ := form.handleByte(reader, b)
+			if cancelled {
+				form = nil
+				footer = yellow + "已取消录入" + ansiReset
+				draw()
+				continue
+			}
+			if done {
+				f := form
+				form = nil
+				if m, e := submitForm(base, f); e != nil {
+					footer = yellow + "录入失败: " + e.Error() + ansiReset
+				} else {
+					footer = green + m + ansiReset
+					// 写成功后重载视图。
+					if s2, e2 := osview.Load(base); e2 == nil {
+						snap = s2
+						panels = buildPanels(snap)
+					}
+				}
+				draw()
+				continue
+			}
+			draw()
 			continue
 		}
 		// 转义序列（方向键等）：ESC [ X
@@ -101,9 +135,17 @@ func cmdOSTUI() int {
 			panels[sel].expanded = !panels[sel].expanded
 			panels[sel].scroll = 0
 			draw()
+		case 'n', 'N': // 新任务
+			form = newTaskForm()
+			draw()
+		case 'o', 'O': // 新机会
+			form = newOppForm()
+			draw()
+		case 'd', 'D': // 新决策
+			form = newDecideForm()
+			draw()
 		case 'r', 'R':
 			footer = runCheckInline()
-			// 重读回执，刷新面板
 			if s2, e := osview.Load(base); e == nil {
 				snap = s2
 				panels = buildPanels(snap)
@@ -117,11 +159,173 @@ func cmdOSTUI() int {
 			}
 			draw()
 		case '?':
-			footer = yellow + "帮助：↑↓ 选择面板，Enter 展开看全表，r 跑 oscheck，L 重载，q 退出" + ansiReset
+			footer = yellow + "帮助：↑↓ 选择面板，Enter 展开看全表，n/o/d 录入任务/机会/决策，r 跑 oscheck，L 重载，q 退出" + ansiReset
 			draw()
 		}
 	}
 	return 0
+}
+
+// ---- 表单录入（TUI 内直接录入任务/机会/决策） ----
+
+type formField struct {
+	label string
+	buf   []byte
+	hide  bool // 是否回显（预留）
+}
+
+type formState struct {
+	title  string
+	kind   string // task | opp | decide
+	fields []formField
+	idx    int
+}
+
+func newTaskForm() *formState {
+	return &formState{
+		title: "新任务（proposed）",
+		kind:  "task",
+		fields: []formField{
+			{label: "ID (T-XX)"},
+			{label: "标题"},
+			{label: "I (1-5)"},
+			{label: "E (1-5)"},
+			{label: "R (1-5)"},
+			{label: "C (1-5)"},
+			{label: "依赖/阻塞 (可空)"},
+		},
+	}
+}
+
+func newOppForm() *formState {
+	return &formState{
+		title: "新机会",
+		kind:  "opp",
+		fields: []formField{
+			{label: "机会"},
+			{label: "来源"},
+			{label: "研究方向匹配"},
+			{label: "下一步"},
+		},
+	}
+}
+
+func newDecideForm() *formState {
+	return &formState{
+		title: "新决策",
+		kind:  "decide",
+		fields: []formField{
+			{label: "决策"},
+			{label: "依据（证据路径，禁止「我觉得」）"},
+		},
+	}
+}
+
+func (f *formState) val(i int) string { return string(f.fields[i].buf) }
+
+// handleByte 处理一个按键；返回 (完成, 取消, 消息)。
+func (f *formState) handleByte(reader *bufio.Reader, b byte) (done, cancelled bool, msg string) {
+	switch b {
+	case 27: // Esc（含方向键转义序列）：若为方向键则忽略，否则取消
+		if reader.Buffered() >= 2 {
+			nb, _ := reader.ReadByte()
+			if nb == '[' {
+				_, _ = reader.ReadByte()
+				return false, false, ""
+			}
+		}
+		return false, true, ""
+	case 13, 10: // Enter：下一字段 / 提交
+		f.idx++
+		if f.idx >= len(f.fields) {
+			return true, false, ""
+		}
+		return false, false, ""
+	case 127, 8: // 退格：删一个 rune
+		buf := f.fields[f.idx].buf
+		f.fields[f.idx].buf = trimLastRune(buf)
+		return false, false, ""
+	default:
+		// 可打印字符（含 UTF-8 多字节：>=0x80）
+		if (b >= 0x20 && b < 0x7f) || b >= 0x80 {
+			f.fields[f.idx].buf = append(f.fields[f.idx].buf, b)
+		}
+		return false, false, ""
+	}
+}
+
+// submitForm 把表单写进 os/（复用 CLI 的 append 核心）。
+func submitForm(base string, f *formState) (string, error) {
+	switch f.kind {
+	case "task":
+		i := atoiSafe(f.val(2))
+		e := atoiSafe(f.val(3))
+		r := atoiSafe(f.val(4))
+		c := atoiSafe(f.val(5))
+		deps := f.val(6)
+		if deps == "" {
+			deps = "—"
+		}
+		p, err := doPropose(base, f.val(0), i, e, r, c, f.val(1), deps)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("任务 %s 已录入（P=%d）", f.val(0), p), nil
+	case "opp":
+		if err := doOpp(base, f.val(0), f.val(1), f.val(2), f.val(3), "proposed", today()); err != nil {
+			return "", err
+		}
+		return "机会已录入", nil
+	case "decide":
+		id, err := doDecide(base, f.val(0), f.val(1), "—", "—", "active")
+		if err != nil {
+			return "", err
+		}
+		return id + " 已录入", nil
+	}
+	return "", fmt.Errorf("未知表单类型 %q", f.kind)
+}
+
+func today() string { return time.Now().Format("2006-01-02") }
+
+func trimLastRune(b []byte) []byte {
+	if len(b) == 0 {
+		return b
+	}
+	i := len(b) - 1
+	for i > 0 && (b[i]&0xC0) == 0x80 {
+		i--
+	}
+	return b[:i]
+}
+
+func drawForm(f *formState, footer string) {
+	cols, rows := termSize()
+	if cols < 40 {
+		cols = 80
+	}
+	if rows < 8 {
+		rows = 24
+	}
+	var b strings.Builder
+	b.WriteString(ansiClear)
+	b.WriteString(bold + " 录入：" + f.title + ansiReset + "   (Enter=下一字段/提交，Esc=取消)\n\n")
+	for i, fld := range f.fields {
+		cursor := "  "
+		val := string(fld.buf)
+		if i == f.idx {
+			cursor = rev + "▶ " + ansiReset
+			val = val + "█" // 光标
+		}
+		b.WriteString(cursor + fld.label + ": " + truncateLine(val, cols-20) + "\n")
+	}
+	// 底部提示
+	pad := rows - 4 - len(f.fields)
+	for i := 0; i < pad; i++ {
+		b.WriteString("\n")
+	}
+	b.WriteString("\n" + footer + "\n")
+	fmt.Print(b.String())
 }
 
 // enterRaw 进入终端原始模式；返回还原函数。
