@@ -16,11 +16,13 @@ import (
 // 第二份"差不多的"记录。这里只记实验事实，跨 run 积累成数据。
 type StepRecord struct {
 	RunID      string    `json:"run_id"`
+	Phase      int       `json:"phase"` // 自优化相位（0=基线/随机，1+=自我调整后）
 	Episode    int       `json:"episode"`
 	Step       int       `json:"step"`
 	Seed       int       `json:"seed"`
 	Action     int       `json:"action"`
 	ActionKey  string    `json:"action_key"`
+	Policy     string    `json:"policy"` // 该步所用的策略名
 	Mu         float64   `json:"mu"`
 	Eta        float64   `json:"eta"`
 	Score      float64   `json:"score"`
@@ -121,11 +123,12 @@ func (s *Store) Episodes() []EpisodeResult {
 		key := fmt.Sprintf("%s/%d", r.RunID, r.Episode)
 		e, ok := byKey[key]
 		if !ok {
-			e = &ep{EpisodeResult: EpisodeResult{Episode: r.Episode, Seed: r.Seed}}
+			e = &ep{EpisodeResult: EpisodeResult{Episode: r.Episode, Seed: r.Seed, Phase: r.Phase}}
 			byKey[key] = e
 			order = append(order, key)
 		}
 		e.Seed = r.Seed
+		e.Phase = r.Phase
 		for len(e.Actions) <= r.Step {
 			e.Actions = append(e.Actions, -1)
 		}

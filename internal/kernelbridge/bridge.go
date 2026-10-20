@@ -5,6 +5,22 @@ import (
 	"fmt"
 )
 
+// 设计纪律（对齐 bolloon kernel 的"机制层"模式）：
+//
+//  1. 内核只做机制，不判业务。本桥把 @bolloon/bolloon-kernel 的 ChannelActor /
+//     ModelRuntime / transport / run-lifecycle 透传给 Go，但**不替业务做判断**
+//     —— 例如 bolloon.exec 只负责"把一次 bolloon CLI 调用放进内核串行/审计执行"，
+//     绝不决定"该不该 join 这个网络 / 该不该认领这个任务"。
+//  2. 所有外部 I/O 经端口注入，未注入即拒（fail-closed）。lifecycle/transport/
+//     model/bolloon.exec 都要求调用方显式传 `ports`；端口不命名则拒绝。
+//  3. 诚实边界：本桥**不含** BOLLOON 的去中心化业务语义（network join / agent
+//     register / task publish·claim·send / engine run 的策略与协议）。那些语义
+//     在 `bolloon` CLI 里，经 `exec.bolloon` 注入端口被 shell 出去；Go 侧等价的
+//     强类型壳见 internal/bolloon。
+//  4. 五条越权禁令（kernel 一侧）：Channel 不能直接改 Goal；Model 不能直接执行
+//     Tool；Tool 不能直接改权限；Provider 不能直接写 Run；子 Agent 不能直接结束
+//     Goal。本桥不提供任何绕过这些禁令的捷径。
+//
 // ── 桥接的方法面 (与 bridge/server.mjs 的 handlers 一一对应) ──────────────
 
 // ChannelSubmit 往一个 channel 投递串行任务。同 channel 内严格 FIFO,

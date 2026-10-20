@@ -34,14 +34,14 @@ Phase 0 的验收问题只有一个：
 
 | Stage | 包/路径 | 所有者 |
 |---|---|---|
-| root | `go.mod` `LICENSE` `README.md` `README.en.md` `PLAN.md` `CONTRACT.md` `CHANGELOG.md`（2026-10-01 新增） `.gitignore` `internal/config/` `internal/owners/` `internal/kernelbridge/`（2026-10-12 新增：Bolloon kernel 跨语言 bridge，归 parent） `internal/ai/`（2026-10-18 新增：多 provider AI 接入层——声明式 profile + 注册表别名 + OpenAI-compatible transport，归 parent） `bridge/`（2026-10-12 新增：Node stdio JSON-RPC server，消费 @bolloon/bolloon-kernel，归 parent） `testdata/` `scripts/` `knowledge/` `artifacts/`（2026-10-07 新增：持续学习 daemon 的趋势/ckpt 产物，归 parent） | parent |
+| root | `go.mod` `LICENSE` `README.md` `README.en.md` `PLAN.md` `CONTRACT.md` `CHANGELOG.md`（2026-10-01 新增） `.gitignore` `internal/config/` `internal/owners/` `internal/kernelbridge/`（2026-10-12 新增：Bolloon kernel 跨语言 bridge，归 parent） `internal/ai/`（2026-10-18 新增：多 provider AI 接入层——声明式 profile + 注册表别名 + OpenAI-compatible transport，归 parent） `internal/bolloon/`（2026-10-20 新增：BOLLOON CLI 强类型客户端 + forge bolloon 透传，归 parent） `bridge/`（2026-10-12 新增：Node stdio JSON-RPC server，消费 @bolloon/bolloon-kernel，归 parent） `testdata/` `scripts/` `knowledge/` `artifacts/`（2026-10-07 新增：持续学习 daemon 的趋势/ckpt 产物，归 parent） | parent |
 | wiki | `docs/` `manifests/` `os/`（2026-10-17 新增：HUSHFUSION OS 决策层——任务池/实验状态机/机会池/决策日志/周复盘，Markdown+脚本，不承载引擎逻辑，归 parent） `AGENTS.md` `CLAUDE.md` `.cursorrules` `.windsurfrules` `.claude/` `.github/` | parent（2026-09-26 接入 wiki-first 知识系统时新增） |
 | A | `internal/physics/` | agent-A |
 | B | `internal/objective/` `internal/baseline/` | agent-B |
 | C | `internal/registry/` `internal/runner/` | agent-C |
 | D | `internal/search/` | agent-D |
 | E | `internal/experiment/` `internal/knowledge/` `internal/report/` | agent-E |
-| F | `internal/rlenv/` `cmd/` `internal/world/` | agent-F（2026-09-27 世界协议 P0：新增 `internal/world/`，与 rlenv/CLI 接线同属一轮；**合同变更**，见 `docs/world-protocol.md`） |
+| F | `internal/rlenv/` `cmd/` `internal/world/` `internal/harness/`（2026-10-20 新增：本地自优化闭环，驱动 mu 世界跑实验/落盘/自我调整，与 mu/rlenv/CLI 同属一轮） | agent-F（2026-09-27 世界协议 P0：新增 `internal/world/`，与 rlenv/CLI 接线同属一轮；**合同变更**，见 `docs/world-protocol.md`） |
 | G | `python/` | agent-G |
 | design | `internal/design/` | design（2026-09-26 内部设计判决层：移植 ProjectionPhysics 的闭式解 + 六道门 + 上游锚点脚本，见 `docs/design-layer.md`） |
 

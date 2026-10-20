@@ -114,11 +114,16 @@ type Harness struct {
 	useOML     bool
 	seed       int
 	runID      string
+	phase      int // 当前自优化相位（写进每条 record，供报告矩阵使用）
 
 	lastLearnerErr error
 
 	rng *rand.Rand
 }
+
+// SetPhase 设定本次 Run 的自优化相位（0=基线/随机，1+=自我调整后）。它只影响
+// 落盘记录的 phase 标记，不改变策略本身 —— 策略由 policyName 决定。
+func (h *Harness) SetPhase(p int) { h.phase = p }
 
 // Options 配置一个 Harness。
 type Options struct {
@@ -238,23 +243,27 @@ func (h *Harness) Run(episodes, budget int) (Summary, error) {
 		ActionKeys: h.Space.Keys,
 		Policy:     h.activePolicy().Name(),
 		StorePath:  h.Store.path,
+		Ceiling:    h.Target,
 	}
 	pol := h.activePolicy()
+	polName := pol.Name()
 	for ep := 0; ep < episodes; ep++ {
 		seed := h.seed*1000003 + ep
 		st := newSimState(h.rng, seed, budget)
-		epr := EpisodeResult{Episode: ep, Seed: seed}
+		epr := EpisodeResult{Episode: ep, Seed: seed, Phase: h.phase}
 		obs := h.obs(st)
 		for !st.term && !st.trunc {
 			k := pol.Act(obs)
 			eta, delta := st.step(k, h.Space, h.Regions, h.Target)
 			rec := StepRecord{
 				RunID:      h.runID,
+				Phase:      h.phase,
 				Episode:    ep,
 				Step:       st.used - 1,
 				Seed:       seed,
 				Action:     k,
 				ActionKey:  h.Space.Keys[k],
+				Policy:     polName,
 				Mu:         st.mu,
 				Eta:        eta,
 				Score:      st.score,
@@ -289,8 +298,11 @@ func (h *Harness) Run(episodes, budget int) (Summary, error) {
 	if err != nil {
 		return sum, err
 	}
+	eps := h.Store.Episodes()
 	sum.PerActionMeanDelta = perActionMeanDelta(recs, sum.ActionDim)
-	sum.BestDesigns = topDesigns(h.Store.Episodes(), 5)
+	sum.BestDesigns = topDesigns(eps, 5)
+	sum.PhaseSummaries = phaseSummaries(recs, eps)
+	sum.PhaseGrid = phaseActionGrid(recs, sum.ActionDim)
 	sum.StoreLen = h.Store.Len()
 	return sum, nil
 }
@@ -351,12 +363,15 @@ func (h *Harness) Summarize() (Summary, error) {
 		StoreLen:          h.Store.Len(),
 		BestScore:         best,
 		MeanFinalScore:    meanFinal,
+		Ceiling:           h.Target,
 		ActionDim:         h.Space.Dim(),
 		ActionKeys:        h.Space.Keys,
 		Policy:            h.activePolicy().Name(),
 		StorePath:         h.Store.path,
 		PerActionMeanDelta: perActionMeanDelta(recs, h.Space.Dim()),
 		BestDesigns:       topDesigns(eps, 5),
+		PhaseSummaries:    phaseSummaries(recs, eps),
+		PhaseGrid:         phaseActionGrid(recs, h.Space.Dim()),
 	}, nil
 }
 
@@ -378,4 +393,120 @@ func perActionMeanDelta(recs []StepRecord, dim int) []float64 {
 		}
 	}
 	return out
+}
+
+// phaseSummaries 按自优化相位聚合：每条相位给 episode 数、平均分、命中率、策略名。
+// 对齐 hermes 的"每个改进相位都有对照基线"纪律。
+func phaseSummaries(recs []StepRecord, eps []EpisodeResult) []PhaseSummary {
+	byPhase := map[int]*PhaseSummary{}
+	order := make([]int, 0)
+	for _, e := range eps {
+		ps, ok := byPhase[e.Phase]
+		if !ok {
+			ps = &PhaseSummary{Phase: e.Phase}
+			byPhase[e.Phase] = ps
+			order = append(order, e.Phase)
+		}
+		ps.NEpisodes++
+		ps.MeanScore += e.FinalScore
+		if e.Terminated {
+			ps.HitRate += 1
+		}
+	}
+	// 策略名：取该相位记录中出现最多的 policy。
+	polCnt := map[int]map[string]int{}
+	for _, r := range recs {
+		if polCnt[r.Phase] == nil {
+			polCnt[r.Phase] = map[string]int{}
+		}
+		polCnt[r.Phase][r.Policy]++
+	}
+	out := make([]PhaseSummary, 0, len(order))
+	for _, p := range order {
+		ps := *byPhase[p]
+		if ps.NEpisodes > 0 {
+			ps.MeanScore /= float64(ps.NEpisodes)
+			ps.HitRate /= float64(ps.NEpisodes)
+		}
+		best := ""
+		bestN := -1
+		for pol, n := range polCnt[p] {
+			if n > bestN {
+				bestN = n
+				best = pol
+			}
+		}
+		ps.Policy = best
+		out = append(out, ps)
+	}
+	return out
+}
+
+// phaseActionGrid 构造"动作 × 相位"的平均Δ矩阵（phase-major）。
+func phaseActionGrid(recs []StepRecord, dim int) PhaseGrid {
+	phases := map[int]int{} // phase -> index
+	idx := 0
+	for _, r := range recs {
+		if _, ok := phases[r.Phase]; !ok {
+			phases[r.Phase] = idx
+			idx++
+		}
+	}
+	if len(phases) == 0 {
+		return PhaseGrid{}
+	}
+	// 相位按数值排序。
+	order := make([]int, 0, len(phases))
+	for p := range phases {
+		order = append(order, p)
+	}
+	sortInts(order)
+	remap := make(map[int]int, len(order))
+	for i, p := range order {
+		remap[p] = i
+	}
+	sum := make([][]float64, len(order))
+	cnt := make([][]int, len(order))
+	policy := make([]map[string]int, len(order))
+	for i := range sum {
+		sum[i] = make([]float64, dim)
+		cnt[i] = make([]int, dim)
+		policy[i] = map[string]int{}
+	}
+	for _, r := range recs {
+		if r.Action < 0 || r.Action >= dim {
+			continue
+		}
+		row := remap[r.Phase]
+		sum[row][r.Action] += r.Delta
+		cnt[row][r.Action]++
+		policy[row][r.Policy]++
+	}
+	matrix := make([][]float64, len(order))
+	polName := make([]string, len(order))
+	for i := range matrix {
+		matrix[i] = make([]float64, dim)
+		for k := 0; k < dim; k++ {
+			if cnt[i][k] > 0 {
+				matrix[i][k] = sum[i][k] / float64(cnt[i][k])
+			}
+		}
+		best, bestN := "", -1
+		for p, n := range policy[i] {
+			if n > bestN {
+				bestN, best = n, p
+			}
+		}
+		polName[i] = best
+	}
+	return PhaseGrid{Phases: order, Policy: polName, Matrix: matrix}
+}
+
+// sortInts 是 [int] 的升序排序（避免引入 slice 排序样板）。
+func sortInts(a []int) {
+	for i := 1; i < len(a); i++ {
+		for j := i; j > 0 && a[j-1] > a[j]; j-- {
+			a[j-1], a[j] = a[j], a[j-1]
+		}
+	}
 }

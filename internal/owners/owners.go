@@ -43,6 +43,7 @@ var Stages = []Stage{
 			"internal/owners/",
 			"internal/kernelbridge/",
 			"internal/ai/",
+			"internal/bolloon/", // 2026-10-20 新增：BOLLOON CLI 强类型客户端 + forge bolloon 透传（归 parent）
 			"bridge/",
 			"testdata/",
 			"scripts/",
@@ -108,7 +109,9 @@ var Stages = []Stage{
 		// 新增路径 = 合同变更, 已在 CONTRACT.md §2 同步(2026-09-27)。
 		// internal/mu/ 同属这一轮: 交换子世界的算子与控制代数(上游 GCA/TD 的 Go 移植),
 		// 它是 --world mu 的语义底座, 与 internal/world/ 是同一段工作。
-		Paths: []string{"internal/rlenv/", "cmd/", "internal/world/", "internal/mu/"},
+		// internal/harness/（2026-10-20 新增）：本地自优化闭环，驱动 mu 世界跑实验、
+		// 落盘、自我调整，并接 cmd/ 的 forge harness 子命令 —— 与 mu/rlenv/CLI 同属一轮。
+		Paths: []string{"internal/rlenv/", "cmd/", "internal/world/", "internal/mu/", "internal/harness/"},
 	},
 	{
 		ID:    "G",

@@ -2951,10 +2951,18 @@ func cmdHarnessRun(args []string) int {
 	}
 	var last harness.Summary
 	for phase := 0; phase < phases; phase++ {
-		h, err := newHarness(*store, *policy, *omlScript, *omlModel, *useOML, *seed, fmt.Sprintf("h%d-p%d", *seed, phase))
+		// 基线对齐（对齐 hermes 的"每个改进相位都有对照基线"）：当开启自调整时，
+		// 相位 0 强制为随机基线（控制组），相位 1+ 才用请求的策略并在跑前自我调整。
+		pol := *policy
+		isBaseline := *selfAdjust && phase == 0
+		if isBaseline {
+			pol = "random"
+		}
+		h, err := newHarness(*store, pol, *omlScript, *omlModel, *useOML, *seed, fmt.Sprintf("h%d-p%d", *seed, phase))
 		if err != nil {
 			return fail("harness run: %v", err)
 		}
+		h.SetPhase(phase)
 		if phase > 0 {
 			if err := h.SelfAdjust(); err != nil {
 				return fail("harness run: self-adjust: %v", err)
@@ -2966,8 +2974,13 @@ func cmdHarnessRun(args []string) int {
 			return fail("harness run: %v", err)
 		}
 		last = s
-		fmt.Fprintf(os.Stderr, "[harness] phase %d: 策略=%s 命中=%d/%d 平均分=%.4f 最高分=%.4f\n",
-			phase, s.Policy, s.TerminatedCount, s.NEpisodes, s.MeanFinalScore, s.BestScore)
+		if isBaseline {
+			fmt.Fprintf(os.Stderr, "[harness] phase %d (基线/%s): 命中=%d/%d 平均分=%.4f\n",
+				phase, s.Policy, s.TerminatedCount, s.NEpisodes, s.MeanFinalScore)
+		} else {
+			fmt.Fprintf(os.Stderr, "[harness] phase %d: 策略=%s 命中=%d/%d 平均分=%.4f 最高分=%.4f\n",
+				phase, s.Policy, s.TerminatedCount, s.NEpisodes, s.MeanFinalScore, s.BestScore)
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(*report), 0o755); err != nil {

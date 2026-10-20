@@ -161,7 +161,13 @@ async function modelAcquire(params) {
  * bolloon.exec —— 把一次 bolloon CLI 调用放进内核 ChannelActor 里串行/审计执行。
  * kernel（@bolloon/bolloon-kernel）在这里是**执行核心**：它不判业务、只负责
  * 把这次外部进程调用纳入自己的 channel 调度与状态审计。真正的子进程由注入端口
- * exec.bolloon 完成（默认 shell 到本机 bolloon 二进制）。
+ * exec.bolloon 完成。
+ *
+ * 纪律（对齐 bolloon kernel 的"端口注入 / 未注入即拒"）：
+ *   - 本原语**不默认**任何端口 —— 调用方必须显式传 `ports: { exec: 'bolloon' }`，
+ *     否则 resolvePorts 解析不出 exec 端口、actor.submit 内 `ports.exec` 未定义、
+ *     内核直接拒（fail-closed）。这与 lifecycle/transport/model 一致。
+ *   - 内核不替业务做"该不该 join 这个网络 / 该不该认领这个任务"的判断，只执行。
  *
  * 这是"核聚变"系统把 BOLLOON 当去中心化内核使用时，唯一经 kernel 编排的入口：
  * 外部多智能体交互（network join / task send / engine run …）都应经此走，
@@ -176,7 +182,8 @@ async function bolloonExec(params) {
     kind: 'bolloon-cli',
   });
   actors.set(channelId, actor);
-  const ports = resolvePorts(params?.ports ?? { exec: 'bolloon' });
+  // 不默认端口：未注入 exec ⇒ 内核拒（fail-closed）。
+  const ports = resolvePorts(params?.ports ?? {});
   const result = await actor.submit(async (state) => {
     const out = await ports.exec(args);
     state.lastBolloon = { args, at: Date.now() };

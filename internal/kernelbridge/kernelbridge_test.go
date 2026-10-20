@@ -237,6 +237,20 @@ func TestBolloonExecThroughKernel(t *testing.T) {
 	}
 }
 
+// G24i: bolloon.exec 端口未注入 ⇒ fail-closed（对齐 bolloon kernel 的"未注入即拒"
+// 边界测试）。调用方必须显式传 ports:{exec:'bolloon'}，否则内核拒、不假装成功。
+func TestBolloonExecPortMissingFailsClosed(t *testing.T) {
+	c := newTestClient(t)
+	var out map[string]any
+	err := c.call("bolloon.exec", map[string]any{
+		"args": []string{"network", "status"},
+		// 不传 ports —— 内核必须拒
+	}, &out)
+	if err == nil {
+		t.Fatalf("未注入 exec 端口必须 fail-closed, 却 ok: %v", out)
+	}
+}
+
 // writeFakeBolloon 写一个有执行权限的假 bolloon 脚本：对 `network status` 吐
 // 结构化信封，其余命令吐通用 OK 信封。供 TestBolloonExecThroughKernel 隔离外部进程。
 func writeFakeBolloon(t *testing.T) string {
