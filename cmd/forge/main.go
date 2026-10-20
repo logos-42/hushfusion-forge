@@ -38,6 +38,7 @@ import (
 
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/baseline"
+	"github.com/logos-42/hushfusion-forge/internal/harness"
 	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/design"
 	"github.com/logos-42/hushfusion-forge/internal/experiment"
@@ -137,6 +138,13 @@ func run(args []string) int {
 		// peek     kernel→OS: 从 kernel actor 读回该 channel 的执行状态
 		// sync     双向: submit 后立即 peek, 把两者都落盘 (证据闭环)
 		return cmdOS(rest)
+	case "harness":
+		// 本地自优化闭环 (internal/harness): 把 mathematical model (internal/mu) 跑成
+		// 一批本地实验, 落盘成数据, 再用规则层 + 可选 OML 持续学习层自我调整:
+		// run     跑 N 条 episode, 每条评估落盘, 可选 self-adjust 后再跑一代更好的
+		// self    对已有 store 跑一次自我调整 (重算规则偏置 / 训练 OML)
+		// report  从 store 渲染 Markdown 摘要 (含 top 模型设计)
+		return cmdHarness(rest)
 	case "ai":
 		// 多 provider AI 接入层 (internal/ai, docs/ai-provider-design.md):
 		// list    列出已注册 provider (内置 + 用户自定义覆盖)
@@ -169,6 +177,7 @@ commands:
   registry    inspect a registry and check its integrity
   world       world protocol: serve/replay the design world (docs/world-protocol.md)
   os          HUSHFUSION OS ↔ Agent Kernel 双向打通: submit / peek / sync (os/SPEC.md §8)
+  harness     本地自优化闭环: run / self / report (internal/harness)
   ai          multi-provider AI gateway: list / chat / models (docs/ai-provider-design.md)
   version     print version, spec shape and frozen schema facts
 
@@ -2822,6 +2831,209 @@ func boolMap(m map[string]any, key string) bool {
 // ---------------------------------------------------------------------------
 // 多 provider AI 接入层 (forge ai)
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 本地自优化闭环 (forge harness)
+// ---------------------------------------------------------------------------
+// 把 internal/mu 的数学模型 (交换子世界代数) 跑成实验, 落盘成数据, 自我调整。
+// 这是闭环的 harness 层: 规则层 (确定性, 纯 Go) + 可选 OML 持续学习层
+// (Python 子进程复用 scripts/oml_continual_core.py, torch 缺失时 fail-closed)。
+const defHarnessStore = "runs/harness/store.jsonl"
+const defHarnessReport = "runs/harness/report.md"
+
+func cmdHarness(args []string) int {
+	if len(args) == 0 {
+		harnessUsage(os.Stderr)
+		return 2
+	}
+	sub, rest := args[0], args[1:]
+	switch sub {
+	case "run":
+		return cmdHarnessRun(rest)
+	case "self":
+		return cmdHarnessSelf(rest)
+	case "report":
+		return cmdHarnessReport(rest)
+	case "help", "-h", "--help":
+		harnessUsage(os.Stdout)
+		return 0
+	default:
+		fmt.Fprintf(os.Stderr, "forge harness: unknown subcommand %q\n\n", sub)
+		harnessUsage(os.Stderr)
+		return 2
+	}
+}
+
+func harnessUsage(w *os.File) {
+	fmt.Fprintf(w, `usage: forge harness <run|self|report> [flags]
+
+本地自优化闭环 (internal/harness): 把数学模型 (internal/mu) 跑成实验、落盘、
+再自我调整。它是闭环的 harness 层。
+
+  run     跑 N 条 episode (每条评估落盘成数据), 可选 --self-adjust 后再跑一代更好的
+  self    对已有 store 跑一次自我调整 (重算规则偏置 / 训练 OML)
+  report  从 store 渲染 Markdown 摘要 (含 top 模型设计)
+
+全局标志:
+  --store <path>        实验 store (JSONL, 默认 %s)
+  --policy random|heuristic|oml   默认 heuristic
+  --oml                 启用 OML 持续学习层 (torch 缺失则回退启发式)
+  --oml-script <path>   OML 子进程脚本 (默认 scripts/harness_oml.py)
+  --oml-model <path>    OML 模型落盘 (默认 runs/harness/oml_model.pt)
+
+run 专属:
+  --episodes <n>        默认 200
+  --budget <n>          每条 episode 的最大步数 (默认 24)
+  --seed <n>            默认 1
+  --self-adjust         跑前一代基线, 自我调整后再跑一代并比较 (默认开启)
+  --no-self-adjust      只跑一代
+  --report <path>       摘要落盘 (默认 %s)
+`, defHarnessStore, defHarnessReport)
+}
+
+// harnessOpts 从通用标志里解出 Harness 配置。
+func harnessOpts(fs *flag.FlagSet) (
+	store, policy, omlScript, omlModel *string,
+	useOML, selfAdjust *bool,
+) {
+	store = fs.String("store", defHarnessStore, "实验 store (JSONL)")
+	policy = fs.String("policy", "heuristic", "random|heuristic|oml")
+	useOML = fs.Bool("oml", false, "启用 OML 持续学习层")
+	omlScript = fs.String("oml-script", "scripts/harness_oml.py", "OML 子进程脚本")
+	omlModel = fs.String("oml-model", "runs/harness/oml_model.pt", "OML 模型落盘")
+	selfAdjust = fs.Bool("self-adjust", true, "跑基线后再自我调整跑一代")
+	return
+}
+
+func newHarness(store, policy, omlScript, omlModel string, useOML bool, seed int, runID string) (*harness.Harness, error) {
+	if err := os.MkdirAll(filepath.Dir(store), 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir store dir: %w", err)
+	}
+	return harness.New(harness.Options{
+		StorePath:  store,
+		PolicyName: policy,
+		UseOML:     useOML,
+		OMLScript:  omlScript,
+		OMLModel:   omlModel,
+		Seed:       seed,
+		RunID:      runID,
+	})
+}
+
+// cmdHarnessRun: 跑实验闭环, 可选 self-adjust 后再跑一代, 写报告。
+func cmdHarnessRun(args []string) int {
+	fs := newFlagSet("harness run", "forge harness run [flags]",
+		"跑数学模型实验, 落盘数据, 可选自我调整后再跑一代。")
+	episodes := fs.Int("episodes", harness.DefaultEpisodes, "episode 数")
+	budget := fs.Int("budget", harness.DefaultBudget, "每条 episode 最大步数")
+	seed := fs.Int("seed", harness.DefaultSeed, "随机种子")
+	report := fs.String("report", defHarnessReport, "摘要落盘路径")
+	store, policy, omlScript, omlModel, useOML, selfAdjust := harnessOpts(fs)
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+	if *episodes <= 0 || *budget <= 0 {
+		fmt.Fprintf(os.Stderr, "forge harness run: --episodes 与 --budget 必须为正\n\n")
+		fs.Usage()
+		return 2
+	}
+
+	phases := 1
+	if *selfAdjust {
+		phases = 2
+	}
+	var last harness.Summary
+	for phase := 0; phase < phases; phase++ {
+		h, err := newHarness(*store, *policy, *omlScript, *omlModel, *useOML, *seed, fmt.Sprintf("h%d-p%d", *seed, phase))
+		if err != nil {
+			return fail("harness run: %v", err)
+		}
+		if phase > 0 {
+			if err := h.SelfAdjust(); err != nil {
+				return fail("harness run: self-adjust: %v", err)
+			}
+			fmt.Fprintf(os.Stderr, "[harness] phase %d: 自我调整完成 (OML=%v)\n", phase, h.LastLearnerErr() == nil && *useOML)
+		}
+		s, err := h.Run(*episodes, *budget)
+		if err != nil {
+			return fail("harness run: %v", err)
+		}
+		last = s
+		fmt.Fprintf(os.Stderr, "[harness] phase %d: 策略=%s 命中=%d/%d 平均分=%.4f 最高分=%.4f\n",
+			phase, s.Policy, s.TerminatedCount, s.NEpisodes, s.MeanFinalScore, s.BestScore)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(*report), 0o755); err != nil {
+		return fail("harness run: mkdir report dir: %v", err)
+	}
+	if err := os.WriteFile(*report, []byte(last.Render()), 0o644); err != nil {
+		return fail("harness run: 写报告 %s: %v", *report, err)
+	}
+	fmt.Fprintf(os.Stderr, "[harness] 报告已写 %s (store=%s, 累计 %d 条)\n", *report, *store, last.StoreLen)
+	return 0
+}
+
+// cmdHarnessSelf: 对已有 store 跑一次自我调整 (不跑新实验)。
+func cmdHarnessSelf(args []string) int {
+	fs := newFlagSet("harness self", "forge harness self [flags]",
+		"对已有 store 跑一次自我调整: 重算规则偏置 / 训练 OML。")
+	store, policy, omlScript, omlModel, useOML, _ := harnessOpts(fs)
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+	h, err := newHarness(*store, *policy, *omlScript, *omlModel, *useOML, harness.DefaultSeed, "self")
+	if err != nil {
+		return fail("harness self: %v", err)
+	}
+	if err := h.SelfAdjust(); err != nil {
+		return fail("harness self: %v", err)
+	}
+	s, err := h.Summarize()
+	if err != nil {
+		return fail("harness self: %v", err)
+	}
+	if *useOML {
+		if h.LastLearnerErr() != nil {
+			fmt.Fprintf(os.Stderr, "[harness] OML 不可用 (已回退启发式): %v\n", h.LastLearnerErr())
+		} else {
+			fmt.Fprintf(os.Stderr, "[harness] OML 已训练并启用\n")
+		}
+	}
+	fmt.Fprintf(os.Stderr, "[harness] store=%d 条, 动作平均Δ=%v\n", s.StoreLen, s.PerActionMeanDelta)
+	return 0
+}
+
+// cmdHarnessReport: 从 store 渲染摘要。
+func cmdHarnessReport(args []string) int {
+	fs := newFlagSet("harness report", "forge harness report [flags]",
+		"从 store 重建并渲染 Markdown 摘要 (含 top 模型设计)。")
+	report := fs.String("report", defHarnessReport, "摘要落盘路径")
+	store, policy, omlScript, omlModel, useOML, _ := harnessOpts(fs)
+	if code := parseFlags(fs, args); code >= 0 {
+		return code
+	}
+	h, err := newHarness(*store, *policy, *omlScript, *omlModel, *useOML, harness.DefaultSeed, "report")
+	if err != nil {
+		return fail("harness report: %v", err)
+	}
+	s, err := h.Summarize()
+	if err != nil {
+		return fail("harness report: %v", err)
+	}
+	out := s.Render()
+	if *report != "" && *report != "-" {
+		if err := os.MkdirAll(filepath.Dir(*report), 0o755); err != nil {
+			return fail("harness report: mkdir: %v", err)
+		}
+		if err := os.WriteFile(*report, []byte(out), 0o644); err != nil {
+			return fail("harness report: 写 %s: %v", *report, err)
+		}
+		fmt.Fprintf(os.Stderr, "[harness] 报告已写 %s\n", *report)
+	} else {
+		fmt.Print(out)
+	}
+	return 0
+}
+
 // 设计借鉴 hermes-agent 的 ProviderProfile 架构 (providers/base.py):
 // 声明式 profile + 注册表别名 + OpenAI-compatible 默认 transport ——
 // 一个客户端覆盖大多数 provider, 新增 provider 只是加一份声明, 不用写客户端。
