@@ -23,6 +23,7 @@
  *   · 端口未注入 ⇒ fail-closed (返回 ok:false, 不假装成功)。
  */
 import { createInterface } from 'node:readline';
+import { spawnSync } from 'node:child_process';
 import {
   ChannelActor,
   getOrCreateActor,
@@ -44,6 +45,21 @@ const NAMED_PORTS = {
     call: async () => ({ ok: true }),
     close: async () => {},
   }),
+  // exec.bolloon: 真正去调本机 bolloon 二进制（去中心化智能体 CLI）。
+  // 二进制路径由 BOLLOON_BIN 环境变量覆盖（测试与非常规安装用）。
+  // 这是 kernel 作为执行核心时，唯一接触外部进程的地方（端口注入，未注入即拒）。
+  'exec.bolloon': async (args) => {
+    const bin = process.env.BOLLOON_BIN || 'bolloon';
+    const argv = Array.isArray(args) ? args.slice() : [String(args)];
+    if (!argv.includes('--json')) argv.push('--json');
+    const res = spawnSync(bin, argv, { encoding: 'utf8', maxBuffer: 1 << 20 });
+    return {
+      ok: res.status === 0,
+      code: res.status,
+      stdout: (res.stdout || '').trim(),
+      stderr: (res.stderr || '').trim(),
+    };
+  },
 };
 
 /** 把 Go 侧给的 `{端口名: 命名端口}` 解析成函数形状; 未知名字 ⇒ 抛错 (调用方会看到 fail-closed) */
@@ -141,12 +157,41 @@ async function modelAcquire(params) {
   return { ok: true, via: 'kernel-model-runtime', lease };
 }
 
+/**
+ * bolloon.exec —— 把一次 bolloon CLI 调用放进内核 ChannelActor 里串行/审计执行。
+ * kernel（@bolloon/bolloon-kernel）在这里是**执行核心**：它不判业务、只负责
+ * 把这次外部进程调用纳入自己的 channel 调度与状态审计。真正的子进程由注入端口
+ * exec.bolloon 完成（默认 shell 到本机 bolloon 二进制）。
+ *
+ * 这是"核聚变"系统把 BOLLOON 当去中心化内核使用时，唯一经 kernel 编排的入口：
+ * 外部多智能体交互（network join / task send / engine run …）都应经此走，
+ * 而不是在 Go 侧裸调 bolloon。
+ */
+async function bolloonExec(params) {
+  const args = params?.args;
+  if (!Array.isArray(args)) throw new Error('params.args 必填 (string[])');
+  const channelId = params?.channelId ?? 'bolloon';
+  const actor = actors.get(channelId) ?? getOrCreateActor(`bridge:${channelId}`, {
+    channelId,
+    kind: 'bolloon-cli',
+  });
+  actors.set(channelId, actor);
+  const ports = resolvePorts(params?.ports ?? { exec: 'bolloon' });
+  const result = await actor.submit(async (state) => {
+    const out = await ports.exec(args);
+    state.lastBolloon = { args, at: Date.now() };
+    return out;
+  });
+  return { ok: true, via: 'kernel-channel-actor', result };
+}
+
 const handlers = {
   'channel.submit': channelSubmit,
   'channel.peek': channelPeek,
   'lifecycle.submit': lifecycleSubmit,
   'transport.submit': transportSubmit,
   'model.acquire': modelAcquire,
+  'bolloon.exec': bolloonExec,
 };
 
 rl.on('line', (line) => {

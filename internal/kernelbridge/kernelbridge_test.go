@@ -213,6 +213,50 @@ func TestModelAcquireRequiresConnectionPort(t *testing.T) {
 	}
 }
 
+// G24h: bolloon.exec 把一次 bolloon CLI 调用放进内核 ChannelActor 里执行
+// （kernel 作为执行核心），exec.bolloon 端口捕获 stdout。BOLLOON_BIN 指向假
+// bolloon 以隔离外部进程。需 node + bridge/server.mjs。
+func TestBolloonExecThroughKernel(t *testing.T) {
+	fake := writeFakeBolloon(t)
+	t.Setenv("BOLLOON_BIN", fake)
+	c := newTestClient(t)
+	out, err := c.BolloonExec("network", "status")
+	if err != nil {
+		t.Fatalf("BolloonExec: %v", err)
+	}
+	if strOf(out, "via") != "kernel-channel-actor" {
+		t.Fatalf("via 应标 kernel-channel-actor, got %v", out)
+	}
+	res, _ := out["result"].(map[string]any)
+	if res == nil {
+		t.Fatalf("result 缺失: %v", out)
+	}
+	stdout, _ := res["stdout"].(string)
+	if !strings.Contains(stdout, "did:test") {
+		t.Fatalf("exec.bolloon 应捕获 bolloon 的 stdout, 实际 %q", stdout)
+	}
+}
+
+// writeFakeBolloon 写一个有执行权限的假 bolloon 脚本：对 `network status` 吐
+// 结构化信封，其余命令吐通用 OK 信封。供 TestBolloonExecThroughKernel 隔离外部进程。
+func writeFakeBolloon(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bolloon")
+	script := `#!/usr/bin/env bash
+if [ "$1" = "network" ] && [ "$2" = "status" ]; then
+  echo '{"ok":true,"code":"OK","message":"x","data":{"did":"did:test"}}'
+  exit 0
+fi
+echo '{"ok":true,"code":"OK","message":"ok","data":{}}'
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("写假 bolloon: %v", err)
+	}
+	return path
+}
+
 // G24g: 响应都是合法 JSON (ndjson 逐行可解析) —— 防止 server 输出被截断/串行。
 func TestResponsesAreValidJSONLines(t *testing.T) {
 	c := newTestClient(t)

@@ -29,6 +29,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -38,6 +39,7 @@ import (
 
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/baseline"
+	"github.com/logos-42/hushfusion-forge/internal/bolloon"
 	"github.com/logos-42/hushfusion-forge/internal/harness"
 	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/design"
@@ -145,6 +147,11 @@ func run(args []string) int {
 		// self    对已有 store 跑一次自我调整 (重算规则偏置 / 训练 OML)
 		// report  从 store 渲染 Markdown 摘要 (含 top 模型设计)
 		return cmdHarness(rest)
+	case "bolloon":
+		// 去中心化智能体 CLI 透传 (internal/bolloon, @bolloon/bolloon-agent):
+		// 把参数原样转发给本机 bolloon 二进制 —— 核聚变系统接入 BOLLOON
+		// 去中心化内核的统一入口 (外部多智能体交互 + 调用 BOLLOON cli)。
+		return cmdBolloon(rest)
 	case "ai":
 		// 多 provider AI 接入层 (internal/ai, docs/ai-provider-design.md):
 		// list    列出已注册 provider (内置 + 用户自定义覆盖)
@@ -178,6 +185,7 @@ commands:
   world       world protocol: serve/replay the design world (docs/world-protocol.md)
   os          HUSHFUSION OS ↔ Agent Kernel 双向打通: submit / peek / sync (os/SPEC.md §8)
   harness     本地自优化闭环: run / self / report (internal/harness)
+  bolloon     去中心化智能体 CLI 透传: 把参数转发给本机 bolloon (network/agent/task/engine)
   ai          multi-provider AI gateway: list / chat / models (docs/ai-provider-design.md)
   version     print version, spec shape and frozen schema facts
 
@@ -3032,6 +3040,54 @@ func cmdHarnessReport(args []string) int {
 		fmt.Print(out)
 	}
 	return 0
+}
+
+// ---------------------------------------------------------------------------
+// 去中心化智能体 CLI 透传 (forge bolloon)
+// ---------------------------------------------------------------------------
+// 把参数原样转发给本机 bolloon 二进制（@bolloon/bolloon-agent）。这是核聚变系统
+// 接入 BOLLOON 去中心化内核的统一入口：外部多智能体交互 (network join / task send /
+// engine run) 与"调用 BOLLOON 的 cli"都经此。等价地，Go 侧可用 internal/bolloon
+// 强类型客户端，或经 internal/kernelbridge 的 BolloonExec 走内核 ChannelActor 编排。
+func cmdBolloon(args []string) int {
+	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		bolloonUsage(os.Stdout)
+		return 0
+	}
+	bin, err := bolloon.Detect()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "forge bolloon: %v\n\n这是你本地已装的 BOLLOON 去中心化智能体 CLI。\n", err)
+		fmt.Fprintf(os.Stderr, "安装: npm i -g @bolloon/bolloon-agent   或   设置 BOLLOON_BIN 指到二进制。\n")
+		return 1
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode()
+		}
+		return 1
+	}
+	return 0
+}
+
+func bolloonUsage(w *os.File) {
+	fmt.Fprintf(w, `usage: forge bolloon <bolloon-args...>
+
+薄 CLI 透传: 把参数原样转发给本机 bolloon 二进制（去中心化智能体 CLI）。
+核聚变系统借此接入 BOLLOON 的去中心化内核 —— 外部多智能体交互与调用 BOLLOON
+cli 的统一入口。等价地, Go 侧可用 internal/bolloon 强类型客户端, 或经
+internal/kernelbridge 的 BolloonExec 走内核 ChannelActor 编排。
+
+示例:
+  forge bolloon network status              # 本机入网态 (DID / 网关 peerId)
+  forge bolloon task board                 # 任务板 (外部智能体发布的协作任务)
+  forge bolloon agent discover             # 发现网络上的外部 agent
+  forge bolloon network join <link>        # 加入外部服务器的网络
+  forge bolloon task send <annId> "消息"   # 向任务参与者发消息
+`)
 }
 
 // 设计借鉴 hermes-agent 的 ProviderProfile 架构 (providers/base.py):

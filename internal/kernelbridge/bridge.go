@@ -67,6 +67,26 @@ func (c *Client) ModelAcquire(snapshot map[string]any, ports map[string]any) (ma
 	return out, nil
 }
 
+// BolloonExec 把一次 bolloon CLI 调用放进内核 ChannelActor 里串行/审计执行
+// （kernel @bolloon/bolloon-kernel 作为执行核心）。args 是传给 bolloon 的子命令
+// 参数（如 "network" "join" "<link>"）。返回内核回传的执行结果，其中
+// result.stdout / result.stderr / result.code 是 exec.bolloon 端口捕获的。
+//
+// 路径: Forge(Go) → JSON-RPC → bridge/server.mjs → ChannelActor.submit →
+// exec.bolloon 端口 → 本机 bolloon 二进制。这是"核聚变"走内核编排去驱动
+// BOLLOON 去中心化内核（外部多智能体交互）的正式入口；直接用 internal/bolloon
+// 则是等价的强类型壳，不经内核调度。
+func (c *Client) BolloonExec(args ...string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.call("bolloon.exec", map[string]any{
+		"args":  args,
+		"ports": map[string]any{"exec": "bolloon"},
+	}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // call 是 rpc 的泛型外壳: 把响应 JSON 解到 out。
 func (c *Client) call(method string, params map[string]any, out any) error {
 	raw, err := c.rpc(method, params)
