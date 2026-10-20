@@ -80,6 +80,10 @@ func TestKernelDecideAndExperimentsE1(t *testing.T) {
 	if _, err := k.Syscall("experiments.new", map[string]any{"tag": "exp_x", "q": "问题"}); err != nil {
 		t.Fatal(err)
 	}
+	// 重复 tag 必须拒（证据映射不许重复）。
+	if _, err := k.Syscall("experiments.new", map[string]any{"tag": "exp_x", "q": "再来"}); err == nil {
+		t.Fatal("重复实验 tag 应被拒")
+	}
 	// E1：跳过态1 直接写态3 必须拒。
 	if _, err := k.Syscall("experiments.advance", map[string]any{"tag": "exp_x", "state": 3, "text": "x"}); err == nil {
 		t.Fatal("跳态应被 E1 拒绝")

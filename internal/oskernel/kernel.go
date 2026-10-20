@@ -28,7 +28,7 @@ type Result struct {
 	Data    any    `json:"data,omitempty"`
 }
 
-func ok(data any) Result  { return Result{OK: true, Data: data} }
+func ok(data any) Result    { return Result{OK: true, Data: data} }
 func okMsg(m string) Result { return Result{OK: true, Message: m} }
 
 // Syscall 是唯一入口：按名字分发到子系统驱动。未知 / 缺参 / 守卫拒绝都
@@ -69,18 +69,18 @@ type handler func(k *Kernel, args map[string]any) (Result, error)
 // 读（list/active/dashboard）+ 写（propose/add/advance，写前守卫）。
 var syscallTable = map[string]handler{
 	// 读
-	"tasks.list":       sysTasksList,
-	"tasks.active":     sysTasksActive,
-	"experiments.list": sysExperimentsList,
+	"tasks.list":         sysTasksList,
+	"tasks.active":       sysTasksActive,
+	"experiments.list":   sysExperimentsList,
 	"opportunities.list": sysOpportunitiesList,
-	"decisions.list":   sysDecisionsList,
-	"receipts.list":    sysReceiptsList,
-	"dashboard":        sysDashboard,
+	"decisions.list":     sysDecisionsList,
+	"receipts.list":      sysReceiptsList,
+	"dashboard":          sysDashboard,
 	// 写（写前守卫）
-	"tasks.propose":    sysTasksPropose,
-	"opportunities.add": sysOpportunitiesAdd,
-	"decisions.add":    sysDecisionsAdd,
-	"experiments.new":  sysExperimentsNew,
+	"tasks.propose":       sysTasksPropose,
+	"opportunities.add":   sysOpportunitiesAdd,
+	"decisions.add":       sysDecisionsAdd,
+	"experiments.new":     sysExperimentsNew,
 	"experiments.advance": sysExperimentsAdvance,
 	// 元
 	"invariants.check": sysInvariants,
@@ -249,8 +249,16 @@ func sysExperimentsNew(k *Kernel, args map[string]any) (Result, error) {
 	if tag == "" || q == "" {
 		return Result{}, fmt.Errorf("experiments.new: tag/q 必填")
 	}
+	expPath := filepath.Join(k.Base, "EXPERIMENTS.md")
+	existing, err := os.ReadFile(expPath)
+	if err != nil {
+		return Result{}, fmt.Errorf("读 EXPERIMENTS.md: %w", err)
+	}
+	if expTagExists(existing, tag) {
+		return Result{}, fmt.Errorf("实验 tag %q 已存在（证据映射不许重复；要推进请用 experiments.advance）", tag)
+	}
 	row := fmt.Sprintf("| `%s` | %s | | | | |", tag, q)
-	if err := appendTableRow(filepath.Join(k.Base, "EXPERIMENTS.md"), "## 已有实验", row); err != nil {
+	if err := appendTableRow(expPath, "## 已有实验", row); err != nil {
 		return Result{}, err
 	}
 	return okMsg(fmt.Sprintf("`%s` 已新增（态1）", tag)), nil
@@ -278,6 +286,21 @@ func taskIDExists(tasksText []byte, id string) bool {
 			if len(c) >= 1 && c[0] == id {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// expTagExists 扫描实验映射表是否已有该 tag（证据映射不许重复的写前守卫）。
+func expTagExists(expText []byte, tag string) bool {
+	for _, line := range strings.Split(string(expText), "\n") {
+		t := strings.TrimSpace(line)
+		if !strings.HasPrefix(t, "|") {
+			continue
+		}
+		c := splitCells(t)
+		if len(c) == 6 && strings.Trim(c[0], "` ") == tag {
+			return true
 		}
 	}
 	return false
