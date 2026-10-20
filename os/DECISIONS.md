@@ -19,6 +19,7 @@
 | D-02 | 2026-09-27 | **世界协议 v1 冻结**：JSONL/stdio、最短往返浮点、7 错误码；语义唯一权威是 `internal/rlenv` | 跨语言逐位复现是「结论独立」的硬门槛（G18 三条） | 数值接近即通过 → 逐位复现的仍是响应字节，不是接近 | 协议只搬运，不在这里加 shaping/惩罚 | done |
 | D-01 | 2026-09-26 | **可造性进目标函数**（0.1.2）：第 4 罚项 `clearance`（MinClearance=0.05，工程判断非物理） | 机器最优 D9857 把导体放距采样点 4.196mm（钳位半径内）——退化解 | 只改搜索约束 → 治标；罚项同族 max(0,(允许−实际)/允许) 逐位可审计 | Δ +1.672→+1.2395；可行记录 11072→7221 | done |
 | D-11 | 2026-10-20 | OS 升级为 Linux 式宏内核（internal/oskernel）：单一内核核心拥有状态与持久化，所有访问经 Kernel.Syscall 单一入口，各决策域是子系统驱动，铁律是写前不变量守卫；phase-1 持久化仍为 os/*.md 块设备（git 背书 + oscheck 权威门），AI 粘合列为 phase-3 | leo 2026-10-20 指示「os 更新成 Linux 宏内核架构，不是文档系统」；oscore/oscheck/ossubmit 已证门禁+证据有效，缺统一内核 syscall 边界与写前守卫 | 一次性重写为运行时平台 → 违背减法 + 22 门回归风险；保留纯文档系统 → 无统一 syscall 边界与不变量守卫 | 新增 internal/oskernel（syscall+驱动+守卫）；forge os 写入全部经内核；CLI/TUI 成为 syscall 客户端；名册+合同变更；TUI 内可录入 | active |
+| D-12 | 2026-10-21 | phase-3 AI 粘合落地（internal/aios + forge os ai）：AI 经内核读 syscall 取状态 → 出 JSON 动作计划 → 白名单校验（只 propose/add/new/advance）→ 经内核写 syscall 执行（写前守卫）；AI 结构上无法自称完成（无 active→done syscall），只提议；非 JSON/越权/缺 key 全 fail-closed | leo 指示「phase-3 AI 粘合」；internal/ai 已具 7 家 OpenAI-compatible provider；oskernel 已是唯一受控界面，AI 接入只需在其上加白名单+端口注入 | 让 AI 直接改 os/*.md → 绕过宏内核守卫与 syscall 边界，违背刚建的架构；给 AI 开放 active→done → 违背"done 不许自称"铁律 | 新增 internal/aios（名册+合同变更）；forge os ai 子命令；ChatFunc 端口注入可零网络测试；科学结论/完成判定仍归 leo 或独立反馈 | done |
 
 ## 决策模板（新决策照填）
 

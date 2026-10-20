@@ -5,14 +5,17 @@ package main
 // 不动状态机铁律（active→done 仍只由 ossubmit --settle 执行）。
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/logos-42/hushfusion-forge/internal/aios"
 	"github.com/logos-42/hushfusion-forge/internal/oskernel"
 	"github.com/logos-42/hushfusion-forge/internal/osview"
 )
@@ -332,4 +335,78 @@ func atoiSafe(s string) int {
 	s = strings.NewReplacer("*", "", "`", "", " ", "").Replace(s)
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+// cmdOSAI 是 phase-3 AI 粘合入口：AI 读 OS 状态并经内核受控系统调用提议动作。
+// 纪律：AI 只提议（propose/add/new/advance），内核写前守卫 + 越权拒绝，
+// 科学结论/完成判定仍归 leo 或独立反馈。
+func cmdOSAI(args []string) int {
+	fs := newFlagSet("os ai",
+		"forge os ai --goal <文本> [--provider zai] [--model m] [--base-url u] [--dry-run] [--max 8]",
+		"phase-3 AI 粘合：AI 读 OS 状态并经内核受控系统调用提议动作（只提议，不判完成）。")
+	goal := fs.String("goal", "", "要推进的目标")
+	provider := fs.String("provider", "zai", "AI provider（见 forge ai list）")
+	model := fs.String("model", "", "模型（空=provider 默认）")
+	baseURL := fs.String("base-url", "", "覆盖端点（custom 代理/网关）")
+	dryRun := fs.Bool("dry-run", false, "只校验计划，不执行")
+	max := fs.Int("max", 8, "单次计划最大写系统调用数")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *goal == "" {
+		return fail("os ai: --goal 必填")
+	}
+	agent := aios.NewAgent(oskernel.New(osBaseDir()), *provider, *model, *baseURL)
+	agent.MaxCalls = *max
+	rep, err := agent.Run(context.Background(), *goal, *dryRun)
+	if err != nil {
+		return fail("os ai: %v", err)
+	}
+	printAIReport(rep)
+	return 0
+}
+
+func printAIReport(rep *aios.Report) {
+	fmt.Printf("## AI 粘合报告 — 目标: %s\n\n", rep.Goal)
+	fmt.Println("### 计划（准入判定）")
+	if len(rep.Plan) == 0 {
+		fmt.Println("_（无步骤）_")
+	}
+	for i, p := range rep.Plan {
+		mark := "✓允许"
+		if !p.Allowed {
+			mark = "✗拒绝: " + p.Reason
+		}
+		fmt.Printf("%d. `%s` %s — %s\n", i+1, p.Syscall, mark, argsSummary(p.Args))
+	}
+	if len(rep.Results) > 0 {
+		fmt.Println("\n### 执行结果（经内核）")
+		for _, r := range rep.Results {
+			if r.OK {
+				fmt.Printf("- ✓ `%s` %s\n", r.Syscall, r.Message)
+			} else {
+				fmt.Printf("- ✗ `%s` %s\n", r.Syscall, r.Err)
+			}
+		}
+	}
+	for _, n := range rep.Notes {
+		fmt.Printf("\n> %s\n", n)
+	}
+}
+
+// argsSummary 把一次系统调用的参数压成一行（键排序，稳定可读）。
+func argsSummary(args map[string]any) string {
+	if len(args) == 0 {
+		return "{}"
+	}
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, args[k]))
+	}
+	return "{" + strings.Join(parts, " ") + "}"
 }

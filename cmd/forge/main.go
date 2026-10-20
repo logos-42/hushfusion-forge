@@ -40,10 +40,10 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/baseline"
 	"github.com/logos-42/hushfusion-forge/internal/bolloon"
-	"github.com/logos-42/hushfusion-forge/internal/harness"
 	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/design"
 	"github.com/logos-42/hushfusion-forge/internal/experiment"
+	"github.com/logos-42/hushfusion-forge/internal/harness"
 	"github.com/logos-42/hushfusion-forge/internal/kernelbridge"
 	"github.com/logos-42/hushfusion-forge/internal/knowledge"
 	"github.com/logos-42/hushfusion-forge/internal/objective"
@@ -2669,6 +2669,8 @@ func cmdOS(args []string) int {
 		return cmdOSDecide(rest)
 	case "exp":
 		return cmdOSExp(rest)
+	case "ai":
+		return cmdOSAI(rest)
 	case "tui":
 		return cmdOSTUI()
 	case "help", "-h", "--help":

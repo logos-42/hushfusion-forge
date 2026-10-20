@@ -30,13 +30,15 @@ const (
 	yellow    = "\033[33m"
 	bold      = "\033[1m"
 	rev       = "\033[7m"
+	gray      = "\033[90m"
+	white     = "\033[97m"
 )
 
 type panel struct {
-	name    string
-	lines   func() []string
+	name     string
+	lines    func() []string
 	expanded bool
-	scroll  int
+	scroll   int
 }
 
 func cmdOSTUI() int {
@@ -309,22 +311,36 @@ func drawForm(f *formState, footer string) {
 	}
 	var b strings.Builder
 	b.WriteString(ansiClear)
-	b.WriteString(bold + " 录入：" + f.title + ansiReset + "   (Enter=下一字段/提交，Esc=取消)\n\n")
+
+	// 顶部栏
+	title := " 录入：" + f.title + " "
+	b.WriteString(rev + bold + title + strings.Repeat(" ", max(0, cols-dispWidth(title))) + ansiReset + "\n\n")
+
+	// 表单字段（当前字段高亮 + 块光标）
 	for i, fld := range f.fields {
-		cursor := "  "
+		active := i == f.idx
+		label := fld.label + ": "
 		val := string(fld.buf)
-		if i == f.idx {
-			cursor = rev + "▶ " + ansiReset
-			val = val + "█" // 光标
+		if active {
+			val += "█"
 		}
-		b.WriteString(cursor + fld.label + ": " + truncateLine(val, cols-20) + "\n")
+		line := label + val
+		// 前缀：当前字段用 ▶，其它用空格
+		prefix := "  "
+		if active {
+			prefix = cyan + bold + "▶ " + ansiReset
+		}
+		b.WriteString(prefix + fitLine(line, cols-4) + "\n")
 	}
-	// 底部提示
+
+	// 中部留白，底栏贴底
 	pad := rows - 4 - len(f.fields)
 	for i := 0; i < pad; i++ {
 		b.WriteString("\n")
 	}
-	b.WriteString("\n" + footer + "\n")
+	hint := "Enter=下一字段/提交 · Esc=取消"
+	b.WriteString(bar(hint, cols))
+	b.WriteString(bar(footer, cols))
 	fmt.Print(b.String())
 }
 
@@ -356,7 +372,7 @@ func buildPanels(snap *osview.Snapshot) []panel {
 		{name: "任务池", lines: func() []string {
 			out := []string{}
 			if snap.ActiveTask != nil {
-				out = append(out, green+bold+"[active] "+snap.ActiveTask.ID+" "+snap.ActiveTask.Title+ansiReset)
+				out = append(out, "[active] "+snap.ActiveTask.ID+" "+snap.ActiveTask.Title)
 			}
 			for _, t := range snap.Tasks {
 				if t.State == "active" {
@@ -419,43 +435,154 @@ func renderTUI(panels []panel, sel int, footer string) {
 	}
 	var b strings.Builder
 	b.WriteString(ansiClear)
-	// 标题栏
-	b.WriteString(rev + bold + " HUSHFUSION OS — TUI " + strings.Repeat(" ", max(0, cols-18)) + ansiReset + "\n")
-	avail := rows - 3 // 标题 + 底栏
-	lineNo := 1
+
+	// 顶部应用栏
+	title := " HUSHFUSION OS · 宏内核 TUI "
+	b.WriteString(rev + bold + title + strings.Repeat(" ", max(0, cols-dispWidth(title))) + ansiReset + "\n")
+
+	// 面板区：折叠面板各占 3 行（边框+1 行内容+边框），展开面板吃剩余高度。
+	avail := rows - 3 // 顶栏 + 底栏 + 一行间隔
+	expandedIdx := -1
 	for i, p := range panels {
-		expanded := p.expanded
-		title := fmt.Sprintf(" %s %s ", marker(i == sel), p.name)
-		if i == sel {
-			b.WriteString(bold + cyan + title + ansiReset + "\n")
-		} else {
-			b.WriteString(title + "\n")
-		}
-		lineNo++
-		ls := p.lines()
-		if !expanded {
-			// 折叠：只显示首行
-			if len(ls) > 0 {
-				b.WriteString("   " + truncateLine(ls[0], cols-4) + "\n")
-				lineNo++
-			}
-			continue
-		}
-		// 展开：可滚动显示全部
-		if p.scroll < 0 {
-			p.scroll = 0
-		}
-		if p.scroll > len(ls)-1 {
-			p.scroll = max(0, len(ls)-1)
-		}
-		for j := p.scroll; j < len(ls) && lineNo < avail; j++ {
-			b.WriteString("   " + truncateLine(ls[j], cols-4) + "\n")
-			lineNo++
+		if p.expanded {
+			expandedIdx = i
 		}
 	}
-	// 底栏
-	b.WriteString("\n" + footer + "\n")
+	used := 0
+	for i, p := range panels {
+		ls := p.lines()
+		var content []string
+		height := 3
+		if i == expandedIdx {
+			// 展开：给它剩余可用高度。
+			room := avail - used - 2
+			if room < 1 {
+				room = 1
+			}
+			if p.scroll < 0 {
+				p.scroll = 0
+			}
+			if p.scroll > len(ls) {
+				p.scroll = len(ls)
+			}
+			for j := p.scroll; j < len(ls) && len(content) < room; j++ {
+				content = append(content, ls[j])
+			}
+			if len(content) == 0 {
+				content = []string{"（空）"}
+			}
+			height = len(content) + 2
+		} else if len(ls) > 0 {
+			content = []string{ls[0]}
+		} else {
+			content = []string{"（空）"}
+		}
+		b.WriteString(renderPanel(p.name, content, cols, i == sel))
+		used += height
+		if used >= avail {
+			break
+		}
+	}
+
+	// 底部状态栏
+	b.WriteString(bar(footer, cols))
 	fmt.Print(b.String())
+}
+
+// renderPanel 画一个圆角边框面板，标题嵌在上边框；active 时边框高亮。
+func renderPanel(name string, content []string, width int, active bool) string {
+	border := gray
+	if active {
+		border = cyan + bold
+	}
+	inner := width - 2
+	if inner < 4 {
+		inner = 4
+	}
+	title := " " + marker(active) + " " + name + " "
+	pad := inner - dispWidth(title)
+	if pad < 0 {
+		pad = 0
+	}
+	top := border + "╭" + title + strings.Repeat("─", pad) + "╮" + ansiReset
+	var b strings.Builder
+	b.WriteString(top + "\n")
+	for _, ln := range content {
+		b.WriteString(border + "│" + ansiReset + fitLine(ln, inner) + border + "│" + ansiReset + "\n")
+	}
+	b.WriteString(border + "╰" + strings.Repeat("─", inner) + "╯" + ansiReset + "\n")
+	return b.String()
+}
+
+// bar 画一条全宽底栏（反色）。
+func bar(text string, width int) string {
+	t := " " + text + " "
+	pad := width - dispWidth(t)
+	if pad < 0 {
+		pad = 0
+	}
+	return rev + t + strings.Repeat(" ", pad) + ansiReset + "\n"
+}
+
+// fitLine 把一行内容适配到 inner 显示宽：左一空格 + 内容（按显示宽截断）+ 右补齐。
+func fitLine(s string, inner int) string {
+	s = strings.TrimSpace(s)
+	const lead = 1
+	budget := inner - lead - 1 // 留一个尾随空格
+	if budget < 1 {
+		budget = 1
+	}
+	// 按显示宽截断
+	var out []rune
+	w := 0
+	for _, r := range s {
+		rw := runeWidth(r)
+		if w+rw > budget {
+			break
+		}
+		out = append(out, r)
+		w += rw
+	}
+	body := string(out)
+	tail := budget - w
+	if tail < 0 {
+		tail = 0
+	}
+	return " " + body + strings.Repeat(" ", tail) + " "
+}
+
+// dispWidth 计算字符串显示宽度（跳过 ANSI 转义，CJK 记 2）。
+func dispWidth(s string) int {
+	w := 0
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b { // ESC：跳过 \033[...m
+			j := strings.IndexByte(s[i:], 'm')
+			if j < 0 {
+				break
+			}
+			i += j + 1
+			continue
+		}
+		r := []rune(s[i:])[0]
+		w += runeWidth(r)
+		i += len(string(r))
+	}
+	return w
+}
+
+func runeWidth(r rune) int {
+	if (r >= 0x1100 && r <= 0x115F) ||
+		(r >= 0x2E80 && r <= 0xA4CF) ||
+		(r >= 0xAC00 && r <= 0xD7A3) ||
+		(r >= 0xF900 && r <= 0xFAFF) ||
+		(r >= 0xFE30 && r <= 0xFE6F) ||
+		(r >= 0xFF00 && r <= 0xFF60) ||
+		(r >= 0xFFE0 && r <= 0xFFE6) ||
+		(r >= 0x20000 && r <= 0x3FFFD) {
+		return 2
+	}
+	return 1
 }
 
 func marker(on bool) string {

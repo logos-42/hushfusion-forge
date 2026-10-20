@@ -45,7 +45,7 @@ leo 2026-10-20 定的方向：**把 OS 从「散落的 Markdown 文档系统」�
 
 - **phase-1（本次）**：`internal/oskernel` 内核核心 + syscall 分发 + 子系统驱动 + 写前守卫；`forge os` / `tui` 经内核。
 - **phase-2**：内核状态可换结构化存储（块设备驱动可插拔），保持 syscall 面不变。
-- **phase-3（AI 粘合）**：AI 经 syscall 操作 OS（读仪表盘、提任务、记决策），内核是 AI 与决策层之间唯一的受控界面——这正是"AI 接入后 OS 使用 kernel 控制执行"的落地。
+- **phase-3（AI 粘合，已落地 2026-10-20）**：`internal/aios` + `forge os ai`——AI 经内核**读**系统调用取决策层状态 → 出 JSON 动作计划 → **白名单校验**（只允许 propose/add/new/advance）→ 经内核**写**系统调用执行（写前守卫）。内核是 AI 与决策层之间唯一的受控界面；AI 在结构上无法自称完成（没有 active→done 系统调用）。`ChatFunc` 端口注入可零网络测试；AI 输出非 JSON / 越权系统调用 / 缺 API key 全部 fail-closed。科学结论/完成判定仍归 leo 或独立反馈。
 
 ## 相关
 
