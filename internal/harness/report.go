@@ -62,6 +62,7 @@ type Summary struct {
 	BestScore         float64          `json:"best_score"`
 	MeanFinalScore    float64          `json:"mean_final_score"`
 	TerminatedCount   int              `json:"terminated_count"`
+	Recovered         int              `json:"recovered_count"` // 错误恢复标记的行数
 	Ceiling           float64          `json:"ceiling"` // 命中阈值（= mu.TargetScore）
 	ActionDim         int              `json:"action_dim"`
 	ActionKeys        []string         `json:"action_keys"`
@@ -101,6 +102,9 @@ func (s Summary) Render() string {
 	fmt.Fprintf(&b, "- 评估步数（落盘数据点）: %d\n", s.NSteps)
 	fmt.Fprintf(&b, "- store 累计: %d\n", s.StoreLen)
 	fmt.Fprintf(&b, "- 命中的问题（达到目标）: %d (%.1f%%)\n", s.TerminatedCount, pct(s.TerminatedCount, s.NEpisodes))
+	if s.Recovered > 0 {
+		fmt.Fprintf(&b, "- 错误恢复: %d 步经 panic/落盘失败恢复（闭环未中断）\n", s.Recovered)
+	}
 	fmt.Fprintf(&b, "- 平均分: %.4f\n", s.MeanFinalScore)
 	fmt.Fprintf(&b, "- 最高分: %.4f (天花板=%.4f)\n", s.BestScore, ceil)
 

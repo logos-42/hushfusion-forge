@@ -31,6 +31,31 @@ import {
   submitRunLifecycle,
   submitTransport,
 } from '@bolloon/bolloon-kernel';
+import { makeGuard } from './ha/guard.mjs';
+
+/**
+ * 双核冗余（可选，默认关闭以免破坏现有单核行为 / 测试）：
+ *   KERNEL_HA=1                    启用看门循环
+ *   KERNEL_HA_ROLE=primary|secondary（默认 primary）
+ *   KERNEL_HA_HOME=<dir>           心跳文件目录（默认 ~/.hushfusion/kernel-ha）
+ * secondary 看 primary 心跳，缺失/过期即接管（heartbeat arbitration）。
+ * 心跳逻辑全在 bridge/ha/（模块化，对齐 bolloon 的 src/kernel/ha/）。
+ */
+if (process.env.KERNEL_HA === '1') {
+  const role = process.env.KERNEL_HA_ROLE || 'primary';
+  const home = process.env.KERNEL_HA_HOME || undefined;
+  const guard = makeGuard({
+    role,
+    version: '0.1.0',
+    runIds: ['bridge'],
+    home,
+    onTakeover: (reason) => {
+      process.stderr.write(`[kernel-ha] ${role} 接管: ${reason}\n`);
+    },
+  });
+  guard.start();
+  process.stderr.write(`[kernel-ha] 双核冗余已启用 role=${role}\n`);
+}
 
 /**
  * 命名端口注册表 —— JSON-RPC 传不了真实函数, 所以端口注入改用**名字**:

@@ -28,6 +28,7 @@ type StepRecord struct {
 	Score      float64   `json:"score"`
 	Delta      float64   `json:"delta"`
 	Terminated bool      `json:"terminated"`
+	Recovered  bool      `json:"recovered,omitempty"` // 该步是否经错误恢复（panic/落盘失败）
 	Obs        []float64 `json:"obs"`
 }
 

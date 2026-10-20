@@ -115,6 +115,7 @@ type Harness struct {
 	seed       int
 	runID      string
 	phase      int // 当前自优化相位（写进每条 record，供报告矩阵使用）
+	resume     bool // 错误恢复：Run 从该 runID 已完成的 episode 之后续跑
 
 	lastLearnerErr error
 
@@ -124,6 +125,11 @@ type Harness struct {
 // SetPhase 设定本次 Run 的自优化相位（0=基线/随机，1+=自我调整后）。它只影响
 // 落盘记录的 phase 标记，不改变策略本身 —— 策略由 policyName 决定。
 func (h *Harness) SetPhase(p int) { h.phase = p }
+
+// EnableResume 打开错误恢复续跑：下一次 Run 会跳过该 runID 已落盘完成的 episode，
+// 从断点继续（不重跑、不丢数据）。默认关闭——正常「跑→调→再跑」相位用不同 runID，
+// 各自从 0 起；resume 只在进程被中断后重跑同一 runID 时才有意义。
+func (h *Harness) EnableResume() { h.resume = true }
 
 // Options 配置一个 Harness。
 type Options struct {
@@ -203,8 +209,10 @@ func ObsDim() int {
 	return config.MuFieldCells + 5
 }
 
-// obs 渲染当前观测（与 world 的 obsV3 同构但只取 harness 需要的槽位，不进协议字节）。
-func (h *Harness) obs(s *SimState) []float64 {
+// renderObs 渲染当前观测（与 world 的 obsV3 同构但只取 harness 需要的槽位，不进协议字节）。
+// 它是无状态的自由函数：观测只依赖 SimState，不依赖 Harness 运行态——便于在
+// 任意 RunContext / 错误恢复分支里调用。
+func renderObs(s *SimState) []float64 {
 	n := len(s.v)
 	out := make([]float64, 0, n+5)
 	out = append(out, s.v...)
@@ -236,23 +244,43 @@ func (h *Harness) activePolicy() Policy {
 
 // Run 跑 episodes 条 episode（每条预算 budget 步），每条评估落盘，返回本轮摘要。
 //
+// 机制（学 hermes harness 的一系列机制）：
+//   - 专属上下文：从 NewRunContext + ForkEpisode 起，每条 episode 隔离、可复现；
+//   - 预算护栏：Budget 超额即停（fail-closed），防失控策略死循环；
+//   - 错误恢复：单步 panic / 落盘失败被 RecoverStep 就地隔离，闭环继续；
+//   - 续跑恢复：开启 resume 时跳过该 runID 已完成的 episode，从断点继续。
+//
 // 它不在此自我调整 —— 调整由 SelfAdjust 显式触发，调用方决定"跑→调→再跑"的相位。
 func (h *Harness) Run(episodes, budget int) (Summary, error) {
+	b := NewBudget(episodes*budget, 0)
+	rc := NewRunContext(h.Space, h.Regions, h.Target, h.Store, int64(h.seed), b)
+	pol := h.activePolicy()
+	polName := pol.Name()
+
+	// 错误恢复：从 store 中该 run 已完成的 episode 数续跑（resume），不重跑已落盘实验。
+	start := 0
+	if h.resume {
+		start = ResumePoint(h.Store, h.runID)
+	}
+
 	sum := Summary{
 		ActionDim:  h.Space.Dim(),
 		ActionKeys: h.Space.Keys,
-		Policy:     h.activePolicy().Name(),
+		Policy:     polName,
 		StorePath:  h.Store.path,
 		Ceiling:    h.Target,
 	}
-	pol := h.activePolicy()
-	polName := pol.Name()
-	for ep := 0; ep < episodes; ep++ {
+	var lastErr error
+	for ep := start; ep < episodes; ep++ {
 		seed := h.seed*1000003 + ep
-		st := newSimState(h.rng, seed, budget)
+		ec := rc.ForkEpisode(ep, seed)
+		st := newSimState(ec.RNG(), seed, budget)
 		epr := EpisodeResult{Episode: ep, Seed: seed, Phase: h.phase}
-		obs := h.obs(st)
+		obs := renderObs(st)
 		for !st.term && !st.trunc {
+			if b.Exhausted() {
+				break
+			}
 			k := pol.Act(obs)
 			eta, delta := st.step(k, h.Space, h.Regions, h.Target)
 			rec := StepRecord{
@@ -271,11 +299,15 @@ func (h *Harness) Run(episodes, budget int) (Summary, error) {
 				Terminated: st.term,
 				Obs:        append([]float64(nil), obs...),
 			}
-			if err := h.Store.Append(rec); err != nil {
-				return sum, err
+			// 错误恢复：单步 panic / 落盘失败都在此恢复，不丢整个 episode。
+			if RecoverStep(&rec, func() error {
+				return h.Store.Append(rec)
+			}) {
+				lastErr = fmt.Errorf("episode %d step %d 已恢复(落盘失败/panic)", ep, st.used-1)
 			}
 			epr.Actions = append(epr.Actions, k)
-			obs = h.obs(st)
+			obs = renderObs(st)
+			b.Spend(1)
 		}
 		epr.FinalScore = st.score
 		epr.Terminated = st.term
@@ -304,7 +336,20 @@ func (h *Harness) Run(episodes, budget int) (Summary, error) {
 	sum.PhaseSummaries = phaseSummaries(recs, eps)
 	sum.PhaseGrid = phaseActionGrid(recs, sum.ActionDim)
 	sum.StoreLen = h.Store.Len()
+	sum.Recovered = countRecovered(recs)
+	_ = lastErr // 已就地恢复；保留供调试/报告
 	return sum, nil
+}
+
+// countRecovered 统计记录中被错误恢复标记的行数（供报告体现健壮性）。
+func countRecovered(recs []StepRecord) int {
+	n := 0
+	for _, r := range recs {
+		if r.Recovered {
+			n++
+		}
+	}
+	return n
 }
 
 // SelfAdjust 是"自我调整"的显式入口：
