@@ -45,6 +45,7 @@ var Stages = []Stage{
 			"internal/ai/",
 			"internal/bolloon/", // 2026-10-20 新增：BOLLOON CLI 强类型客户端 + forge bolloon 透传（归 parent）
 			"internal/osview/",  // 2026-10-20 新增：OS 决策层只读视图层（供 forge os 与 TUI 共用，归 parent）
+			"internal/oskernel/", // 2026-10-20 新增：OS 宏内核（syscall 分发 + 子系统驱动 + 写前守卫，归 parent）
 			"bridge/",
 			"testdata/",
 			"scripts/",
@@ -217,9 +218,10 @@ func IsTracked(rel string) bool {
 	// 管辖)。名册门的名字说的是"每个被跟踪文件", 判别人的检出只会让它长期假红 ——
 	// 假红比没有门更伤。新增跳过项时必须同时加一条"真文件仍然可见"的断言。
 	// .hermes/: Hermes agent 的临时产物目录(提交信息草稿等), 同样不归名册管辖。
+	// .crush/: Crush 编辑器状态目录(sqlite 等), 同上——别的工具的工作记忆, 不是本仓资产。
 	for _, frag := range []string{
 		"runs/", "__pycache__/", ".pytest_cache/", ".venv/", "node_modules/", ".DS_Store",
-		".egg-info/", "go-build/", ".kilo/", ".kilocode/", ".hermes/",
+		".egg-info/", "go-build/", ".kilo/", ".kilocode/", ".hermes/", ".crush/",
 	} {
 		if strings.Contains(rel, frag) {
 			return false

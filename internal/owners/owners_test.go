@@ -140,6 +140,7 @@ func TestIsTrackedSkipsForeignCheckoutsButNotSources(t *testing.T) {
 		".kilo/worktrees/immense-drop/internal/world/world.go",
 		".kilocode/cache/x.json",
 		".hermes/commitmsg_os_kernel.md",
+		".crush/crush.db",
 		".git/config",
 		"runs/phase0/registry.jsonl",
 	} {
@@ -150,6 +151,7 @@ func TestIsTrackedSkipsForeignCheckoutsButNotSources(t *testing.T) {
 	for _, rel := range []string{
 		"internal/world/world.go", "cmd/forge/main.go", "scripts/verify.sh",
 		"docs/world-protocol.md", "testdata/world_trace_golden.jsonl",
+		"internal/oskernel/kernel.go",
 	} {
 		if !IsTracked(rel) {
 			t.Errorf("%s 是本仓文件, 名册门必须看得见它(跳过列表吃掉了真文件)", rel)

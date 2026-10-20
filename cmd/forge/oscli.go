@@ -9,11 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/logos-42/hushfusion-forge/internal/oskernel"
 	"github.com/logos-42/hushfusion-forge/internal/osview"
 )
 
@@ -153,9 +153,13 @@ func repoRoot() string {
 	return d
 }
 
-// ---- 安全写入（append-only / 有序插入） ----
+// ---- 安全写入（经 oskernel 系统调用；写前守卫保 oscheck 绿） ----
+//
+// 宏内核（2026-10-20）：所有写操作都作为一次内核系统调用发出，由 oskernel 的
+// 子系统驱动执行并在写前做不变量守卫（active≤1 / P=floor(I×E×R/C) / ID 不重复 /
+// E1 不跳态）。CLI 与 TUI 只是系统调用的两个客户端。
 
-var taskRowRe = regexp.MustCompile(`^\s*\|?\s*(T-\d{2})`)
+func osKernel() *oskernel.Kernel { return oskernel.New(osBaseDir()) }
 
 // cmdOSPropose 新增一条 proposed 任务，按 P 降序有序插入候选池（T8），
 // P=floor(I*E*R/C)（T5），状态恒 proposed（不动 active/done 铁律）。
@@ -187,85 +191,17 @@ func cmdOSPropose(args []string) int {
 	return 0
 }
 
-// doPropose 是 propose 的核心（CLI 与 TUI 共用）：按 P=floor(I*E*R/C) 有序插入
-// proposed 任务到候选池，不碰 active/done 铁律。
+// doPropose 走内核 tasks.propose（CLI 与 TUI 共用）：有序插入 proposed 任务，
+// 由内核做写前守卫（ID 不重复 / 评分合法 / P=floor(I×E×R/C)）。
 func doPropose(base, id string, i, e, r, c int, title, deps string) (int, error) {
-	for _, v := range []int{i, e, r, c} {
-		if v < 1 || v > 5 {
-			return 0, fmt.Errorf("评分必须在 1..5（got %d）", v)
-		}
-	}
-	p := i * e * r / c
-	row := fmt.Sprintf("| %s | %s | %d | %d | %d | %d | **%d** | proposed | %s |",
-		id, title, i, e, r, c, p, deps)
-	path := filepath.Join(base, "TASKS.md")
-	text, err := os.ReadFile(path)
+	res, err := oskernel.New(base).Syscall("tasks.propose", map[string]any{
+		"id": id, "title": title, "deps": deps, "i": i, "e": e, "r": r, "c": c,
+	})
 	if err != nil {
-		return 0, fmt.Errorf("读 TASKS.md: %w", err)
+		return 0, err
 	}
-	out := patchTasksTable(string(text), row, p)
-	if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
-		return 0, fmt.Errorf("写 TASKS.md: %w", err)
-	}
+	p, _ := res.Data.(int)
 	return p, nil
-}
-
-// patchTasksTable 在候选池表格里按 P 降序有序插入一行（active 行保持置顶）。
-// 保留表头与分隔行（|:--|），不破坏 Markdown 结构（否则 oscheck T8 必红）。
-func patchTasksTable(text, newRow string, newP int) string {
-	lines := strings.Split(text, "\n")
-	hdrIdx := -1
-	for i, l := range lines {
-		if strings.Contains(l, "| ID | 任务 |") {
-			hdrIdx = i
-			break
-		}
-	}
-	if hdrIdx < 0 {
-		return text
-	}
-	// 跳过表头后的分隔行（|:--|…），但要把它原样保留在输出里。
-	idx := hdrIdx + 1
-	if idx < len(lines) && isSepRowOS(splitCells(lines[idx])) {
-		idx++
-	}
-	start := idx
-	end := start
-	type tr struct {
-		line   string
-		p      int
-		active bool
-	}
-	var parsed []tr
-	for end < len(lines) {
-		l := strings.TrimSpace(lines[end])
-		if strings.HasPrefix(l, "|") && taskRowRe.MatchString(l) {
-			c := splitCells(l)
-			p := atoiSafe(c[6])
-			parsed = append(parsed, tr{line: lines[end], p: p, active: strings.HasPrefix(strings.TrimSpace(c[7]), "active")})
-			end++
-		} else {
-			break
-		}
-	}
-	nr := tr{line: newRow, p: newP, active: false}
-	var out []string
-	inserted := false
-	for _, r := range parsed {
-		if !inserted && !r.active && nr.p > r.p {
-			out = append(out, nr.line)
-			inserted = true
-		}
-		out = append(out, r.line)
-	}
-	if !inserted {
-		out = append(out, nr.line)
-	}
-	// lines[:start] 已包含表头（及可能的分隔行）；在其后插入有序数据行。
-	newLines := append([]string{}, lines[:start]...)
-	newLines = append(newLines, out...)
-	newLines = append(newLines, lines[end:]...)
-	return strings.Join(newLines, "\n")
 }
 
 // cmdOSOpp 追加一条机会（OPPORTUNITIES.md 机会池表，oscheck 不查此表，安全）。
@@ -292,10 +228,12 @@ func cmdOSOpp(args []string) int {
 	return 0
 }
 
-// doOpp 是 opp 的核心（CLI 与 TUI 共用）：追加一条机会到 OPPORTUNITIES.md。
+// doOpp 走内核 opportunities.add（CLI 与 TUI 共用）。
 func doOpp(base, chance, source, match, next, status, date string) error {
-	row := fmt.Sprintf("| %s | %s | %s | %s | %s | %s |", chance, source, match, next, status, date)
-	return appendTableRow(filepath.Join(base, "OPPORTUNITIES.md"), "## 机会池", row)
+	_, err := oskernel.New(base).Syscall("opportunities.add", map[string]any{
+		"chance": chance, "source": source, "match": match, "next": next, "status": status, "date": date,
+	})
+	return err
 }
 
 // cmdOSDecide 追加一条决策（DECISIONS.md 决策日志，oscheck 不查，安全）。
@@ -322,21 +260,16 @@ func cmdOSDecide(args []string) int {
 	return 0
 }
 
-// doDecide 是 decide 的核心（CLI 与 TUI 共用）：追加一条决策到 DECISIONS.md，
-// 返回新分配的决策 ID。
+// doDecide 走内核 decisions.add（CLI 与 TUI 共用），返回新分配的决策 ID。
 func doDecide(base, text, basis, alt, consequence, status string) (string, error) {
-	date := time.Now().Format("2006-01-02")
-	path := filepath.Join(base, "DECISIONS.md")
-	nextID, err := nextDecisionID(path)
+	res, err := oskernel.New(base).Syscall("decisions.add", map[string]any{
+		"text": text, "basis": basis, "alt": alt, "consequence": consequence, "status": status,
+	})
 	if err != nil {
 		return "", err
 	}
-	row := fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s |",
-		nextID, date, text, basis, alt, consequence, status)
-	if err := appendTableRow(path, "## 决策日志", row); err != nil {
-		return "", err
-	}
-	return nextID, nil
+	id, _ := res.Data.(string)
+	return id, nil
 }
 
 // cmdOSExp 新增实验或推进实验态（E1 不跳态）。
@@ -367,9 +300,7 @@ func osExpNew(args []string) int {
 	if *tag == "" || *q == "" {
 		return fail("os exp new: --tag/--q 必填")
 	}
-	row := fmt.Sprintf("| `%s` | %s | | | | |", *tag, *q)
-	path := filepath.Join(osBaseDir(), "EXPERIMENTS.md")
-	if err := appendTableRow(path, "## 已有实验", row); err != nil {
+	if _, err := osKernel().Syscall("experiments.new", map[string]any{"tag": *tag, "q": *q}); err != nil {
 		return fail("%v", err)
 	}
 	note("os exp new: `%s` 已新增（态1）", *tag)
@@ -389,123 +320,16 @@ func osExpAdvance(args []string) int {
 	if *tag == "" || *state < 1 || *state > 5 || *text == "" {
 		return fail("os exp advance: --tag/--state(1-5)/--text 必填")
 	}
-	path := filepath.Join(osBaseDir(), "EXPERIMENTS.md")
-	if err := setExpState(path, *tag, *state, *text); err != nil {
+	if _, err := osKernel().Syscall("experiments.advance", map[string]any{"tag": *tag, "state": *state, "text": *text}); err != nil {
 		return fail("%v", err)
 	}
 	note("os exp advance: `%s` 态%d 已写入", *tag, *state)
 	return 0
 }
 
-// ---- Markdown 写入助手（append / set-cell，保持结构） ----
-
-func appendTableRow(path, sectionHeader, row string) error {
-	text, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("读 %s: %w", path, err)
-	}
-	lines := strings.Split(string(text), "\n")
-	inSec, lastRow := false, -1
-	for i, l := range lines {
-		if strings.HasPrefix(strings.TrimSpace(l), sectionHeader) {
-			inSec = true
-			continue
-		}
-		if inSec {
-			if strings.HasPrefix(strings.TrimSpace(l), "## ") {
-				break
-			}
-			if strings.HasPrefix(strings.TrimSpace(l), "|") && !strings.HasPrefix(strings.TrimSpace(l), "|--") {
-				lastRow = i
-			}
-		}
-	}
-	if lastRow < 0 {
-		return fmt.Errorf("%s 未找到「%s」下的表格行", path, sectionHeader)
-	}
-	out := append([]string{}, lines[:lastRow+1]...)
-	out = append(out, row)
-	out = append(out, lines[lastRow+1:]...)
-	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
-}
-
-func setExpState(path string, tag string, state int, text string) error {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("读 %s: %w", path, err)
-	}
-	lines := strings.Split(string(raw), "\n")
-	found := false
-	for i, l := range lines {
-		t := strings.TrimSpace(l)
-		if !strings.HasPrefix(t, "|") {
-			continue
-		}
-		c := splitCells(t)
-		if len(c) != 6 || strings.Trim(c[0], "` ") != tag {
-			continue
-		}
-		// E1 不跳态：态 state 之前必须都非空。
-		for n := 1; n < state; n++ {
-			if isEmptyCell(c[n]) {
-				return fmt.Errorf("E1 违反：态%d 为空，不能先写态%d（实验 %s 必须逐级走）", n, state, tag)
-			}
-		}
-		c[state] = text
-		lines[i] = "| " + strings.Join(c, " | ") + " |"
-		found = true
-		break
-	}
-	if !found {
-		return fmt.Errorf("EXPERIMENTS.md 找不到实验 %s", tag)
-	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
-}
-
-func nextDecisionID(path string) (string, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	maxN := 0
-	re := regexp.MustCompile(`\| (D-(\d{2})) `)
-	for _, m := range re.FindAllStringSubmatch(string(raw), -1) {
-		if n, err := strconv.Atoi(m[2]); err == nil && n > maxN {
-			maxN = n
-		}
-	}
-	return fmt.Sprintf("D-%02d", maxN+1), nil
-}
-
-func splitCells(line string) []string {
-	s := strings.TrimSpace(line)
-	s = strings.Trim(s, "|")
-	parts := strings.Split(s, "|")
-	out := make([]string, len(parts))
-	for i, p := range parts {
-		out[i] = strings.TrimSpace(p)
-	}
-	return out
-}
-
-func isEmptyCell(s string) bool {
-	s = strings.TrimSpace(s)
-	return s == "" || s == "—" || s == "-" || s == "–"
-}
-
+// atoiSafe 供 TUI 表单把字符串评分转 int（其余写入逻辑已移入 oskernel）。
 func atoiSafe(s string) int {
 	s = strings.NewReplacer("*", "", "`", "", " ", "").Replace(s)
 	n, _ := strconv.Atoi(s)
 	return n
-}
-
-var sepReOS = regexp.MustCompile(`^:?-+:?$`)
-
-func isSepRowOS(c []string) bool {
-	for _, x := range c {
-		if !sepReOS.MatchString(strings.TrimSpace(x)) {
-			return false
-		}
-	}
-	return true
 }

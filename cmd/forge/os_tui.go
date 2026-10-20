@@ -371,7 +371,7 @@ func buildPanels(snap *osview.Snapshot) []panel {
 			for _, e := range snap.Experiments {
 				depth := 0
 				for i := 0; i < 5; i++ {
-					if !isEmptyCell(e.States[i]) {
+					if !blankCell(e.States[i]) {
 						depth = i + 1
 					}
 				}
@@ -463,6 +463,12 @@ func marker(on bool) string {
 		return "▶"
 	}
 	return " "
+}
+
+// blankCell 判断实验某态是否为空位（与 oscore.IsEmpty 同口径，TUI 本地用）。
+func blankCell(s string) bool {
+	s = strings.TrimSpace(s)
+	return s == "" || s == "—" || s == "-" || s == "–"
 }
 
 func runCheckInline() string {
