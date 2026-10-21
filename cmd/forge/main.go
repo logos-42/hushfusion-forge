@@ -26,6 +26,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/logos-42/hushfusion-forge/internal/app"
 	"math"
 	"math/rand"
 	"os"
@@ -587,37 +588,11 @@ func metricValue(m physics.Metrics, key string) (float64, bool) {
 
 // relDiff 是 golden 门使用的比较: 对真有量级的值用相对, 对按构造为零的值用绝对
 // (与 0 做相对比较不是严格, 而是未定义)。
-func relDiff(got, want float64) float64 {
-	den := math.Max(math.Abs(want), 1e-9)
-	if den == 0 {
-		den = 1e-9
-	}
-	return math.Abs(got-want) / den
-}
+func relDiff(got, want float64) float64 { return app.RelDiff(got, want) }
 
-func metricMap(m physics.Metrics) map[string]float64 {
-	out := map[string]float64{}
-	for _, k := range metricKeys {
-		if v, ok := metricValue(m, k); ok {
-			out[k] = v
-		}
-	}
-	for _, k := range metricBoolKeys {
-		if v, ok := metricValue(m, k); ok {
-			out[k] = v
-		}
-	}
-	return out
-}
+func metricMap(m physics.Metrics) map[string]float64 { return app.MetricMap(m) }
 
-func sortedKeys[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
+func sortedKeys[V any](m map[string]V) []string { return app.SortedKeys(m) }
 
 func printMetrics(m physics.Metrics, label string) {
 	note("%s:", label)
@@ -1252,31 +1227,8 @@ func (st *verifyState) gateRegistry() (string, error) {
 
 // baselineRecord 把一次已求值的 baseline 变成一条 registry record。
 func baselineRecord(res objective.EvalResult, base baseline.Baseline) registry.Record {
-	design := base.Design
-	k := len(design) / 3
-	params := registry.Params{
-		RadiusM:  append([]float64(nil), design[:k]...),
-		ZM:       append([]float64(nil), design[k:2*k]...),
-		CurrentA: append([]float64(nil), design[2*k:]...),
-	}
-	return registry.Record{
-		Algorithm:  "human_baseline",
-		Seed:       0,
-		Generation: 0,
-		EvalIndex:  0,
-		Tag:        "forge_verify",
-		Timestamp:  time.Now().UTC().Format(time.RFC3339),
-		Score:      res.Score,
-		Feasible:   res.Feasible,
-		Params:     params,
-		Terms:      res.Terms,
-		Weighted:   res.Weighted,
-		Penalties:  res.Penalties,
-		Metrics:    res.Metrics,
-		Note:       "human baseline recorded by 'forge verify' round-trip gate",
-	}
+	return app.BaselineRecord(res, base)
 }
-
 func (st *verifyState) gateNoLearnedPolicy() (string, error) {
 	for _, p := range []string{"", "policy.json", "checkpoints/ppo.bin"} {
 		err := rlenv.LoadPolicy(p)
@@ -1414,18 +1366,7 @@ func fmtNum(v float64) string {
 //
 // 它不是"某台装置", 只是一份确定性的、由 spec 完全决定的线圈组, 好让 --design spec
 // 这条路径可复现、可回归。
-func boxCentreDesign(spec config.Spec) []float64 {
-	lo, hi := spec.Lower(), spec.Upper()
-	x := make([]float64, len(lo))
-	for i := range x {
-		x[i] = 0.5 * (lo[i] + hi[i])
-	}
-	coils, err := physics.VectorToCoils(x, spec)
-	if err != nil {
-		return x
-	}
-	return physics.CoilsToVector(coils)
-}
+func boxCentreDesign(spec config.Spec) []float64 { return app.BoxCentreDesign(spec) }
 
 // windowVerdict 只报契约 §5 里那两条「有没有解」的门 —— 装置设计的死活问题。
 // 单独拎出来是因为它和总判决不是同一件事: 总判决还要看导体场与可造性。
@@ -1631,26 +1572,7 @@ type xcheckFile struct {
 
 // xcheckPoints 复刻 golden 采样布局: 轴上的点 (闭式解的 r = 0 分支)、近轴点、
 // 分层的内部点, 以及远在线圈盒之外的远场探针。
-func xcheckPoints() (r, z []float64) {
-	r = []float64{0.0, 0.0, 0.0, 0.0, 0.02, 0.05, 0.10, 0.15}
-	z = []float64{0.0, 0.25, 0.75, 1.35, -0.05, 0.0, 0.05, 0.10}
-	// 20 个确定的内部点
-	state := uint64(0x5EEDF00D)
-	next := func() float64 {
-		state ^= state << 13
-		state ^= state >> 7
-		state ^= state << 17
-		return float64(state%1_000_000) / 1_000_000
-	}
-	for i := 0; i < 20; i++ {
-		r = append(r, 1.25*next())
-		z = append(z, -1.5+3.0*next())
-	}
-	// 远场探针
-	r = append(r, 0.79, 0.81, 1.19, 1.21)
-	z = append(z, 0.0, 0.3, -0.6, 0.9)
-	return r, z
-}
+func xcheckPoints() (r, z []float64) { return app.XcheckPoints() }
 
 // designInBox 报告一个 design 向量是否一开始就在搜索盒内 (盒外的 design 会被
 // VectorToCoils 裁剪, 即被当作另一台机器来求值)。
