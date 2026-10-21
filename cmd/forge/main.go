@@ -107,6 +107,7 @@ func run(args []string) int {
 		usage(os.Stderr)
 		return 2
 	}
+	setupAI() // 注册内置 + 解析配置（全局→工作区→env），所有 AI 子命令受益
 	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "help", "-h", "--help":
@@ -152,6 +153,10 @@ func run(args []string) int {
 		// 把参数原样转发给本机 bolloon 二进制 —— 核聚变系统接入 BOLLOON
 		// 去中心化内核的统一入口 (外部多智能体交互 + 调用 BOLLOON cli)。
 		return cmdBolloon(rest)
+	case "lsp":
+		// LSP server 查询（internal/lsp）：definition/hover/references，
+		// 复用 MCP 的 init 门 + 权限门；CLI 是 manager + callback 工具的薄接入层。
+		return cmdLSP(rest)
 	case "ai":
 		// 多 provider AI 接入层 (internal/ai, docs/ai-provider-design.md):
 		// list    列出已注册 provider (内置 + 用户自定义覆盖)
@@ -187,6 +192,7 @@ commands:
   harness     本地自优化闭环: run / self / report (internal/harness)
   bolloon     去中心化智能体 CLI 透传: 把参数转发给本机 bolloon (network/agent/task/engine)
   ai          multi-provider AI gateway: list / chat / models (docs/ai-provider-design.md)
+  lsp         LSP server 查询: definition / hover / references / list (internal/lsp)
   version     print version, spec shape and frozen schema facts
 
 exit codes: 0 ok, 1 a gate/command failed, 2 usage error.
@@ -3152,6 +3158,28 @@ internal/kernelbridge 的 BolloonExec 走内核 ChannelActor 编排。
 
 // 设计借鉴 hermes-agent 的 ProviderProfile 架构 (providers/base.py):
 // 声明式 profile + 注册表别名 + OpenAI-compatible 默认 transport ——
+// setupAI 注册内置 provider，并解析（全局→工作区→env）配置覆盖/增补。
+// 在 run() 早期调用一次，使所有用到 AI 的子命令都受益；配置缺失是正常情况（回退内置）。
+// 纪律：config 只是运行时输入来源之一，与内置目录叠加而非替换；单个 provider 非法
+// 不应 brick 整个 CLI（告警后继续，其余仍可用）。
+func setupAI() {
+	if err := ai.RegisterBuiltins(); err != nil {
+		fmt.Fprintln(os.Stderr, "warn: 注册内置 provider 失败:", err)
+	}
+	ws, _ := os.Getwd()
+	if env := os.Getenv("HUSHFUSION_AI_WORKSPACE"); env != "" {
+		ws = env
+	}
+	cfg, err := ai.ResolveConfig(ws)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warn: 解析 AI 配置失败（回退到内置）:", err)
+		return
+	}
+	if err := ai.RegisterConfig(cfg); err != nil {
+		fmt.Fprintln(os.Stderr, "warn: 注册配置 provider 部分失败（回退到内置）:", err)
+	}
+}
+
 // 一个客户端覆盖大多数 provider, 新增 provider 只是加一份声明, 不用写客户端。
 // 文档: docs/ai-provider-design.md
 func cmdAI(args []string) int {

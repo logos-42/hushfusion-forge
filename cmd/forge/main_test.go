@@ -407,3 +407,45 @@ func TestVersionCommandRuns(t *testing.T) {
 		t.Fatalf("cmdVersion = %d, want 0", code)
 	}
 }
+
+// TestParseFilePos 覆盖 forge lsp 的位置参数解析（1-based → 0-based + file:// URI）。
+func TestParseFilePos(t *testing.T) {
+	uri, line, col, err := parseFilePos("main.go:12:5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != 11 || col != 4 {
+		t.Fatalf("1-based 应转 0-based：got line=%d col=%d", line, col)
+	}
+	if !strings.HasPrefix(uri, "file://") {
+		t.Fatalf("uri 应带 file:// 前缀，got %q", uri)
+	}
+	if !strings.HasSuffix(uri, "/main.go") {
+		t.Fatalf("uri 应为绝对路径，got %q", uri)
+	}
+	// 缺冒号格式应报错
+	if _, _, _, err := parseFilePos("main.go"); err == nil {
+		t.Fatal("无冒号应报错")
+	}
+	// 行号非法应报错
+	if _, _, _, err := parseFilePos("main.go:x:5"); err == nil {
+		t.Fatal("行号非法应报错")
+	}
+}
+
+// TestSplitComma 覆盖 lsp 白名单解析。
+func TestSplitComma(t *testing.T) {
+	got := splitComma(" definition, hover , references ")
+	want := []string{"definition", "hover", "references"}
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("pos %d = %q want %q", i, got[i], want[i])
+		}
+	}
+	if len(splitComma("")) != 0 {
+		t.Fatal("空串应返回空切片")
+	}
+}
