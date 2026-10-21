@@ -50,14 +50,14 @@ const (
 // "ProviderProfile describes, AIAgent owns" 同一分层。
 type Profile struct {
 	// Name 是唯一标识（注册表键），全小写：zai / deepseek / openai / openrouter / anthropic / custom。
-	Name string
+	Name string `json:"name" jsonschema:"description=唯一标识（注册表键），全小写"`
 	// Aliases 是别名（Lookup 时名字或别名都命中；zai 的别名有 glm / zhipu）。
-	Aliases []string
+	Aliases []string `json:"aliases,omitempty" jsonschema:"description=别名（Lookup 时名字或别名都命中）"`
 	// DisplayName 是给人看的名字（CLI 列表用）。
-	DisplayName string
+	DisplayName string `json:"display_name,omitempty" jsonschema:"description=给人看的名字（CLI 列表用）"`
 	// EnvVars 是 API key 环境变量优先级列表（从前往后找，第一个非空者胜；
 	// 每个 env 可含逗号分隔的多个 key，用于多 key 轮换）。
-	EnvVars []string
+	EnvVars []string `json:"env_vars,omitempty" jsonschema:"description=API key 环境变量优先级列表（每个 env 可含逗号分隔多 key，用于多 key 轮换）"`
 	// Keys 是该 provider 的显式 API key 列表（多 key 轮换 / 故障转移用；
 	// 与 EnvVars 取并集、去重保序）。为空时回退到 EnvVars 顺序解析。
 	Keys []string `json:"keys,omitempty" jsonschema:"description=该 provider 的显式 API key 列表（多 key 轮换/故障转移用）；为空则回退到 EnvVars 顺序解析"`
@@ -65,20 +65,21 @@ type Profile struct {
 	// 用于一家 key 失效时自动切到别家（如 zai → openrouter）。
 	Fallbacks []string `json:"fallbacks,omitempty" jsonschema:"description=本 provider 所有 key 均失败时的回退 provider 名（按序尝试）"`
 	// BaseURL 是默认端点（不带 /chat/completions 尾巴；NewClient 可覆盖）。
-	BaseURL string
+	BaseURL string `json:"base_url,omitempty" jsonschema:"description=默认端点（不带 /chat/completions 尾巴）"`
 	// ModelsURL 是显式模型列表端点；空则用 BaseURL+"/models"（OpenAI 兼容缺省）。
-	ModelsURL string
+	ModelsURL string `json:"models_url,omitempty" jsonschema:"description=显式模型列表端点；空则用 BaseURL+/models"`
 	// APIMode 是 wire 协议（默认 chat_completions）。
-	APIMode APIMode
+	APIMode APIMode `json:"api_mode,omitempty" jsonschema:"description=wire 协议（chat_completions 默认；anthropic_messages 仅声明）"`
 	// DefaultModel 是 --model 缺省时的模型 id。
-	DefaultModel string
+	DefaultModel string `json:"default_model,omitempty" jsonschema:"description=--model 缺省时的模型 id"`
 	// DefaultAuxModel 是便宜辅助模型 id（压缩/命名等杂活；v0.1 只声明不调度）。
-	DefaultAuxModel string
+	DefaultAuxModel string `json:"default_aux_model,omitempty" jsonschema:"description=便宜辅助模型 id（压缩/命名等杂活）"`
 	// TransformRequest 是请求级 quirk 钩子：发送前改写请求体。
 	// 对标 Hermes 的 build_api_kwargs_extras / prepare_messages —— 例如
 	// GLM 系要在 extra_body.thinking 里关/开思考模式。nil = 不改写。
 	// 签名里的 *ChatRequest 在 transport.go 定义（同一包，无循环）。
-	TransformRequest func(*ChatRequest) error
+	// 函数不可序列化，配置落库时跳过（json:"-"）。
+	TransformRequest func(*ChatRequest) error `json:"-"`
 }
 
 // Builtins 返回内置 provider 目录（注册表种子）。
