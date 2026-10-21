@@ -72,6 +72,11 @@ func TestChannelSubmitSerialFIFO(t *testing.T) {
 // G24b: 不同 channel 并发 —— 同一个 client (同 stdio 管道) 上, g1 的 sleep
 // 不应阻塞 g2 (kernel ChannelActor 的 mailbox 按 channel 隔离)。rpc 的写锁只
 // 串行写字节, 读由后台循环按 id 分发 —— 两个并发请求都能拿到自己的响应。
+//
+// 用「相对顺序」替代脆化墙钟阈值：fast（sleep 0）必须早于 slow（sleep 250ms）
+// 完成 —— 这才是 channel 隔离的真正不变量。绝对毫秒数在 `go test ./...` 并行压测
+// 下会被 node 冷启动 / 内核调度抖动态影响（慢任务偶发 >150ms 即误判失败），
+// 故只断言相对大小关系 + 宽松超时。
 func TestChannelIsolationBetweenChannels(t *testing.T) {
 	c := newTestClient(t)
 	fastDone := make(chan time.Duration, 1)
@@ -101,27 +106,28 @@ func TestChannelIsolationBetweenChannels(t *testing.T) {
 		}
 		fastDone <- time.Since(start)
 	}()
-	select {
-	case d := <-fastDone:
-		if d < 0 {
-			t.Fatalf("fast channel submit 失败")
-		}
-		if d > 150*time.Millisecond {
-			t.Fatalf("fast channel 被 slow channel 拖住: %v (期望 <150ms, slow 在另一 channel)", d)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("fast channel submit 超时 (被跨 channel 阻塞)")
+	dFast := recvWithin(t, fastDone, 5*time.Second, "fast channel submit 超时")
+	dSlow := recvWithin(t, slowDone, 5*time.Second, "slow channel submit 超时")
+	if dFast >= dSlow {
+		t.Fatalf("channel 隔离被破坏: fast=%v 不早于 slow=%v", dFast, dSlow)
 	}
+	if dSlow < 200*time.Millisecond {
+		t.Fatalf("slow 完成过快 (sleep 没生效?): %v", dSlow)
+	}
+}
+
+// recvWithin 在 timeout 内收一个耗时（负值表示失败），否则 t.Fatal。
+func recvWithin(t *testing.T, ch <-chan time.Duration, timeout time.Duration, msg string) time.Duration {
+	t.Helper()
 	select {
-	case d := <-slowDone:
+	case d := <-ch:
 		if d < 0 {
-			t.Fatalf("slow channel submit 失败")
+			t.Fatalf("%s（失败）", msg)
 		}
-		if d < 200*time.Millisecond {
-			t.Fatalf("slow 完成过快 (sleep 没生效?): %v", d)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatalf("slow channel submit 超时")
+		return d
+	case <-time.After(timeout):
+		t.Fatalf("%s", msg)
+		return -1
 	}
 }
 

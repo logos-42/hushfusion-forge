@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/logos-42/hushfusion-forge/internal/lsp"
 )
 
 // v1 配置：直接含 EnvVars 切片，版本号已为 1。
@@ -187,5 +189,64 @@ func TestRegisterConfig(t *testing.T) {
 	}
 	if Lookup("cfgtest") == nil {
 		t.Fatal("cfgtest 应已被注册")
+	}
+}
+
+// MergeWorkspace 应合并 lsp_servers（按 id 覆盖 + 独有追加）。
+func TestMergeWorkspaceLSPServers(t *testing.T) {
+	global := &Config{
+		ConfigVersion: 1,
+		LSPServers: []*lsp.ServerConfig{
+			{ID: "go", Command: "gopls", RootURI: "file:///g"},
+		},
+	}
+	ws := &Config{
+		ConfigVersion: 1,
+		LSPServers: []*lsp.ServerConfig{
+			{ID: "go", Command: "gopls-custom", RootURI: "file:///ws"}, // 同名覆盖
+			{ID: "py", Command: "pylsp"},                               // 独有追加
+		},
+	}
+	m := MergeWorkspace(global, ws)
+	if len(m.LSPServers) != 2 {
+		t.Fatalf("lsp_servers 应 2 个，got %d", len(m.LSPServers))
+	}
+	byID := map[string]*lsp.ServerConfig{}
+	for _, s := range m.LSPServers {
+		byID[s.ID] = s
+	}
+	if byID["go"].Command != "gopls-custom" || byID["go"].RootURI != "file:///ws" {
+		t.Fatalf("go 应被工作区覆盖: %+v", byID["go"])
+	}
+	if byID["py"].Command != "pylsp" {
+		t.Fatalf("py 应追加: %+v", byID["py"])
+	}
+}
+
+// ResolveConfig 应把全局 + 工作区的 lsp_servers 都合并进来。
+func TestResolveConfigLSPServers(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.json")
+	wsPath := filepath.Join(dir, ".hushfusion")
+	_ = os.MkdirAll(wsPath, 0o755)
+	if err := os.WriteFile(globalPath, []byte(`{
+  "_config_version": 1,
+  "lsp_servers": [{"id":"go","command":"gopls"}]
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsPath, "ai.json"), []byte(`{
+  "_config_version": 1,
+  "lsp_servers": [{"id":"py","command":"pylsp"}]
+}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HUSHFUSION_AI_CONFIG", globalPath)
+	cfg, err := ResolveConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.LSPServers) != 2 {
+		t.Fatalf("lsp_servers 应合并为 2 个，got %d: %+v", len(cfg.LSPServers), cfg.LSPServers)
 	}
 }

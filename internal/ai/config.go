@@ -22,6 +22,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/logos-42/hushfusion-forge/internal/lsp"
 )
 
 // CurrentConfigVersion 是当前 Config schema 版本。加载旧配置时自动迁移到它。
@@ -32,9 +34,10 @@ const CurrentConfigVersion = 1
 // _config_version 用于版本化迁移；Providers 是 provider 配置的权威来源，
 // 同名后者覆盖前者。
 type Config struct {
-	ConfigVersion int        `json:"_config_version" jsonschema:"description=配置 schema 版本；加载时自动迁移到当前版"`
-	Default       string     `json:"default_provider,omitempty" jsonschema:"description=默认 provider 名（--provider 缺省时生效）"`
-	Providers     []*Profile `json:"providers,omitempty" jsonschema:"description=provider 配置列表；同名后者覆盖前者"`
+	ConfigVersion int                 `json:"_config_version" jsonschema:"description=配置 schema 版本；加载时自动迁移到当前版"`
+	Default       string              `json:"default_provider,omitempty" jsonschema:"description=默认 provider 名（--provider 缺省时生效）"`
+	Providers     []*Profile          `json:"providers,omitempty" jsonschema:"description=provider 配置列表；同名后者覆盖前者"`
+	LSPServers    []*lsp.ServerConfig `json:"lsp_servers,omitempty" jsonschema:"description=LSP server 配置列表（forge lsp 用它拉起 server）；同名 id 后者覆盖前者"`
 }
 
 // ---- 加载 + 迁移 ----
@@ -187,7 +190,7 @@ func splitNonEmpty(s string) []string {
 
 // MergeWorkspace 把工作区配置合进全局配置（不改动入参）：
 // 工作区同名 provider 覆盖全局，工作区独有 provider 追加；
-// 全局 Default 在两者皆空时保留。返回新配置。
+// LSP server 同理按 id 覆盖/追加；全局 Default 在两者皆空时保留。返回新配置。
 func MergeWorkspace(global, ws *Config) *Config {
 	if ws == nil {
 		return global
@@ -196,6 +199,7 @@ func MergeWorkspace(global, ws *Config) *Config {
 		ConfigVersion: CurrentConfigVersion,
 		Default:       global.Default,
 		Providers:     append([]*Profile{}, global.Providers...),
+		LSPServers:    append([]*lsp.ServerConfig{}, global.LSPServers...),
 	}
 	if ws.Default != "" {
 		merged.Default = ws.Default
@@ -210,6 +214,18 @@ func MergeWorkspace(global, ws *Config) *Config {
 		} else {
 			merged.Providers = append(merged.Providers, wp)
 			byName[wp.Name] = len(merged.Providers) - 1
+		}
+	}
+	byLSP := make(map[string]int, len(merged.LSPServers))
+	for i, s := range merged.LSPServers {
+		byLSP[s.ID] = i
+	}
+	for _, wl := range ws.LSPServers {
+		if i, ok := byLSP[wl.ID]; ok {
+			merged.LSPServers[i] = wl
+		} else {
+			merged.LSPServers = append(merged.LSPServers, wl)
+			byLSP[wl.ID] = len(merged.LSPServers) - 1
 		}
 	}
 	return merged

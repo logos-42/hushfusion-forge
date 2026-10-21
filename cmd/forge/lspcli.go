@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/lsp"
 )
 
@@ -46,20 +47,32 @@ func cmdLSP(args []string) int {
 	}
 }
 
-// lspList 打印 --config 里的 LSP server 配置。
+// lspList 打印 LSP server 配置：默认读 ai.Config 的 lsp_servers，
+// 给了 --config 则读独立 JSON 文件（lsp.ServerConfig 数组）。
 func lspList(args []string) int {
-	fs := newFlagSet("lsp list", "lsp list --config servers.json",
-		"列出 LSP server 配置（lsp.ServerConfig JSON 数组）")
-	configPath := fs.String("config", "", "ServerConfig JSON 数组文件路径")
+	fs := newFlagSet("lsp list", "lsp list [--config servers.json]",
+		"列出 LSP server 配置（默认读 ai.Config.lsp_servers）")
+	configPath := fs.String("config", "", "可选：独立 ServerConfig JSON 数组文件路径（不给则读 ai.Config）")
 	if rc := parseFlags(fs, args); rc != -1 {
 		return rc
 	}
-	if *configPath == "" {
-		return fail("lsp list: --config 必填")
+	var cfgs []*lsp.ServerConfig
+	if *configPath != "" {
+		c, err := loadLSPServers(*configPath)
+		if err != nil {
+			return fail("lsp list: %v", err)
+		}
+		cfgs = c
+	} else {
+		c, err := lspConfigsFromAI()
+		if err != nil {
+			return fail("lsp list: %v", err)
+		}
+		cfgs = c
 	}
-	cfgs, err := loadLSPServers(*configPath)
-	if err != nil {
-		return fail("lsp list: %v", err)
+	if len(cfgs) == 0 {
+		fmt.Println("（ai.Config 无 lsp_servers；可用 --config 指定独立文件）")
+		return 0
 	}
 	for _, c := range cfgs {
 		fmt.Printf("  %-12s cmd=%-16s args=%v allow=%v root=%s\n", c.ID, c.Command, c.Args, c.Allow, c.RootURI)
@@ -69,15 +82,16 @@ func lspList(args []string) int {
 
 // lspQueryCmd 启动 server 并查询一个 op（definition/hover/references）。
 func lspQueryCmd(op string, args []string) int {
-	blurb := fmt.Sprintf("查询 %s：forge lsp %s --pos <file:line:col> --command <server>", op, op)
+	blurb := fmt.Sprintf("查询 %s：forge lsp %s --pos <file:line:col> [--command X | --id Y | --config F]", op, op)
 	fs := newFlagSet("lsp "+op, "lsp "+op+" --pos <file:line:col> [--command X]",
-		blurb+"\n--pos 用 1-based 行列（如 main.go:12:5）。")
+		blurb+"\n--pos 用 1-based 行列（如 main.go:12:5）。server 来源优先级：\n"+
+			"  1) --command 直接构造  2) --config 文件（按 --id 选）  3) ai.Config.lsp_servers（按 --id 选）")
 	pos := fs.String("pos", "", "位置 file:line:col（1-based），如 main.go:12:5")
-	command := fs.String("command", "", "LSP server 可执行文件（如 gopls）")
+	command := fs.String("command", "", "LSP server 可执行文件（如 gopls）；与 --config/--id 互斥")
 	root := fs.String("root", "", "workspace 根目录（默认 cwd），决定 file:// rootUri")
 	allow := fs.String("allow", "*", "允许的操作白名单（逗号分隔；* = 全部）")
-	id := fs.String("id", "", "server 逻辑 id（默认取 command 名）")
-	configPath := fs.String("config", "", "可选：从 ServerConfig JSON 数组文件加载（与 flag 合并）")
+	id := fs.String("id", "", "server 逻辑 id（从 ai.Config.lsp_servers 或 --config 按 id 选）")
+	configPath := fs.String("config", "", "可选：独立 ServerConfig JSON 数组文件（按 --id 选）")
 	if rc := parseFlags(fs, args); rc != -1 {
 		return rc
 	}
@@ -85,48 +99,9 @@ func lspQueryCmd(op string, args []string) int {
 		return fail("lsp %s: --pos 必填（如 --pos main.go:12:5）", op)
 	}
 
-	cfg := lsp.ServerConfig{Allow: splitComma(*allow)}
-	if *id != "" {
-		cfg.ID = *id
-	}
-	if *root == "" {
-		if wd, err := os.Getwd(); err == nil {
-			*root = wd
-		}
-	}
-	cfg.RootURI = "file://" + *root
-
-	if *configPath != "" {
-		cfgs, err := loadLSPServers(*configPath)
-		if err != nil {
-			return fail("lsp %s: %v", op, err)
-		}
-		sel := *id
-		if sel == "" {
-			sel = *command
-		}
-		chosen := pickServer(cfgs, sel)
-		if chosen == nil {
-			return fail("lsp %s: --config 里找不到 server（id=%q）", op, sel)
-		}
-		cfg = *chosen // flag 的 allow/id/root 已先设，config 整体覆盖（含 command/args）
-		if cfg.ID == "" {
-			cfg.ID = *command
-		}
-		if cfg.Allow == nil {
-			cfg.Allow = splitComma(*allow)
-		}
-		if cfg.RootURI == "" {
-			cfg.RootURI = "file://" + *root
-		}
-	} else {
-		if *command == "" {
-			return fail("lsp %s: --command 必填（或给 --config）", op)
-		}
-		cfg.Command = *command
-		if cfg.ID == "" {
-			cfg.ID = *command
-		}
+	cfg, err := resolveLSPConfig(op, *command, *id, *root, *allow, *configPath)
+	if err != nil {
+		return fail("%v", err)
 	}
 
 	uri, line, col, err := parseFilePos(*pos)
@@ -134,7 +109,7 @@ func lspQueryCmd(op string, args []string) int {
 		return fail("lsp %s: %v", op, err)
 	}
 	ctx := context.Background()
-	s, err := lsp.Start(ctx, cfg)
+	s, err := lsp.Start(ctx, *cfg)
 	if err != nil {
 		return fail("lsp %s: 启动 server 失败: %v", op, err)
 	}
@@ -145,6 +120,79 @@ func lspQueryCmd(op string, args []string) int {
 	}
 	fmt.Println(out)
 	return 0
+}
+
+// resolveLSPConfig 按优先级解析出要拉起的 LSP server 配置：
+// 1) --command 直接构造；2) --config 文件（按 --id 选）；3) ai.Config.lsp_servers（按 --id 选）。
+func resolveLSPConfig(op, command, id, root, allow, configPath string) (*lsp.ServerConfig, error) {
+	if command != "" {
+		cfg := &lsp.ServerConfig{ID: id, Command: command, Allow: splitComma(allow)}
+		if cfg.ID == "" {
+			cfg.ID = command
+		}
+		cfg.RootURI = "file://" + effectiveRoot(root)
+		return cfg, nil
+	}
+	if configPath != "" {
+		cfgs, err := loadLSPServers(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("lsp %s: %v", op, err)
+		}
+		chosen := pickServer(cfgs, id)
+		if chosen == nil {
+			return nil, fmt.Errorf("lsp %s: --config 里找不到 server（id=%q）", op, id)
+		}
+		cfg := *chosen
+		if cfg.ID == "" {
+			cfg.ID = id
+		}
+		if cfg.Allow == nil {
+			cfg.Allow = splitComma(allow)
+		}
+		if cfg.RootURI == "" {
+			cfg.RootURI = "file://" + effectiveRoot(root)
+		}
+		return &cfg, nil
+	}
+	if id == "" {
+		return nil, fmt.Errorf("lsp %s: 未给 --command/--config 时，需 --id 指定 ai.Config 里定义的 LSP server（或用 --command）", op)
+	}
+	aiCfgs, err := lspConfigsFromAI()
+	if err != nil {
+		return nil, fmt.Errorf("lsp %s: %v", op, err)
+	}
+	chosen := pickServer(aiCfgs, id)
+	if chosen == nil {
+		return nil, fmt.Errorf("lsp %s: ai.Config 的 lsp_servers 里找不到 id=%q（用 `forge lsp list` 查看）", op, id)
+	}
+	cfg := *chosen
+	if cfg.Allow == nil {
+		cfg.Allow = splitComma(allow)
+	}
+	if cfg.RootURI == "" {
+		cfg.RootURI = "file://" + effectiveRoot(root)
+	}
+	return &cfg, nil
+}
+
+// lspConfigsFromAI 从统一配置（ai.Config.lsp_servers）取 LSP server 配置。
+func lspConfigsFromAI() ([]*lsp.ServerConfig, error) {
+	ws, _ := os.Getwd()
+	cfg, err := ai.ResolveConfig(ws)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.LSPServers, nil
+}
+
+// effectiveRoot 返回 root（默认 cwd）。
+func effectiveRoot(root string) string {
+	if root == "" {
+		if wd, err := os.Getwd(); err == nil {
+			root = wd
+		}
+	}
+	return root
 }
 
 // lspQuery 在已就绪的 server 上执行一个 op（定义给测试可复用纯逻辑部分）。
@@ -205,25 +253,29 @@ func splitComma(s string) []string {
 	return out
 }
 
-func loadLSPServers(path string) ([]lsp.ServerConfig, error) {
+func loadLSPServers(path string) ([]*lsp.ServerConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var cfgs []lsp.ServerConfig
-	if err := json.Unmarshal(raw, &cfgs); err != nil {
+	var vals []lsp.ServerConfig
+	if err := json.Unmarshal(raw, &vals); err != nil {
 		return nil, fmt.Errorf("解析 %s: %w", path, err)
 	}
-	return cfgs, nil
+	out := make([]*lsp.ServerConfig, len(vals))
+	for i := range vals {
+		out[i] = &vals[i]
+	}
+	return out, nil
 }
 
-func pickServer(cfgs []lsp.ServerConfig, id string) *lsp.ServerConfig {
+func pickServer(cfgs []*lsp.ServerConfig, id string) *lsp.ServerConfig {
 	if id == "" && len(cfgs) > 0 {
-		return &cfgs[0]
+		return cfgs[0]
 	}
-	for i := range cfgs {
-		if cfgs[i].ID == id {
-			return &cfgs[i]
+	for _, c := range cfgs {
+		if c.ID == id {
+			return c
 		}
 	}
 	return nil
@@ -245,13 +297,15 @@ func lspUsage(w *os.File) {
 
 LSP server 查询（internal/lsp，复用 MCP 的 init 门 + 权限门）：
 
-  list                  列出 --config 文件里的 LSP server 配置
-  definition  --pos P   跳转到符号定义（需 --command）
-  hover       --pos P   取符号悬停信息
-  references  --pos P   找符号引用
+  list                     列出 LSP server 配置（默认读 ai.Config.lsp_servers）
+  definition  --pos P      跳转到符号定义
+  hover       --pos P      取符号悬停信息
+  references  --pos P      找符号引用
 
+server 来源优先级：--command 直接构造 > --config 文件（按 --id 选）> ai.Config.lsp_servers（按 --id 选）。
 --pos P = path:line:col（1-based）。示例：
+  forge lsp list
   forge lsp definition --pos main.go:12:5 --command gopls
-  forge lsp list --config .hushfusion/lsp.json
+  forge lsp definition --pos main.go:12:5 --id go     # go 定义在 ai.Config.lsp_servers
 `)
 }
