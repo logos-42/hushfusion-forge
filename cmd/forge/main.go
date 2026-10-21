@@ -1576,14 +1576,7 @@ func xcheckPoints() (r, z []float64) { return app.XcheckPoints() }
 
 // designInBox 报告一个 design 向量是否一开始就在搜索盒内 (盒外的 design 会被
 // VectorToCoils 裁剪, 即被当作另一台机器来求值)。
-func designInBox(design, lo, hi []float64) bool {
-	for i := range design {
-		if design[i] < lo[i] || design[i] > hi[i] {
-			return false
-		}
-	}
-	return true
-}
+func designInBox(design, lo, hi []float64) bool { return app.DesignInBox(design, lo, hi) }
 
 // probe 是一个 design 加上它被求值所在的采样点。
 type probe struct {
