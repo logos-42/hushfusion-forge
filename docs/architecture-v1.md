@@ -139,6 +139,15 @@ sensor state → AI proposal → Safety Kernel → actuator → plant update →
 | `internal/simulation/scenarios/` | — | 不存在 | 场景库阶段 |
 | `internal/control/state/` | `internal/control/` 内 | 未拆 | — |
 | `internal/control/planner/` `internal/control/controller/` `internal/control/constraints/` | `internal/control/`（闭环）`internal/safety/`（约束） | 部分已到位 | 规划器阶段 |
+| `internal/safety/kernel/` | `internal/safety/` | **已建** | — |
+| `internal/safety/interlock/` `internal/safety/permissions/` `internal/safety/policies/` | — | 不存在 | 硬件接入前必须补 |
+| `internal/orchestration/bolloon/` | `internal/kernelbridge/` `internal/bolloon/` | 未动 | — |
+| `internal/orchestration/agents/` `devices/` `jobs/` | `internal/aios/`（部分） | 未动 | Bolloon 阶段 |
+| `internal/intelligence/provider/` | `internal/ai/` | 未动 | — |
+| `internal/intelligence/agents/` `memory/` `proposals/` | `internal/aios/` `internal/knowledge/` | 未动 | — |
+| `internal/evidence/traces/` | `internal/control/`（Trace） | **已建**（在闭环内） | 证据平面独立时拆 |
+| `internal/evidence/replay/` `provenance/` `gates/` | `scripts/`（门禁） | 未动 | — |
+| `internal/contracts/` | — | **已建**（本轮） | — |
 
 ---
 
@@ -177,16 +186,7 @@ sensor state → AI proposal → Safety Kernel → actuator → plant update →
 4. 没有多 Agent 编排、没有 RL、没有模块化打包。
 5. 契约 schema 校验器只支持一小撮 JSON Schema 关键字，且**遇到未知关键字直接报错**
    （不静默放过）。
-
-| `internal/safety/kernel/` | `internal/safety/` | **已建** | — |
-| `internal/safety/interlock/` `internal/safety/permissions/` `internal/safety/policies/` | — | 不存在 | 硬件接入前必须补 |
-| `internal/orchestration/bolloon/` | `internal/kernelbridge/` `internal/bolloon/` | 未动 | — |
-| `internal/orchestration/agents/` `devices/` `jobs/` | `internal/aios/`（部分） | 未动 | Bolloon 阶段 |
-| `internal/intelligence/provider/` | `internal/ai/` | 未动 | — |
-| `internal/intelligence/agents/` `memory/` `proposals/` | `internal/aios/` `internal/knowledge/` | 未动 | — |
-| `internal/evidence/traces/` | `internal/control/`（Trace） | **已建**（在闭环内） | 证据平面独立时拆 |
-| `internal/evidence/replay/` `provenance/` `gates/` | `scripts/`（门禁） | 未动 | — |
-| `internal/contracts/` | — | **已建**（本轮） | — |
+6. 闭环轨迹只在内存中生成并可指纹化，尚未落盘到 `runs/` 或独立证据目录。
 
 **迁移纪律**：不为目录好看搬迁。每一次搬迁都必须同步
 `internal/owners/owners.go` 名册与 `CONTRACT.md` §2，且必须是一次可回滚的切片。
