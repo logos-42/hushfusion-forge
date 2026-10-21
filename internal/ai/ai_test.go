@@ -247,3 +247,98 @@ func TestProviderNames(t *testing.T) {
 		t.Errorf("ProviderNames 里没有 zai: %v", names)
 	}
 }
+
+func TestResolveAPIKeysMulti(t *testing.T) {
+	t.Setenv("MULTI_A", "env1")
+	t.Setenv("MULTI_B", "env2,env3") // 逗号分隔多 key
+	p := &Profile{
+		Name:    "multi",
+		EnvVars: []string{"MULTI_A", "MULTI_B"},
+		Keys:    []string{"explicit1", "env1"}, // 显式 + 与 env 重复项
+	}
+	got := ResolveAPIKeys(p, "explicit0")
+	want := []string{"explicit0", "explicit1", "env1", "env2", "env3"}
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("pos %d = %q want %q (all=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestChatRotatesOn429：provider 持两个 key（bad,good），bad 被 429 打回 →
+// 应自动轮换到 good 并收敛成功（学 Hermes 多 key 轮换）。
+func TestChatRotatesOn429(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Header.Get("Authorization") {
+		case "Bearer bad":
+			w.WriteHeader(http.StatusTooManyRequests)
+		case "Bearer good":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"id":"x","model":"m","choices":[{"message":{"content":"rotated-ok"},"finish_reason":"stop"}]}`))
+		default:
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	if err := Register(&Profile{Name: "testrot", EnvVars: []string{"TESTROT_KEY"}, BaseURL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TESTROT_KEY", "bad,good")
+	resp, err := Chat(context.Background(), "testrot",
+		ChatRequest{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}}, ClientOptions{})
+	if err != nil {
+		t.Fatalf("轮换后应收敛成功: %v", err)
+	}
+	if resp.Content != "rotated-ok" {
+		t.Fatalf("Content = %q, want rotated-ok（应已轮换到 good key）", resp.Content)
+	}
+}
+
+// TestChatFallbackProvider：主 provider 无 key，回退 provider 有 key → 应自动切换。
+func TestChatFallbackProvider(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"id":"x","model":"m","choices":[{"message":{"content":"fb-ok"},"finish_reason":"stop"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	if err := Register(&Profile{Name: "testfb", EnvVars: []string{"TESTFB_KEY"}, BaseURL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Register(&Profile{Name: "testpf", EnvVars: []string{"TESTPF_KEY"}, Fallbacks: []string{"testfb"}, BaseURL: "http://127.0.0.1:1"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TESTPF_KEY", "")
+	t.Setenv("TESTFB_KEY", "fbkey")
+	resp, err := Chat(context.Background(), "testpf",
+		ChatRequest{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}}, ClientOptions{})
+	if err != nil {
+		t.Fatalf("回退应收敛成功: %v", err)
+	}
+	if resp.Content != "fb-ok" {
+		t.Fatalf("Content = %q, want fb-ok（应已回退到 testfb）", resp.Content)
+	}
+}
+
+// TestChatNonRetryableStops：400（请求本身坏）不应进入重试循环，立即终止。
+func TestChatNonRetryableStops(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":{"message":"bad request"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	if err := Register(&Profile{Name: "test400", EnvVars: []string{"TEST400_KEY"}, BaseURL: srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST400_KEY", "onlykey")
+	_, err := Chat(context.Background(), "test400",
+		ChatRequest{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}}, ClientOptions{})
+	if err == nil {
+		t.Fatal("400 必须失败")
+	}
+	if strings.Contains(err.Error(), "全部 key/回退均失败") {
+		t.Fatalf("400 不该走重试循环，应不可重试即止: %v", err)
+	}
+}

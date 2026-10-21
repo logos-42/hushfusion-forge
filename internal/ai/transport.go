@@ -10,13 +10,17 @@ package ai
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -103,14 +107,55 @@ func NewClient(p *Profile, opts ClientOptions) (*Client, error) {
 	return &Client{profile: p, baseURL: baseURL, apiKey: key, http: &http.Client{Timeout: timeout}}, nil
 }
 
-// ResolveAPIKey 按 profile.EnvVars 顺序从环境变量解析 key；全空返回 ""。
+// ResolveAPIKey 返回该 provider 的第一个可用 key（向后兼容单 key 调用方）。
 func ResolveAPIKey(p *Profile) string {
-	for _, env := range p.EnvVars {
-		if v := os.Getenv(env); v != "" {
-			return v
-		}
+	ks := ResolveAPIKeys(p, "")
+	if len(ks) > 0 {
+		return ks[0]
 	}
 	return ""
+}
+
+// ResolveAPIKeys 收集该 provider 的全部可用 key（去重、去空、保序）。
+// 顺序即轮换顺序：显式 APIKey > p.Keys（显式列表）> p.EnvVars（每个 env 可含
+// 逗号分隔的多 key）。多 key 用于轮换 / 故障转移（学 Hermes auxiliary_client）。
+func ResolveAPIKeys(p *Profile, explicit string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(s string) {
+		for _, part := range strings.Split(s, ",") {
+			k := strings.TrimSpace(part)
+			if k == "" || seen[k] {
+				continue
+			}
+			seen[k] = true
+			out = append(out, k)
+		}
+	}
+	if explicit != "" {
+		add(explicit)
+	}
+	for _, k := range p.Keys {
+		add(k)
+	}
+	for _, env := range p.EnvVars {
+		if v := os.Getenv(env); v != "" {
+			add(v)
+		}
+	}
+	return out
+}
+
+// HTTPStatusError 携带 provider 返回的 HTTP 状态码，供上层判断是否可重试
+// （触发 key 轮换 / provider 回退）。
+type HTTPStatusError struct {
+	Provider string
+	Code     int
+	Body     string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("ai: %s HTTP %d: %s", e.Provider, e.Code, truncate(e.Body, 400))
 }
 
 // Chat 发一次 chat/completions 请求（非流式）。Stream=true 明确报错：
@@ -151,9 +196,8 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 		return nil, fmt.Errorf("ai: read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		// fail-closed：非 2xx 必须如实报，含状态码 + 响应体摘要（可能有 provider 错误信息）。
-		return nil, fmt.Errorf("ai: %s chat/completions: HTTP %d: %s",
-			c.profile.Name, resp.StatusCode, truncate(string(raw), 400))
+		// fail-closed：非 2xx 必须如实报，含状态码 + 响应体（可能有 provider 错误信息）。
+		return nil, &HTTPStatusError{Provider: c.profile.Name, Code: resp.StatusCode, Body: string(raw)}
 	}
 	var wire struct {
 		ID      string `json:"id"`
@@ -202,8 +246,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("ai: read /models: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ai: %s /models: HTTP %d: %s",
-			c.profile.Name, resp.StatusCode, truncate(string(raw), 400))
+		return nil, &HTTPStatusError{Provider: c.profile.Name, Code: resp.StatusCode, Body: string(raw)}
 	}
 	var wire struct {
 		Data []struct {
@@ -238,4 +281,97 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
+}
+
+// ---- 多 key 韧性：被动健康标记 + 轮换（学 Hermes auxiliary_client） ----
+// 不主动探针；某 key 在重试窗口内失败则标记不可用（dead），成功则复活。
+// key 值不持久化：以 sha256 前缀作 map key，明文 secret 不进内存结构 / 不落日志。
+
+type keyHealth struct {
+	mu        sync.Mutex
+	deadUntil map[string]time.Time
+}
+
+var kh = &keyHealth{deadUntil: map[string]time.Time{}}
+
+func healthKey(provider, key string) string {
+	sum := sha256.Sum256([]byte(provider + "|" + key))
+	return provider + "|" + hex.EncodeToString(sum[:4])
+}
+
+func (h *keyHealth) mark(provider, key string, d time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.deadUntil[healthKey(provider, key)] = time.Now().Add(d)
+}
+
+func (h *keyHealth) revive(provider, key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.deadUntil, healthKey(provider, key))
+}
+
+func (h *keyHealth) alive(provider, key string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	t, ok := h.deadUntil[healthKey(provider, key)]
+	return !ok || t.Before(time.Now())
+}
+
+// isRetryable 判定错误是否应触发 key 轮换 / provider 回退。
+// 不可重试（400 坏请求、context 取消）立即终止，不空转。
+func isRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var hs *HTTPStatusError
+	if errors.As(err, &hs) {
+		switch {
+		case hs.Code == 429:
+			return true // 限流/额度 → 换 key
+		case hs.Code == 401 || hs.Code == 403:
+			return true // 认证被拒 → 换 key / 换 provider
+		case hs.Code >= 500:
+			return true // 服务端错 → 换 key / 回退
+		default:
+			return false // 4xx 其它（含 400）→ 请求本身有问题，轮换无用
+		}
+	}
+	// 网络/超时错误（*url.Error 等实现 net.Error）一律重试。
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return true
+	}
+	return true
+}
+
+// cooldownFor 返回某失败 key 被标记为不可用的时间窗。
+func cooldownFor(err error) time.Duration {
+	var hs *HTTPStatusError
+	if errors.As(err, &hs) {
+		switch {
+		case hs.Code == 429:
+			return 60 * time.Second
+		case hs.Code == 401 || hs.Code == 403:
+			return 5 * time.Minute
+		case hs.Code >= 500:
+			return 15 * time.Second
+		}
+	}
+	return 15 * time.Second
+}
+
+// sleepCtx 在 d 内等待，context 取消则提前返回 false。
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }

@@ -20,10 +20,10 @@
 //
 // v0.1 诚实边界（已实现 / 未实现 分列，避免假装）：
 //
-//	已实现   chat_completions 单次对话（非流式）、/models 列表、quirk 钩子挂点
+//	已实现   chat_completions 单次对话（非流式）、/models 列表、quirk 钩子挂点、
+//	         多 key 轮换 + provider fallback 链（被动健康标记 + 不可重试即止）
 //	未实现   SSE 流式（Stream=true 明确报错）、anthropic_messages 等其它 api_mode、
-//	         凭据池轮换与 fallback 链（Hermes 有，这里 v0.1 刻意不做 —— 先证明单 provider
-//	         闭环，再谈多 key 轮换；缺了不假装）。
+//	         主动探针式 health（当前是失败被动标记，够用；Hermes 有主动探活，可选升级）
 package ai
 
 import (
@@ -55,8 +55,15 @@ type Profile struct {
 	Aliases []string
 	// DisplayName 是给人看的名字（CLI 列表用）。
 	DisplayName string
-	// EnvVars 是 API key 环境变量优先级列表（从前往后找，第一个非空者胜）。
+	// EnvVars 是 API key 环境变量优先级列表（从前往后找，第一个非空者胜；
+	// 每个 env 可含逗号分隔的多个 key，用于多 key 轮换）。
 	EnvVars []string
+	// Keys 是该 provider 的显式 API key 列表（多 key 轮换 / 故障转移用；
+	// 与 EnvVars 取并集、去重保序）。为空时回退到 EnvVars 顺序解析。
+	Keys []string `json:"keys,omitempty" jsonschema:"description=该 provider 的显式 API key 列表（多 key 轮换/故障转移用）；为空则回退到 EnvVars 顺序解析"`
+	// Fallbacks 是本 provider 所有 key 均失败时的回退 provider 名（按序尝试），
+	// 用于一家 key 失效时自动切到别家（如 zai → openrouter）。
+	Fallbacks []string `json:"fallbacks,omitempty" jsonschema:"description=本 provider 所有 key 均失败时的回退 provider 名（按序尝试）"`
 	// BaseURL 是默认端点（不带 /chat/completions 尾巴；NewClient 可覆盖）。
 	BaseURL string
 	// ModelsURL 是显式模型列表端点；空则用 BaseURL+"/models"（OpenAI 兼容缺省）。
