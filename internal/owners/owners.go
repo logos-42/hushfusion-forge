@@ -40,6 +40,7 @@ var Stages = []Stage{
 			"CONTRACT.md",
 			"CHANGELOG.md",
 			".gitignore",
+			"internal/app/",
 			"internal/config/",
 			"internal/owners/",
 			"internal/kernelbridge/",
@@ -143,7 +144,10 @@ var Stages = []Stage{
 			"internal/contracts/",
 			"internal/safety/",
 			"internal/plant/",
+
 			"internal/control/",
+			"internal/contracts_bridge/",
+			"internal/plant_eval/",
 		},
 	},
 }
