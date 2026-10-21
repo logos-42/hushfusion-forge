@@ -12,6 +12,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/logos-42/hushfusion-forge/internal/aios"
+	"github.com/logos-42/hushfusion-forge/internal/oskernel"
 	"github.com/logos-42/hushfusion-forge/internal/osview"
 )
 
@@ -60,14 +63,26 @@ func cmdOSTUI() int {
 	panels := buildPanels(snap)
 	sel := 0
 	var form *formState
-	footer := cyan + "r=check  L=reload  n=新任务 o=机会 d=决策  Enter=展开  ↑↓=选择  q=退出" + ansiReset
+	var aiRep *aios.Report
+	var aiErr error
+	showAI := false
+	footer := cyan + "r=check  L=reload  n/o/d 录入  a=AI目标  Enter=展开  ↑↓=选择  q=退出" + ansiReset
 
-	draw := func() {
-		if form != nil {
-			drawForm(form, footer)
-			return
+	reload := func() {
+		if s2, e := osview.Load(base); e == nil {
+			snap = s2
+			panels = buildPanels(snap)
 		}
-		renderTUI(panels, sel, footer)
+	}
+	draw := func() {
+		switch {
+		case form != nil:
+			drawForm(form, footer)
+		case showAI:
+			drawAIScreen(aiRep, aiErr, footer)
+		default:
+			renderTUI(panels, sel, footer)
+		}
 	}
 
 	draw()
@@ -92,20 +107,49 @@ func cmdOSTUI() int {
 			if done {
 				f := form
 				form = nil
+				if f.kind == "aigoal" {
+					// phase-3 AI 粘合：思考中 → 同步运行 → 报告屏。
+					provider, model := f.val(1), f.val(2)
+					if provider == "" {
+						provider = os.Getenv("HUSHFUSION_AI_PROVIDER")
+					}
+					if provider == "" {
+						provider = "zai"
+					}
+					drawThinking(f.val(0), provider, model)
+					rep, rerr := runAISync(base, f.val(0), provider, model)
+					aiRep, aiErr = rep, rerr
+					showAI = true
+					reload()
+					if rerr != nil {
+						footer = yellow + "AI 运行失败（见报告屏）" + ansiReset
+					}
+					draw()
+					continue
+				}
 				if m, e := submitForm(base, f); e != nil {
 					footer = yellow + "录入失败: " + e.Error() + ansiReset
 				} else {
 					footer = green + m + ansiReset
-					// 写成功后重载视图。
-					if s2, e2 := osview.Load(base); e2 == nil {
-						snap = s2
-						panels = buildPanels(snap)
-					}
+					reload()
 				}
 				draw()
 				continue
 			}
 			draw()
+			continue
+		}
+		// AI 报告屏：任意键返回面板（q 退出）。
+		if showAI {
+			switch b {
+			case 'q', 'Q', 3:
+				fmt.Print(ansiClear)
+				return 0
+			default:
+				showAI = false
+				footer = cyan + "r=check  L=reload  n/o/d 录入  a=AI目标  Enter=展开  ↑↓=选择  q=退出" + ansiReset
+				draw()
+			}
 			continue
 		}
 		// 转义序列（方向键等）：ESC [ X
@@ -146,6 +190,9 @@ func cmdOSTUI() int {
 		case 'd', 'D': // 新决策
 			form = newDecideForm()
 			draw()
+		case 'a', 'A': // AI 目标（phase-3 粘合）
+			form = newAIGoalForm()
+			draw()
 		case 'r', 'R':
 			footer = runCheckInline()
 			if s2, e := osview.Load(base); e == nil {
@@ -161,11 +208,106 @@ func cmdOSTUI() int {
 			}
 			draw()
 		case '?':
-			footer = yellow + "帮助：↑↓ 选择面板，Enter 展开看全表，n/o/d 录入任务/机会/决策，r 跑 oscheck，L 重载，q 退出" + ansiReset
+			footer = yellow + "↑↓ 选择面板，Enter 展开，n/o/d 录入任务/机会/决策，a=AI 目标（经内核受控提议），r=check，L=reload，q=退出" + ansiReset
 			draw()
 		}
 	}
 	return 0
+}
+
+// newAIGoalForm 构造 AI 目标表单（goal 必填；provider/model 可空 → env/默认）。
+func newAIGoalForm() *formState {
+	provider := os.Getenv("HUSHFUSION_AI_PROVIDER")
+	if provider == "" {
+		provider = "zai"
+	}
+	return &formState{
+		title: "AI 目标（经内核受控系统调用提议）",
+		kind:  "aigoal",
+		fields: []formField{
+			{label: "目标"},
+			{label: "provider", buf: []byte(provider)},
+			{label: "model（空=provider 默认）"},
+		},
+	}
+}
+
+// runAISync 同步跑一次 AI 粘合（阻塞；调用前已画"思考中"屏）。
+func runAISync(base, goal, provider, model string) (*aios.Report, error) {
+	agent := aios.NewAgent(oskernel.New(base), provider, model, os.Getenv("HUSHFUSION_AI_BASE_URL"))
+	return agent.Run(context.Background(), goal, false)
+}
+
+func drawThinking(goal, provider, model string) {
+	cols, _ := termSize()
+	if cols < 40 {
+		cols = 80
+	}
+	var b strings.Builder
+	b.WriteString(ansiClear)
+	title := " AI 思考中… "
+	b.WriteString(rev + bold + title + strings.Repeat(" ", max(0, cols-dispWidth(title))) + ansiReset + "\n\n")
+	box := []string{
+		"目标: " + goal,
+		"provider: " + provider + "   model: " + model,
+		"",
+		"已发送请求，正在等待响应并执行受控系统调用…",
+		"（同步等待中；报告随后呈现，任意键可返回）",
+	}
+	b.WriteString(renderPanel("phase-3 AI 粘合", box, cols, true))
+	fmt.Print(b.String())
+}
+
+func drawAIScreen(rep *aios.Report, err error, footer string) {
+	cols, rows := termSize()
+	if cols < 40 {
+		cols = 80
+	}
+	if rows < 10 {
+		rows = 24
+	}
+	var b strings.Builder
+	b.WriteString(ansiClear)
+	title := " AI 粘合报告 "
+	b.WriteString(rev + bold + title + strings.Repeat(" ", max(0, cols-dispWidth(title))) + ansiReset + "\n\n")
+	var lines []string
+	switch {
+	case err != nil:
+		lines = append(lines, "运行失败: "+err.Error())
+	case rep != nil:
+		lines = append(lines, "目标: "+rep.Goal, "", "计划（准入判定）:")
+		for i, p := range rep.Plan {
+			mark := "✓允许"
+			if !p.Allowed {
+				mark = "✗拒绝: " + p.Reason
+			}
+			lines = append(lines, fmt.Sprintf("  %d. %s %s — %s", i+1, p.Syscall, mark, argsSummary(p.Args)))
+		}
+		if len(rep.Results) > 0 {
+			lines = append(lines, "", "执行结果（经内核）:")
+			for _, r := range rep.Results {
+				if r.OK {
+					lines = append(lines, "  ✓ "+r.Syscall+" "+r.Message)
+				} else {
+					lines = append(lines, "  ✗ "+r.Syscall+" "+r.Err)
+				}
+			}
+		}
+		for _, n := range rep.Notes {
+			lines = append(lines, "", "> "+n)
+		}
+	}
+	maxLines := rows - 6
+	if maxLines < 1 {
+		maxLines = 1
+	}
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+	b.WriteString(renderPanel("结果", lines, cols, true))
+	b.WriteString(bar("任意键返回 · q 退出", cols))
+	_ = footer
+	fmt.Print(b.String())
 }
 
 // ---- 表单录入（TUI 内直接录入任务/机会/决策） ----
