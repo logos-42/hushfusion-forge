@@ -44,12 +44,12 @@ var Stages = []Stage{
 			"internal/owners/",
 			"internal/kernelbridge/",
 			"internal/ai/",
-			"internal/bolloon/", // 2026-10-20 新增：BOLLOON CLI 强类型客户端 + forge bolloon 透传（归 parent）
-			"internal/osview/",  // 2026-10-20 新增：OS 决策层只读视图层（供 forge os 与 TUI 共用，归 parent）
+			"internal/bolloon/",  // 2026-10-20 新增：BOLLOON CLI 强类型客户端 + forge bolloon 透传（归 parent）
+			"internal/osview/",   // 2026-10-20 新增：OS 决策层只读视图层（供 forge os 与 TUI 共用，归 parent）
 			"internal/oskernel/", // 2026-10-20 新增：OS 宏内核（syscall 分发 + 子系统驱动 + 写前守卫，归 parent）
-			"internal/aios/",    // 2026-10-20 新增：phase-3 AI 粘合层（AI 经内核受控 syscall 提议，归 parent）
-			"internal/mcp/",     // 2026-10-21 新增：MCP stdio 客户端 + init 门 + 权限门（学 Crush，归 parent）
-			"internal/lsp/",     // 2026-10-21 新增：LSP server 客户端 + manager + init 门 + 权限门（学 Hermes/Crush，归 parent）
+			"internal/aios/",     // 2026-10-20 新增：phase-3 AI 粘合层（AI 经内核受控 syscall 提议，归 parent）
+			"internal/mcp/",      // 2026-10-21 新增：MCP stdio 客户端 + init 门 + 权限门（学 Crush，归 parent）
+			"internal/lsp/",      // 2026-10-21 新增：LSP server 客户端 + manager + init 门 + 权限门（学 Hermes/Crush，归 parent）
 			"bridge/",
 			"testdata/",
 			"scripts/",
@@ -130,6 +130,21 @@ var Stages = []Stage{
 		Name:  "internal design gate layer: ProjectionPhysics closed forms + six gates + upstream anchors",
 		Owner: "design",
 		Paths: []string{"internal/design/"},
+	},
+	{
+		// 2026-10-21 新增: 控制织物（Control Fabric）第一片 —— 契约层 + 安全内核 +
+		// 仿真装置 + 控制闭环。四者是一轮: 契约层定义交换格式, 安全内核判决,
+		// 仿真装置提供被控对象, 闭环把它们串起来。拆开会得到"有格式没对象"或
+		// "有对象没边界"的半成品, 所以同属一个 stage。
+		ID:    "fabric",
+		Name:  "control fabric: contracts + safety kernel + simulated plant + control loop",
+		Owner: "parent",
+		Paths: []string{
+			"internal/contracts/",
+			"internal/safety/",
+			"internal/plant/",
+			"internal/control/",
+		},
 	},
 }
 

@@ -17,9 +17,9 @@ type Guard struct {
 	host    string
 	pid     int
 
-	write    func(HeartbeatRecord) error       // 端口注入：写自身心跳
-	readPeer func() (*HeartbeatRecord, error)  // 端口注入：读对端心跳
-	onTakeover func(reason string)             // 接管回调
+	write      func(HeartbeatRecord) error      // 端口注入：写自身心跳
+	readPeer   func() (*HeartbeatRecord, error) // 端口注入：读对端心跳
+	onTakeover func(reason string)              // 接管回调
 
 	mu   sync.Mutex
 	rec  HeartbeatRecord

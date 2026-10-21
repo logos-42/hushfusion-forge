@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hushfusion.dev/schemas/0.1/design-candidate.schema.json",
+  "title": "DesignCandidate",
+  "description": "一条设计候选：参数 + 单位 + 出处。不含分数与判决。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "design_id", "origin", "parameters"],
+  "properties": {
+    "contract_version": {"type": "string", "const": "0.1"},
+    "design_id": {"type": "string", "minLength": 1},
+    "parent_design_id": {"type": "string"},
+    "origin": {"type": "string", "enum": ["ai", "human", "baseline", "search"]},
+    "parameters": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "number"}
+    },
+    "units": {"type": "object", "additionalProperties": {"type": "string"}},
+    "created_at": {"type": "string"}
+  }
+}

@@ -44,6 +44,7 @@ Phase 0 的验收问题只有一个：
 | F | `internal/rlenv/` `cmd/` `internal/world/` `internal/harness/`（2026-10-20 新增：本地自优化闭环，驱动 mu 世界跑实验/落盘/自我调整，与 mu/rlenv/CLI 同属一轮） | agent-F（2026-09-27 世界协议 P0：新增 `internal/world/`，与 rlenv/CLI 接线同属一轮；**合同变更**，见 `docs/world-protocol.md`） |
 | G | `python/` | agent-G |
 | design | `internal/design/` | design（2026-09-26 内部设计判决层：移植 ProjectionPhysics 的闭式解 + 六道门 + 上游锚点脚本，见 `docs/design-layer.md`） |
+| fabric | `internal/contracts/` `internal/safety/` `internal/plant/` `internal/control/` | parent（2026-10-21 控制织物第一片：契约层（设计/实验/设备/控制命令/证据 + JSON Schema + 严格子集校验器）+ 安全内核（确定性 fail-closed 判据 R01–R11）+ 仿真装置（占位模型）+ 控制闭环（提议→判决→作用→留痕），见 `docs/architecture-v1.md` 与 `docs/contracts/`） |
 
 **冻结门**（`go test ./internal/owners/`）三条判据：
 1. 名册互不重叠；2. 仓库内每个被跟踪文件都恰好属于一个 stage；3. 变异验证——把两个 stage 指到同一个包/同一文件必须报 overlap。

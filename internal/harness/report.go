@@ -56,22 +56,22 @@ type PhaseGrid struct {
 
 // Summary 是一轮 Run（或一个 harness 实例）的聚合摘要。
 type Summary struct {
-	NEpisodes         int              `json:"n_episodes"`
-	NSteps            int              `json:"n_steps"`
-	StoreLen          int              `json:"store_len"`
-	BestScore         float64          `json:"best_score"`
-	MeanFinalScore    float64          `json:"mean_final_score"`
-	TerminatedCount   int              `json:"terminated_count"`
-	Recovered         int              `json:"recovered_count"` // 错误恢复标记的行数
-	Ceiling           float64          `json:"ceiling"` // 命中阈值（= mu.TargetScore）
-	ActionDim         int              `json:"action_dim"`
-	ActionKeys        []string         `json:"action_keys"`
+	NEpisodes          int             `json:"n_episodes"`
+	NSteps             int             `json:"n_steps"`
+	StoreLen           int             `json:"store_len"`
+	BestScore          float64         `json:"best_score"`
+	MeanFinalScore     float64         `json:"mean_final_score"`
+	TerminatedCount    int             `json:"terminated_count"`
+	Recovered          int             `json:"recovered_count"` // 错误恢复标记的行数
+	Ceiling            float64         `json:"ceiling"`         // 命中阈值（= mu.TargetScore）
+	ActionDim          int             `json:"action_dim"`
+	ActionKeys         []string        `json:"action_keys"`
 	PerActionMeanDelta []float64       `json:"per_action_mean_delta"`
-	Policy            string           `json:"policy"`
-	StorePath         string           `json:"store_path"`
-	BestDesigns       []EpisodeResult  `json:"best_designs"`
-	PhaseSummaries    []PhaseSummary   `json:"phase_summaries"`
-	PhaseGrid         PhaseGrid        `json:"phase_grid"`
+	Policy             string          `json:"policy"`
+	StorePath          string          `json:"store_path"`
+	BestDesigns        []EpisodeResult `json:"best_designs"`
+	PhaseSummaries     []PhaseSummary  `json:"phase_summaries"`
+	PhaseGrid          PhaseGrid       `json:"phase_grid"`
 }
 
 // topDesigns 按 final score 取前 k 条 episode（模型设计）。

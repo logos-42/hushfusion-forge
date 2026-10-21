@@ -23,11 +23,11 @@ import (
 
 // Task 是 TASKS.md 候选池的一行（含标题列，oscore 未暴露标题）。
 type Task struct {
-	ID     string
-	Title  string
-	IEERC  // I/E/R/C/P 分数
-	State  string
-	Deps   string
+	ID    string
+	Title string
+	IEERC // I/E/R/C/P 分数
+	State string
+	Deps  string
 }
 
 // IEERC 是任务池的评分维度。
@@ -60,18 +60,18 @@ type Receipt struct {
 
 // Snapshot 是 OS 决策层的结构化快照。
 type Snapshot struct {
-	BaseDir      string
-	NorthStar    string
-	CurrentState string
-	Tasks        []Task
-	ActiveTask   *Task
-	ActiveDetail string
-	Experiments  []Experiment
+	BaseDir       string
+	NorthStar     string
+	CurrentState  string
+	Tasks         []Task
+	ActiveTask    *Task
+	ActiveDetail  string
+	Experiments   []Experiment
 	Opportunities []Opportunity
-	Decisions    []Decision
-	WeeklyReview string
-	Receipts     []Receipt
-	LoadErrors   []string
+	Decisions     []Decision
+	WeeklyReview  string
+	Receipts      []Receipt
+	LoadErrors    []string
 }
 
 var taskRowRe = regexp.MustCompile(`^(T-\d{2})$`)

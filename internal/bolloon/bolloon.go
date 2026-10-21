@@ -29,11 +29,11 @@ const EnvBin = "BOLLOON_BIN"
 
 // Envelope 是 bolloon --json 输出的 §2 冻结信封。
 type Envelope struct {
-	OK          bool            `json:"ok"`
-	Code        string          `json:"code"`
-	Message     string          `json:"message"`
-	Data        json.RawMessage `json:"data"`
-	NextAction  string          `json:"next_action"`
+	OK         bool            `json:"ok"`
+	Code       string          `json:"code"`
+	Message    string          `json:"message"`
+	Data       json.RawMessage `json:"data"`
+	NextAction string          `json:"next_action"`
 }
 
 // Error 是 ok:false 时返回的失败（携带 code 与 next_action，便于调用方决策）。
@@ -139,10 +139,10 @@ func (c *Client) Run(ctx context.Context, args ...string) (*Envelope, error) {
 
 // NetworkStatusData 是 `bolloon network status --json` 的 data 形状。
 type NetworkStatusData struct {
-	DID             string        `json:"did"`
-	Name            string        `json:"name"`
-	JoinedNetworks  []any         `json:"joinedNetworks"`
-	GatewayJoin     *GatewayJoin  `json:"gatewayJoin"`
+	DID            string       `json:"did"`
+	Name           string       `json:"name"`
+	JoinedNetworks []any        `json:"joinedNetworks"`
+	GatewayJoin    *GatewayJoin `json:"gatewayJoin"`
 }
 
 // GatewayJoin 是入网网关信息（含 P2P peerId 与可拨入的 networkLink）。
@@ -171,11 +171,11 @@ func (c *Client) NetworkStatus(ctx context.Context) (*NetworkStatusData, error) 
 
 // TaskBoardData 是 `bolloon task board --json` 的 data 形状。
 type TaskBoardData struct {
-	Count    int          `json:"count"`
-	Local    int          `json:"local"`
-	Remote   int          `json:"remote"`
-	RegistryReady bool    `json:"registryReady"`
-	Entries  []TaskEntry  `json:"entries"`
+	Count         int         `json:"count"`
+	Local         int         `json:"local"`
+	Remote        int         `json:"remote"`
+	RegistryReady bool        `json:"registryReady"`
+	Entries       []TaskEntry `json:"entries"`
 }
 
 // TaskEntry 是任务板上的一条公告（外部智能体的协作请求）。

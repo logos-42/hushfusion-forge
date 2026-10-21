@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hushfusion.dev/schemas/0.1/safety-decision.schema.json",
+  "title": "SafetyDecision",
+  "description": "安全内核对一条命令的判决。deny 是默认值；无法判决必须落到 deny。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "decision", "command_id", "device_id"],
+  "properties": {
+    "contract_version": {"type": "string", "const": "0.1"},
+    "decision": {"type": "string", "enum": ["allow", "deny"]},
+    "command_id": {"type": "string", "minLength": 1},
+    "device_id": {"type": "string", "minLength": 1},
+    "rules": {"type": "array", "items": {"type": "string"}},
+    "reason": {"type": "string"},
+    "evaluated_at": {"type": "string"}
+  }
+}

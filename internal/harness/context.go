@@ -60,5 +60,5 @@ func (ec *EpisodeContext) RNG() *rand.Rand { return ec.rng }
 // Space / Regions / Target / Budget 透出父 context 的只读配置。
 func (ec *EpisodeContext) Space() mu.ActionSpace { return ec.Run.Space }
 func (ec *EpisodeContext) Regions() []mu.Region  { return ec.Run.Regions }
-func (ec *EpisodeContext) Target() float64        { return ec.Run.Target }
-func (ec *EpisodeContext) Budget() *Budget        { return ec.Run.Budget }
+func (ec *EpisodeContext) Target() float64       { return ec.Run.Target }
+func (ec *EpisodeContext) Budget() *Budget       { return ec.Run.Budget }

@@ -3,11 +3,11 @@
 // 它把"数学模型"（internal/mu 的交换子世界代数）跑成一批本地实验，把每条评估
 // 落盘成数据（store），再用两层"自我调整"把数据变回更好的策略：
 //
-//	1. 规则层（确定性，纯 Go）：从 store 挖"哪个动作带来更高的 score 增量"，
-//	   据此给启发式策略加偏置 —— 这是可复现、可量化的自调整。
-//	2. 持续学习层（可选，Python 子进程复用 scripts/oml_continual_core.py）：
-//	   把 (观测, 动作, 增量) 喂给 OML，训练一个 obs→动作的策略。
-//	   torch/hibs_lnn 缺失时 fail-closed，回退到规则层。
+//  1. 规则层（确定性，纯 Go）：从 store 挖"哪个动作带来更高的 score 增量"，
+//     据此给启发式策略加偏置 —— 这是可复现、可量化的自调整。
+//  2. 持续学习层（可选，Python 子进程复用 scripts/oml_continual_core.py）：
+//     把 (观测, 动作, 增量) 喂给 OML，训练一个 obs→动作的策略。
+//     torch/hibs_lnn 缺失时 fail-closed，回退到规则层。
 //
 // 设计纪律：harness 不重写物理/代数（internal/mu 是唯一的数学真源），也不造第二个
 // 世界协议字节 —— 它只是用 mu 的纯函数把这些实验跑起来并记下来。
@@ -114,7 +114,7 @@ type Harness struct {
 	useOML     bool
 	seed       int
 	runID      string
-	phase      int // 当前自优化相位（写进每条 record，供报告矩阵使用）
+	phase      int  // 当前自优化相位（写进每条 record，供报告矩阵使用）
 	resume     bool // 错误恢复：Run 从该 runID 已完成的 episode 之后续跑
 
 	lastLearnerErr error
@@ -403,20 +403,20 @@ func (h *Harness) Summarize() (Summary, error) {
 		meanFinal = mean / float64(len(eps))
 	}
 	return Summary{
-		NEpisodes:         len(eps),
-		NSteps:            len(recs),
-		StoreLen:          h.Store.Len(),
-		BestScore:         best,
-		MeanFinalScore:    meanFinal,
-		Ceiling:           h.Target,
-		ActionDim:         h.Space.Dim(),
-		ActionKeys:        h.Space.Keys,
-		Policy:            h.activePolicy().Name(),
-		StorePath:         h.Store.path,
+		NEpisodes:          len(eps),
+		NSteps:             len(recs),
+		StoreLen:           h.Store.Len(),
+		BestScore:          best,
+		MeanFinalScore:     meanFinal,
+		Ceiling:            h.Target,
+		ActionDim:          h.Space.Dim(),
+		ActionKeys:         h.Space.Keys,
+		Policy:             h.activePolicy().Name(),
+		StorePath:          h.Store.path,
 		PerActionMeanDelta: perActionMeanDelta(recs, h.Space.Dim()),
-		BestDesigns:       topDesigns(eps, 5),
-		PhaseSummaries:    phaseSummaries(recs, eps),
-		PhaseGrid:         phaseActionGrid(recs, h.Space.Dim()),
+		BestDesigns:        topDesigns(eps, 5),
+		PhaseSummaries:     phaseSummaries(recs, eps),
+		PhaseGrid:          phaseActionGrid(recs, h.Space.Dim()),
 	}, nil
 }
 

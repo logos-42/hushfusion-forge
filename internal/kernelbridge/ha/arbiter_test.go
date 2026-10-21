@@ -27,7 +27,7 @@ func TestParseHeartbeatInvalid(t *testing.T) {
 
 func TestIsStale(t *testing.T) {
 	now := int64(100000)
-	fresh := HeartbeatRecord{Role: RolePrimary, LastBeat: now - 1000}  // 1s 前
+	fresh := HeartbeatRecord{Role: RolePrimary, LastBeat: now - 1000} // 1s 前
 	stale := HeartbeatRecord{Role: RolePrimary, LastBeat: now - 6000} // 6s 前
 	if IsStale(fresh, now, STALE_MS) {
 		t.Fatal("1s 前不应过期")

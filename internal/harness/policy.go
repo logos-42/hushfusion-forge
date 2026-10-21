@@ -17,7 +17,7 @@ type RandomPolicy struct {
 	rng       *rand.Rand
 }
 
-func (p *RandomPolicy) Name() string      { return "random" }
+func (p *RandomPolicy) Name() string        { return "random" }
 func (p *RandomPolicy) Act(_ []float64) int { return p.rng.Intn(p.actionDim) }
 
 // HeuristicPolicy 是规则层策略：每个动作学一个线性价值 w_a·obs，ε-贪心选最大者。

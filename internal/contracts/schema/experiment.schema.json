@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hushfusion.dev/schemas/0.1/experiment.schema.json",
+  "title": "Experiment",
+  "description": "实验契约对象：假设 + 要过的门 + 证据 + 状态。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "experiment_id", "design_id", "state"],
+  "properties": {
+    "contract_version": {"type": "string", "const": "0.1"},
+    "experiment_id": {"type": "string", "minLength": 1},
+    "design_id": {"type": "string", "minLength": 1},
+    "state": {"type": "string", "enum": ["proposed", "running", "blocked", "done", "failed", "abandoned"]},
+    "hypothesis": {"type": "string"},
+    "gates": {"type": "array", "items": {"type": "string"}},
+    "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+    "notes": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "uri"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["trace", "record", "gate", "report", "external"]},
+        "uri": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string"},
+        "forge_version": {"type": "string"},
+        "produced_at": {"type": "string"}
+      }
+    }
+  }
+}
