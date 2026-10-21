@@ -357,7 +357,7 @@ func cmdOSAI(args []string) int {
 		return fail("os ai: --goal 必填")
 	}
 	agent := aios.NewAgent(oskernel.New(osBaseDir()), *provider, *model, *baseURL)
-	agent.MaxCalls = *max
+	agent.Loop.MaxCalls = *max
 	rep, err := agent.Run(context.Background(), *goal, *dryRun)
 	if err != nil {
 		return fail("os ai: %v", err)

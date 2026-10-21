@@ -16,7 +16,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -318,50 +317,53 @@ func (h *keyHealth) alive(provider, key string) bool {
 	return !ok || t.Before(time.Now())
 }
 
-// isRetryable 判定错误是否应触发 key 轮换 / provider 回退。
+// key 轮换的死窗（Replace Magic Number with Symbolic Constant）：某 key 因这类失败
+// 被标记不可用后，多久内不再尝试；成功调用即复活。
+const (
+	cooldownRateLimit   = 60 * time.Second // 429 限流/额度
+	cooldownAuthFailure = 5 * time.Minute  // 401/403 认证被拒（多半是 key 真失效）
+	cooldownServerErr   = 15 * time.Second // 5xx 服务端抖动
+	cooldownDefault     = 15 * time.Second // 网络/其它
+)
+
+// classifyErr 单一判定错误类别（Consolidate Duplicate Conditional Fragments）：
+// isRetryable 与 cooldownFor 过去各自做同一段 errors.As + switch，规则必须永远一致
+// （否则会「判可重试但 cooldown=0」静默错配）；这里一处 switch 同时给出两个结论。
 // 不可重试（400 坏请求、context 取消）立即终止，不空转。
-func isRetryable(err error) bool {
+func classifyErr(err error) (retryable bool, cooldown time.Duration) {
 	if err == nil {
-		return false
+		return false, 0
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
+		return false, 0
 	}
 	var hs *HTTPStatusError
 	if errors.As(err, &hs) {
 		switch {
 		case hs.Code == 429:
-			return true // 限流/额度 → 换 key
+			return true, cooldownRateLimit // 限流/额度 → 换 key
 		case hs.Code == 401 || hs.Code == 403:
-			return true // 认证被拒 → 换 key / 换 provider
+			return true, cooldownAuthFailure // 认证被拒 → 换 key / 换 provider
 		case hs.Code >= 500:
-			return true // 服务端错 → 换 key / 回退
+			return true, cooldownServerErr // 服务端错 → 换 key / 回退
 		default:
-			return false // 4xx 其它（含 400）→ 请求本身有问题，轮换无用
+			return false, 0 // 4xx 其它（含 400）→ 请求本身有问题，轮换无用
 		}
 	}
 	// 网络/超时错误（*url.Error 等实现 net.Error）一律重试。
-	var ne net.Error
-	if errors.As(err, &ne) {
-		return true
-	}
-	return true
+	return true, cooldownDefault
+}
+
+// isRetryable 判定错误是否应触发 key 轮换 / provider 回退。
+func isRetryable(err error) bool {
+	r, _ := classifyErr(err)
+	return r
 }
 
 // cooldownFor 返回某失败 key 被标记为不可用的时间窗。
 func cooldownFor(err error) time.Duration {
-	var hs *HTTPStatusError
-	if errors.As(err, &hs) {
-		switch {
-		case hs.Code == 429:
-			return 60 * time.Second
-		case hs.Code == 401 || hs.Code == 403:
-			return 5 * time.Minute
-		case hs.Code >= 500:
-			return 15 * time.Second
-		}
-	}
-	return 15 * time.Second
+	_, d := classifyErr(err)
+	return d
 }
 
 // sleepCtx 在 d 内等待，context 取消则提前返回 false。

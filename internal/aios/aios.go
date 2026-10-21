@@ -23,18 +23,54 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/oskernel"
 )
 
+// LoopPolicy 收敛 AI 自愈循环的四个预算参数（Introduce Parameter Object：
+// 这四个 int 总是一起出现、一起设默认，属 Data Clumps）。
+type LoopPolicy struct {
+	MaxSteps    int // 自愈循环最大轮数
+	JSONRetries int // 单轮 AI 输出非合法 JSON 时的最大重试
+	MaxRepeats  int // 同一被拒步骤重复提议的循环检测阈值
+	MaxCalls    int // 单次计划允许的最大写系统调用数（防失控）
+}
+
+// 循环预算的命名常量（Replace Magic Number with Symbolic Constant）：
+// 同一语义的默认值曾散落 5 处，收拢到此。
+const (
+	DefaultMaxSteps    = 6
+	DefaultJSONRetries = 3
+	DefaultMaxRepeats  = 3
+	DefaultMaxCalls    = 8
+)
+
+// DefaultLoopPolicy 返回带默认值的循环策略。
+func DefaultLoopPolicy() LoopPolicy {
+	return LoopPolicy{DefaultMaxSteps, DefaultJSONRetries, DefaultMaxRepeats, DefaultMaxCalls}
+}
+
+// withDefaults 把未设（<=0）的字段补默认（单一处，消灭四段同构 if<=0）。
+func (p LoopPolicy) withDefaults() LoopPolicy {
+	if p.MaxSteps <= 0 {
+		p.MaxSteps = DefaultMaxSteps
+	}
+	if p.JSONRetries <= 0 {
+		p.JSONRetries = DefaultJSONRetries
+	}
+	if p.MaxRepeats <= 0 {
+		p.MaxRepeats = DefaultMaxRepeats
+	}
+	if p.MaxCalls <= 0 {
+		p.MaxCalls = DefaultMaxCalls
+	}
+	return p
+}
+
 // Agent 是一个粘合到 OS 内核的 AI 操作器。
 type Agent struct {
 	Kernel   *oskernel.Kernel
 	Provider string // ai provider 名（见 internal/ai）
 	Model    string // 空 = 用 provider 默认模型
 	BaseURL  string // 可选覆盖（custom 代理/网关）
-	MaxCalls int    // 单次计划允许的最大写系统调用数（防失控）
-
-	// 多步自愈循环参数（学 Hermes 智能体循环）。
-	MaxSteps    int // 自愈循环最大轮数（默认 6）
-	JSONRetries int // 单轮 AI 输出非合法 JSON 时的最大重试（默认 3）
-	MaxRepeats  int // 同一被拒步骤重复提议的循环检测阈值（默认 3）
+	// Loop 是 AI 自愈循环预算（多步循环 + JSON 重试 + 循环检测 + 单次上限）。
+	Loop LoopPolicy
 
 	// ChatFunc 注入对话函数（默认走 internal/ai；测试注入假实现）。
 	ChatFunc func(ctx context.Context, system, user string) (string, error)
@@ -44,7 +80,7 @@ type Agent struct {
 // 不依赖调用方先 RegisterBuiltins）。
 func NewAgent(k *oskernel.Kernel, provider, model, baseURL string) *Agent {
 	_ = ai.RegisterBuiltins() // 幂等；后注册覆盖同名，内置只是兜底
-	return &Agent{Kernel: k, Provider: provider, Model: model, BaseURL: baseURL, MaxCalls: 8}
+	return &Agent{Kernel: k, Provider: provider, Model: model, BaseURL: baseURL, Loop: DefaultLoopPolicy()}
 }
 
 // allowedWrites 是 AI 唯一被允许发起的写系统调用（对齐内核写驱动）。
@@ -86,6 +122,9 @@ type Report struct {
 // 学 Hermes 智能体循环：AI 只「提议」，内核执行；当某步被拒/执行失败（或 AI 输出
 // 非合法 JSON），把原因回灌给 AI 让它自愈重提，直到全部接纳 / 返回空计划 / 达步数
 // 上限 / 检测到循环 / ctx 取消。所有「自愈失败」均以 fail-closed 收场（不假装成功）。
+//
+// 结构（Extract Function + Guard Clauses）：Run 只留循环骨架，每轮逻辑在 runRound，
+// 步骤执行在 applySteps，收敛判定在 converge——原长函数拆成若干小函数。
 func (a *Agent) Run(ctx context.Context, goal string, dryRun bool) (*Report, error) {
 	if strings.TrimSpace(goal) == "" {
 		return nil, fmt.Errorf("aios: goal 为空")
@@ -93,121 +132,141 @@ func (a *Agent) Run(ctx context.Context, goal string, dryRun bool) (*Report, err
 	if a.ChatFunc == nil {
 		a.ChatFunc = a.defaultChat
 	}
-
-	maxSteps := a.MaxSteps
-	if maxSteps <= 0 {
-		maxSteps = 6
-	}
-	jsonRetries := a.JSONRetries
-	if jsonRetries <= 0 {
-		jsonRetries = 3
-	}
-	maxRepeats := a.MaxRepeats
-	if maxRepeats <= 0 {
-		maxRepeats = 3
-	}
-	maxCalls := a.MaxCalls
-	if maxCalls <= 0 {
-		maxCalls = 8
-	}
-
 	state, err := a.readState()
 	if err != nil {
 		return nil, fmt.Errorf("aios: 读 OS 状态失败: %w", err)
 	}
-
-	rep := &Report{Goal: goal}
-	var history []string // 反馈轮次（被拒/失败原因），回灌给 AI 自愈
-	seen := map[string]int{}
-	executed := map[string]bool{}
-	jsonAttempts := 0
-
-	for step := 0; step < maxSteps; step++ {
+	rs := &runState{
+		policy:   a.Loop.withDefaults(),
+		rep:      &Report{Goal: goal},
+		state:    state,
+		seen:     map[string]int{},
+		executed: map[string]bool{},
+	}
+	for step := 0; step < rs.policy.MaxSteps; step++ {
 		if err := ctx.Err(); err != nil {
-			return rep, fmt.Errorf("aios: 循环被 context 中断: %w", err)
+			return rs.rep, fmt.Errorf("aios: 循环被 context 中断: %w", err)
 		}
-		user := buildUser(goal, state, history)
-		raw, err := a.ChatFunc(ctx, systemPrompt, user)
+		done, err := a.runRound(ctx, rs, dryRun)
 		if err != nil {
-			return nil, fmt.Errorf("aios: AI 对话失败: %w", err)
+			return rs.rep, err
 		}
+		if done {
+			break
+		}
+	}
+	finalize(rs)
+	return rs.rep, nil
+}
 
-		steps, perr := parsePlan(raw)
-		if perr != nil {
-			// 补 JSON 重试：把错误反馈回去，让模型修正输出（不立即 fail-closed）。
-			jsonAttempts++
-			if jsonAttempts > jsonRetries {
-				return rep, fmt.Errorf("aios: AI 连续 %d 次未输出合法 JSON 步骤数组，拒绝执行: %w", jsonAttempts, perr)
+// runState 是一次 Run 的自愈循环可变状态（避免在函数间传一串局部变量）。
+type runState struct {
+	policy      LoopPolicy
+	rep         *Report
+	state       string          // OS 只读快照
+	history     []string        // 回灌给 AI 的反馈轮次（被拒/失败原因）
+	seen        map[string]int  // (syscall,args) 归一化 → 出现次数（循环检测）
+	executed    map[string]bool // 已执行的步（去重）
+	jsonRetried int             // JSON 重试计数
+}
+
+// runRound 执行一轮 AI 回合：问一次 → 解析 → 校验/执行 → 判定是否继续自愈。
+// 返回 done=true 表示收敛（Run 应停止循环）。
+func (a *Agent) runRound(ctx context.Context, rs *runState, dryRun bool) (done bool, err error) {
+	raw, err := a.ChatFunc(ctx, systemPrompt, buildUser(rs.rep.Goal, rs.state, rs.history))
+	if err != nil {
+		return false, fmt.Errorf("aios: AI 对话失败: %w", err)
+	}
+	steps, perr := parsePlan(raw)
+	if perr != nil {
+		return a.retryJSON(rs, perr)
+	}
+	rejections, progress, loopErr := a.applySteps(rs, steps, dryRun)
+	if loopErr != nil {
+		return false, loopErr // 循环检测 → fail-closed
+	}
+	return converge(rs, steps, rejections, progress)
+}
+
+// retryJSON 处理「AI 输出非合法 JSON」：附解析错误回灌、重问，直至预算耗尽。
+func (a *Agent) retryJSON(rs *runState, perr error) (done bool, err error) {
+	rs.jsonRetried++
+	if rs.jsonRetried > rs.policy.JSONRetries {
+		return false, fmt.Errorf("aios: AI 连续 %d 次未输出合法 JSON 步骤数组，拒绝执行: %w", rs.jsonRetried, perr)
+	}
+	rs.history = append(rs.history, fmt.Sprintf("⚠️ 你上一轮的回复不是合法 JSON 步骤数组（解析错误：%s）。请只输出 JSON 数组，不要解释、不要围栏之外多余文字。", perr))
+	rs.rep.Notes = append(rs.rep.Notes, "AI 输出非合法 JSON：已要求重试并附错误原因")
+	return false, nil // 继续自愈循环
+}
+
+// applySteps 校验并执行本轮步骤；返回被拒/失败原因（供回灌）与是否有进展。
+func (a *Agent) applySteps(rs *runState, steps []rawStep, dryRun bool) (rejections []string, progress bool, err error) {
+	for _, s := range steps {
+		key := stepKey(s)
+		rs.seen[key]++
+		if rs.seen[key] >= rs.policy.MaxRepeats {
+			return nil, false, fmt.Errorf("aios: 检测到循环——步骤 %q 被重复提议 %d 次且无法自愈，fail-closed", s.Syscall, rs.seen[key])
+		}
+		ps := a.classifyStep(s, rs.policy.MaxCalls, countAllowed(rs.rep))
+		if rs.seen[key] == 1 { // 去重：每份独特提案只在 Plan 记一次
+			rs.rep.Plan = append(rs.rep.Plan, ps)
+		}
+		if !ps.Allowed {
+			rejections = append(rejections, fmt.Sprintf("- %s 被拒：%s（参数：%v）", s.Syscall, ps.Reason, s.Args))
+			if rs.seen[key] == 1 {
+				rs.rep.Results = append(rs.rep.Results, ExecResult{Syscall: s.Syscall, OK: false, Err: "拒绝执行: " + ps.Reason})
 			}
-			history = append(history, fmt.Sprintf("⚠️ 你上一轮的回复不是合法 JSON 步骤数组（解析错误：%s）。请只输出 JSON 数组，不要解释、不要围栏之外多余文字。", perr))
-			rep.Notes = append(rep.Notes, "AI 输出非合法 JSON：已要求重试并附错误原因")
 			continue
 		}
-
-		// 校验 + 执行本轮步骤；被拒/失败的原因收集起来回灌（自愈）。
-		rejections := []string{}
-		progress := false
-		for _, s := range steps {
-			key := stepKey(s)
-			seen[key]++
-			if seen[key] >= maxRepeats {
-				return rep, fmt.Errorf("aios: 检测到循环——步骤 %q 被重复提议 %d 次且无法自愈，fail-closed", s.Syscall, seen[key])
-			}
-			ps := a.classifyStep(s, maxCalls, countAllowed(rep))
-			if seen[key] == 1 { // 去重：每份独特提案只在 Plan 记一次
-				rep.Plan = append(rep.Plan, ps)
-			}
-			if !ps.Allowed {
-				rejections = append(rejections, fmt.Sprintf("- %s 被拒：%s（参数：%v）", s.Syscall, ps.Reason, s.Args))
-				if seen[key] == 1 {
-					rep.Results = append(rep.Results, ExecResult{Syscall: s.Syscall, OK: false, Err: "拒绝执行: " + ps.Reason})
+		if rs.executed[key] {
+			continue // 已执行过，跳过去重
+		}
+		if !dryRun {
+			res, e := a.Kernel.Syscall(s.Syscall, s.Args)
+			if e != nil {
+				rejections = append(rejections, fmt.Sprintf("- %s 执行失败：%s（参数：%v）", s.Syscall, e.Error(), s.Args))
+				if rs.seen[key] == 1 {
+					rs.rep.Results = append(rs.rep.Results, ExecResult{Syscall: s.Syscall, OK: false, Err: e.Error()})
 				}
 				continue
 			}
-			if executed[key] {
-				continue // 已执行过，跳过去重
+			if rs.seen[key] == 1 {
+				rs.rep.Results = append(rs.rep.Results, ExecResult{Syscall: s.Syscall, OK: res.OK, Message: res.Message})
 			}
-			if !dryRun {
-				res, e := a.Kernel.Syscall(s.Syscall, s.Args)
-				if e != nil {
-					rejections = append(rejections, fmt.Sprintf("- %s 执行失败：%s（参数：%v）", s.Syscall, e.Error(), s.Args))
-					if seen[key] == 1 {
-						rep.Results = append(rep.Results, ExecResult{Syscall: s.Syscall, OK: false, Err: e.Error()})
-					}
-					continue
-				}
-				if seen[key] == 1 {
-					rep.Results = append(rep.Results, ExecResult{Syscall: s.Syscall, OK: res.OK, Message: res.Message})
-				}
-			}
-			executed[key] = true
-			progress = true
 		}
+		rs.executed[key] = true
+		progress = true
+	}
+	return rejections, progress, nil
+}
 
-		if len(rejections) > 0 {
-			// 自愈：回灌被拒/失败原因，让 AI 下一轮修正（只输出待修正步骤，或 []）。
-			history = append(history, "以下步骤被内核拒绝或执行失败，请修正后重新提议（只输出待修正的步骤数组；若已无修正空间，输出 []）：\n"+strings.Join(rejections, "\n"))
-			rep.Notes = append(rep.Notes, "部分步骤被拒/失败：已回灌原因让 AI 自愈")
-			continue
-		}
-		if len(steps) == 0 {
-			rep.Notes = append(rep.Notes, "AI 返回空计划，收敛。")
-			break
-		}
-		if !progress {
-			rep.Notes = append(rep.Notes, "无新可执行动作（已执行的步被重复提议），收敛。")
-			break
-		}
+// converge 判定本轮是否收敛（Decompose Conditional：四个分支一目了然）。
+func converge(rs *runState, steps []rawStep, rejections []string, progress bool) (done bool, err error) {
+	switch {
+	case len(rejections) > 0:
+		// 自愈：回灌被拒/失败原因，让 AI 下一轮修正（只输出待修正步骤，或 []）。
+		rs.history = append(rs.history, "以下步骤被内核拒绝或执行失败，请修正后重新提议（只输出待修正的步骤数组；若已无修正空间，输出 []）：\n"+strings.Join(rejections, "\n"))
+		rs.rep.Notes = append(rs.rep.Notes, "部分步骤被拒/失败：已回灌原因让 AI 自愈")
+		return false, nil
+	case len(steps) == 0:
+		rs.rep.Notes = append(rs.rep.Notes, "AI 返回空计划，收敛。")
+		return true, nil
+	case !progress:
+		rs.rep.Notes = append(rs.rep.Notes, "无新可执行动作（已执行的步被重复提议），收敛。")
+		return true, nil
+	default:
 		// 本轮全部接纳且有进展 → 收敛（不无限追问；多轮推进由自愈触发）。
-		rep.Notes = append(rep.Notes, "本轮计划全部接纳，收敛。")
-		break
+		rs.rep.Notes = append(rs.rep.Notes, "本轮计划全部接纳，收敛。")
+		return true, nil
 	}
+}
 
-	if len(rep.Plan) == 0 {
-		rep.Notes = append(rep.Notes, "AI 未提出任何动作。")
+// finalize 收尾：补齐报告的说明性 notes。
+func finalize(rs *runState) {
+	if len(rs.rep.Plan) == 0 {
+		rs.rep.Notes = append(rs.rep.Notes, "AI 未提出任何动作。")
 	}
-	rep.Notes = append(rep.Notes, "以上为 AI 提议经内核执行的结果；科学结论/完成判定仍归 leo 或独立反馈。")
-	return rep, nil
+	rs.rep.Notes = append(rs.rep.Notes, "以上为 AI 提议经内核执行的结果；科学结论/完成判定仍归 leo 或独立反馈。")
 }
 
 // classifyStep 判定单步是否准入（对齐 allowedWrites + MaxCalls + validateArgs）。
