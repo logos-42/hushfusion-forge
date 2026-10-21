@@ -32,6 +32,7 @@ var Stages = []Stage{
 		Owner: "parent",
 		Paths: []string{
 			"go.mod",
+			"go.sum", // 2026-10-21 新增：bubbletea v2 等外部依赖引入 go.sum，随 go.mod 归 root
 			"LICENSE",
 			"README.md",
 			"README.en.md",

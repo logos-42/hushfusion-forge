@@ -1,24 +1,27 @@
 package main
 
-// forge os tui —— 零依赖终端 UI（不引入任何外部 TUI 库，遵守仓库契约）。
+// forge os tui —— 基于 bubbletea v2（charm.land/bubbletea/v2）+ lipgloss/v2 + bubbles/v2
+// 的终端 UI。表现层完全独立于 osview/oskernel/aios（这三个库不动），只通过它们的
+// 公共 API 读写：osview 读状态、oskernel 经 doPropose/doOpp/doDecide 写、aios 跑 AI。
 //
-// 实现：用 `stty raw -echo` 进入原始模式逐字节读键，用 ANSI 转义码画框 / 上色 /
-// 清屏。把 osview 的结构化 Snapshot 渲染成可导航的决策层面板，并能在 TUI 内
-// 直接触发 oscheck 门（r）与重新加载（L）。
-//
-// 纪律：TUI 只「看」与「触发只读/已存在的安全操作」，不在这里直接改 os/ 文档
-// （写入走 forge os propose/opp/decide/exp，且必须过 oscheck）。
+// 状态机：面板(panels) / 表单(form) / AI思考中(thinking,带 spinner) / 报告(report)。
+// 焦点态：面板态焦点=所选面板；表单态焦点=当前字段。AI 调用以 tea.Cmd 异步执行，
+// 期间 spinner 持续转动；结果以消息回传，再切到报告屏。
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
+
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/logos-42/hushfusion-forge/internal/aios"
 	"github.com/logos-42/hushfusion-forge/internal/oskernel"
@@ -26,15 +29,18 @@ import (
 )
 
 const (
-	ansiClear = "\033[2J\033[H"
 	ansiReset = "\033[0m"
-	cyan      = "\033[36m"
 	green     = "\033[32m"
 	yellow    = "\033[33m"
-	bold      = "\033[1m"
-	rev       = "\033[7m"
-	gray      = "\033[90m"
-	white     = "\033[97m"
+)
+
+type appState int
+
+const (
+	statePanels appState = iota
+	stateForm
+	stateThinking
+	stateReport
 )
 
 type panel struct {
@@ -44,462 +50,509 @@ type panel struct {
 	scroll   int
 }
 
+// ---------------------------------------------------------------------------
+// 模型
+// ---------------------------------------------------------------------------
+
+type osModel struct {
+	base   string
+	snap   *osview.Snapshot
+	panels []panel
+	sel    int
+	state  appState
+
+	form    *formModel
+	spinner spinner.Model
+
+	thinkingGoal string
+	report       *aios.Report
+	reportErr    error
+
+	status string // 瞬时底部消息
+
+	width  int
+	height int
+	styles uiStyles
+}
+
+type uiStyles struct {
+	appTitle    lipgloss.Style
+	title       lipgloss.Style
+	label       lipgloss.Style
+	value       lipgloss.Style
+	panel       lipgloss.Style
+	panelActive lipgloss.Style
+	footer      lipgloss.Style
+	hint        lipgloss.Style
+	spinner     lipgloss.Style
+	err         lipgloss.Style
+	ok          lipgloss.Style
+	input       lipgloss.Style
+}
+
+type formModel struct {
+	kind   string
+	title  string
+	labels []string
+	inputs []textinput.Model
+	focus  int
+}
+
+type aiResultMsg struct {
+	rep *aios.Report
+	err error
+}
+
+func newOSModel(base string, snap *osview.Snapshot) *osModel {
+	m := &osModel{
+		base:   base,
+		snap:   snap,
+		panels: buildPanels(snap),
+		state:  statePanels,
+		width:  80,
+		height: 24,
+	}
+	m.initStyles()
+	m.spinner = spinner.New(
+		spinner.WithSpinner(spinner.Dot),
+		spinner.WithStyle(m.styles.spinner),
+	)
+	return m
+}
+
+func (m *osModel) initStyles() {
+	m.styles = uiStyles{
+		appTitle:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")),
+		title:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("51")),
+		label:       lipgloss.NewStyle().Foreground(lipgloss.Color("39")),
+		value:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
+		panel:       lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("241")).Padding(0, 1),
+		panelActive: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("51")).Padding(0, 1),
+		footer:      lipgloss.NewStyle().Reverse(true).Foreground(lipgloss.Color("252")),
+		hint:        lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")),
+		spinner:     lipgloss.NewStyle().Foreground(lipgloss.Color("51")),
+		err:         lipgloss.NewStyle().Foreground(lipgloss.Color("203")),
+		ok:          lipgloss.NewStyle().Foreground(lipgloss.Color("42")),
+		input:       lipgloss.NewStyle(),
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bubbletea 接口
+// ---------------------------------------------------------------------------
+
+func (m *osModel) Init() tea.Cmd { return nil }
+
+func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+	case spinner.TickMsg:
+		if m.state == stateThinking {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	case aiResultMsg:
+		m.state = stateReport
+		m.report = msg.rep
+		m.reportErr = msg.err
+		if msg.err != nil {
+			m.status = m.styles.err.Render("AI 运行失败（见报告屏）")
+		}
+		m.reload()
+		return m, nil
+	case tea.KeyPressMsg:
+		switch m.state {
+		case stateThinking:
+			switch msg.String() {
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			}
+			return m, nil
+		case stateReport:
+			switch msg.String() {
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			default:
+				m.state = statePanels
+				m.reload()
+				m.status = ""
+				return m, nil
+			}
+		case stateForm:
+			return m.updateForm(msg)
+		default: // statePanels
+			switch msg.String() {
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			case "up", "k":
+				if m.panels[m.sel].expanded {
+					m.panels[m.sel].scroll--
+				} else if m.sel > 0 {
+					m.sel--
+				}
+			case "down", "j":
+				if m.panels[m.sel].expanded {
+					m.panels[m.sel].scroll++
+				} else if m.sel < len(m.panels)-1 {
+					m.sel++
+				}
+			case "enter":
+				m.panels[m.sel].expanded = !m.panels[m.sel].expanded
+				m.panels[m.sel].scroll = 0
+			case "n", "N":
+				m.openForm("task")
+			case "o", "O":
+				m.openForm("opp")
+			case "d", "D":
+				m.openForm("decide")
+			case "a", "A":
+				m.openForm("ai")
+			case "r", "R":
+				m.status = runCheckInline()
+				m.reload()
+			case "L", "l":
+				m.reload()
+				m.status = m.styles.ok.Render("已重新加载")
+			}
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+func (m *osModel) View() tea.View {
+	w := m.width
+	if w < 40 {
+		w = 80
+	}
+	var b strings.Builder
+	b.WriteString(m.styles.appTitle.Render(" HUSHFUSION OS · 宏内核 TUI ") + "\n\n")
+	switch m.state {
+	case stateForm:
+		b.WriteString(m.renderForm())
+	case stateThinking:
+		b.WriteString(m.renderThinking())
+	case stateReport:
+		b.WriteString(m.renderReport())
+	default:
+		b.WriteString(m.renderPanels())
+	}
+	v := tea.NewView(b.String())
+	v.AltScreen = true
+	return v
+}
+
+// ---------------------------------------------------------------------------
+// 表单
+// ---------------------------------------------------------------------------
+
+func (m *osModel) openForm(kind string) {
+	fm := &formModel{kind: kind}
+	switch kind {
+	case "task":
+		fm.title = "新任务（proposed）"
+		fm.labels = []string{"ID (T-XX)", "标题", "I (1-5)", "E (1-5)", "R (1-5)", "C (1-5)", "依赖/阻塞 (可空)"}
+	case "opp":
+		fm.title = "新机会"
+		fm.labels = []string{"机会", "来源", "研究方向匹配", "下一步"}
+	case "decide":
+		fm.title = "新决策"
+		fm.labels = []string{"决策", "依据（证据路径，禁止「我觉得」）"}
+	case "ai":
+		fm.title = "AI 目标（经内核受控系统调用提议）"
+		fm.labels = []string{"目标", "provider（默认 zai）", "model（空=provider 默认）"}
+	}
+	fm.inputs = make([]textinput.Model, len(fm.labels))
+	for i := range fm.inputs {
+		ti := textinput.New()
+		ti.Placeholder = fm.labels[i]
+		fm.inputs[i] = ti
+	}
+	if kind == "ai" {
+		p := os.Getenv("HUSHFUSION_AI_PROVIDER")
+		if p == "" {
+			p = "zai"
+		}
+		fm.inputs[1].SetValue(p)
+	}
+	fm.inputs[0].Focus()
+	m.form = fm
+	m.state = stateForm
+}
+
+func (m *osModel) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.state = statePanels
+		m.status = m.styles.err.Render("已取消录入")
+		m.form = nil
+		return m, nil
+	case "enter":
+		if m.form.focus < len(m.form.inputs)-1 {
+			m.form.inputs[m.form.focus].Blur()
+			m.form.focus++
+			m.form.inputs[m.form.focus].Focus()
+			return m, nil
+		}
+		return m.submitForm()
+	case "tab":
+		m.form.inputs[m.form.focus].Blur()
+		m.form.focus = (m.form.focus + 1) % len(m.form.inputs)
+		m.form.inputs[m.form.focus].Focus()
+		return m, nil
+	case "shift+tab":
+		m.form.inputs[m.form.focus].Blur()
+		m.form.focus = (m.form.focus - 1 + len(m.form.inputs)) % len(m.form.inputs)
+		m.form.inputs[m.form.focus].Focus()
+		return m, nil
+	default:
+		var cmd tea.Cmd
+		m.form.inputs[m.form.focus], cmd = m.form.inputs[m.form.focus].Update(msg)
+		return m, cmd
+	}
+}
+
+// submitForm 把表单映射成内核写入；AI 表单则进入异步思考态。
+func (m *osModel) submitForm() (tea.Model, tea.Cmd) {
+	v := func(i int) string { return strings.TrimSpace(m.form.inputs[i].Value()) }
+	switch m.form.kind {
+	case "task":
+		id, title, deps := v(0), v(1), v(6)
+		if id == "" || title == "" {
+			m.status = m.styles.err.Render("ID 与标题必填")
+			return m, nil
+		}
+		parse := func(s string) int { n, _ := strconv.Atoi(s); return n }
+		i, e, r, c := parse(v(2)), parse(v(3)), parse(v(4)), parse(v(5))
+		if i < 1 || i > 5 || e < 1 || e > 5 || r < 1 || r > 5 || c < 1 || c > 5 {
+			m.status = m.styles.err.Render("I/E/R/C 必须 1..5")
+			return m, nil
+		}
+		if _, err := doPropose(m.base, id, i, e, r, c, title, deps); err != nil {
+			m.status = m.styles.err.Render("录入失败: " + err.Error())
+			return m, nil
+		}
+		m.status = m.styles.ok.Render(fmt.Sprintf("任务 %s 已录入（P=%d）", id, i*e*r/c))
+	case "opp":
+		if v(0) == "" {
+			m.status = m.styles.err.Render("机会必填")
+			return m, nil
+		}
+		if err := doOpp(m.base, v(0), v(1), v(2), v(3), "proposed", time.Now().Format("2006-01-02")); err != nil {
+			m.status = m.styles.err.Render("录入失败: " + err.Error())
+			return m, nil
+		}
+		m.status = m.styles.ok.Render("机会已录入")
+	case "decide":
+		if v(0) == "" {
+			m.status = m.styles.err.Render("决策必填")
+			return m, nil
+		}
+		if _, err := doDecide(m.base, v(0), v(1), "—", "—", "active"); err != nil {
+			m.status = m.styles.err.Render("录入失败: " + err.Error())
+			return m, nil
+		}
+		m.status = m.styles.ok.Render("决策已录入")
+	case "ai":
+		goal, provider, model := v(0), v(1), v(2)
+		if goal == "" {
+			m.status = m.styles.err.Render("目标必填")
+			return m, nil
+		}
+		if provider == "" {
+			provider = os.Getenv("HUSHFUSION_AI_PROVIDER")
+		}
+		if provider == "" {
+			provider = "zai"
+		}
+		m.state = stateThinking
+		m.thinkingGoal = goal
+		m.report, m.reportErr = nil, nil
+		m.status = ""
+		return m, tea.Batch(m.spinner.Tick, runAICmd(m.base, goal, provider, model))
+	}
+	m.reload()
+	m.form = nil
+	m.state = statePanels
+	return m, nil
+}
+
+// runAICmd 以 tea.Cmd 异步跑 AI 粘合：bubbletea 在独立 goroutine 执行，期间 spinner
+// 持续转动；结果以 aiResultMsg 回传。aios 库本身不动。
+func runAICmd(base, goal, provider, model string) tea.Cmd {
+	return func() tea.Msg {
+		agent := aios.NewAgent(oskernel.New(base), provider, model, os.Getenv("HUSHFUSION_AI_BASE_URL"))
+		rep, err := agent.Run(context.Background(), goal, false)
+		return aiResultMsg{rep: rep, err: err}
+	}
+}
+
+func (m *osModel) reload() {
+	if s, err := osview.Load(m.base); err == nil {
+		m.snap = s
+		m.panels = buildPanels(s)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 渲染
+// ---------------------------------------------------------------------------
+
+func (m *osModel) renderPanels() string {
+	w := m.width
+	if w < 40 {
+		w = 80
+	}
+	avail := m.height - 4
+	if avail < 6 {
+		avail = 6
+	}
+	expIdx := -1
+	for i, p := range m.panels {
+		if p.expanded {
+			expIdx = i
+		}
+	}
+	var blocks []string
+	used := 0
+	for i, p := range m.panels {
+		ls := p.lines()
+		var body []string
+		if i == expIdx {
+			room := avail - used - 2
+			if room < 1 {
+				room = 1
+			}
+			start := clamp(p.scroll, 0, max(0, len(ls)-room))
+			for j := start; j < len(ls) && len(body) < room; j++ {
+				body = append(body, ls[j])
+			}
+		} else if len(ls) > 0 {
+			body = []string{ls[0]}
+		} else {
+			body = []string{"（空）"}
+		}
+		head := m.styles.label.Render("▌ " + p.name)
+		content := append([]string{head}, body...)
+		st := m.styles.panel
+		if i == m.sel {
+			st = m.styles.panelActive
+		}
+		rendered := st.Width(w - 2).Render(strings.Join(content, "\n"))
+		blocks = append(blocks, rendered)
+		used += strings.Count(rendered, "\n") + 1
+		if used >= avail {
+			break
+		}
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, blocks...) + "\n" + m.renderFooter()
+}
+
+func (m *osModel) renderFooter() string {
+	hint := "↑↓ 选择 · Enter 展开 · n/o/d 录入 · a AI目标 · r check · L 重载 · q 退出"
+	var s string
+	if m.status != "" {
+		s = m.status + "   " + m.styles.hint.Render(hint)
+	} else {
+		s = m.styles.hint.Render(hint)
+	}
+	return m.styles.footer.Width(m.width-2).Render(s) + "\n"
+}
+
+func (m *osModel) renderForm() string {
+	var b strings.Builder
+	b.WriteString(m.styles.title.Render("录入："+m.form.title) + "\n\n")
+	for i, inp := range m.form.inputs {
+		label := m.form.labels[i] + "："
+		if i == m.form.focus {
+			b.WriteString(m.styles.label.Render("▶ ") + label + "\n")
+		} else {
+			b.WriteString("  " + label + "\n")
+		}
+		b.WriteString(inp.View() + "\n")
+	}
+	b.WriteString("\n" + m.styles.hint.Render("Enter=下一字段/提交 · Tab 切换 · Esc=取消"))
+	if m.status != "" {
+		b.WriteString("\n" + m.status)
+	}
+	return b.String()
+}
+
+func (m *osModel) renderThinking() string {
+	var b strings.Builder
+	b.WriteString(m.styles.title.Render("AI 思考中…") + "\n\n")
+	b.WriteString("  " + m.spinner.View() + " " + m.thinkingGoal + "\n\n")
+	b.WriteString(m.styles.hint.Render("正在经内核受控系统调用执行（可 q 退出，报告随后呈现）"))
+	return b.String()
+}
+
+func (m *osModel) renderReport() string {
+	var b strings.Builder
+	b.WriteString(m.styles.title.Render("AI 粘合报告") + "\n\n")
+	if m.reportErr != nil {
+		b.WriteString(m.styles.err.Render("运行失败: "+m.reportErr.Error()) + "\n\n")
+		b.WriteString(m.styles.hint.Render("任意键返回 · q 退出"))
+		return b.String()
+	}
+	if m.report != nil {
+		b.WriteString("目标: " + m.report.Goal + "\n\n")
+		b.WriteString("计划（准入判定）:\n")
+		for i, p := range m.report.Plan {
+			mark := m.styles.ok.Render("✓允许")
+			if !p.Allowed {
+				mark = m.styles.err.Render("✗拒绝: " + p.Reason)
+			}
+			b.WriteString(fmt.Sprintf("  %d. %s %s — %s\n", i+1, p.Syscall, mark, argsSummary(p.Args)))
+		}
+		if len(m.report.Results) > 0 {
+			b.WriteString("\n执行结果（经内核）:\n")
+			for _, r := range m.report.Results {
+				if r.OK {
+					b.WriteString(m.styles.ok.Render("  ✓ ") + r.Syscall + " " + r.Message + "\n")
+				} else {
+					b.WriteString(m.styles.err.Render("  ✗ ") + r.Syscall + " " + r.Err + "\n")
+				}
+			}
+		}
+		for _, n := range m.report.Notes {
+			b.WriteString("\n> " + n + "\n")
+		}
+	}
+	b.WriteString("\n" + m.styles.hint.Render("任意键返回 · q 退出"))
+	return b.String()
+}
+
+// ---------------------------------------------------------------------------
+// 入口（非 TTY 退化成仪表盘）
+// ---------------------------------------------------------------------------
+
 func cmdOSTUI() int {
 	base := osBaseDir()
 	snap, err := osview.Load(base)
 	if err != nil {
 		return fail("%v", err)
 	}
-
-	// 进原始模式
-	restore, terr := enterRaw()
-	if terr != nil {
-		// 非终端（被管道）则退化成仪表盘文本。
+	if st, _ := os.Stdout.Stat(); (st.Mode() & os.ModeCharDevice) == 0 {
 		fmt.Print(snap.Dashboard())
 		return 0
 	}
-	defer restore()
-
-	panels := buildPanels(snap)
-	sel := 0
-	var form *formState
-	var aiRep *aios.Report
-	var aiErr error
-	showAI := false
-	footer := cyan + "r=check  L=reload  n/o/d 录入  a=AI目标  Enter=展开  ↑↓=选择  q=退出" + ansiReset
-
-	reload := func() {
-		if s2, e := osview.Load(base); e == nil {
-			snap = s2
-			panels = buildPanels(snap)
-		}
-	}
-	draw := func() {
-		switch {
-		case form != nil:
-			drawForm(form, footer)
-		case showAI:
-			drawAIScreen(aiRep, aiErr, footer)
-		default:
-			renderTUI(panels, sel, footer)
-		}
-	}
-
-	draw()
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		b, err := reader.ReadByte()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			continue
-		}
-		// 表单录入模式：吞掉按键，构造字段。
-		if form != nil {
-			done, cancelled, _ := form.handleByte(reader, b)
-			if cancelled {
-				form = nil
-				footer = yellow + "已取消录入" + ansiReset
-				draw()
-				continue
-			}
-			if done {
-				f := form
-				form = nil
-				if f.kind == "aigoal" {
-					// phase-3 AI 粘合：思考中 → 同步运行 → 报告屏。
-					provider, model := f.val(1), f.val(2)
-					if provider == "" {
-						provider = os.Getenv("HUSHFUSION_AI_PROVIDER")
-					}
-					if provider == "" {
-						provider = "zai"
-					}
-					drawThinking(f.val(0), provider, model)
-					rep, rerr := runAISync(base, f.val(0), provider, model)
-					aiRep, aiErr = rep, rerr
-					showAI = true
-					reload()
-					if rerr != nil {
-						footer = yellow + "AI 运行失败（见报告屏）" + ansiReset
-					}
-					draw()
-					continue
-				}
-				if m, e := submitForm(base, f); e != nil {
-					footer = yellow + "录入失败: " + e.Error() + ansiReset
-				} else {
-					footer = green + m + ansiReset
-					reload()
-				}
-				draw()
-				continue
-			}
-			draw()
-			continue
-		}
-		// AI 报告屏：任意键返回面板（q 退出）。
-		if showAI {
-			switch b {
-			case 'q', 'Q', 3:
-				fmt.Print(ansiClear)
-				return 0
-			default:
-				showAI = false
-				footer = cyan + "r=check  L=reload  n/o/d 录入  a=AI目标  Enter=展开  ↑↓=选择  q=退出" + ansiReset
-				draw()
-			}
-			continue
-		}
-		// 转义序列（方向键等）：ESC [ X
-		if b == 27 {
-			_, _ = reader.ReadByte() // '['
-			code, _ := reader.ReadByte()
-			switch code {
-			case 'A': // up
-				if panels[sel].expanded {
-					panels[sel].scroll--
-				} else if sel > 0 {
-					sel--
-				}
-			case 'B': // down
-				if panels[sel].expanded {
-					panels[sel].scroll++
-				} else if sel < len(panels)-1 {
-					sel++
-				}
-			}
-			draw()
-			continue
-		}
-		switch b {
-		case 'q', 'Q', 3: // q / Ctrl-C
-			fmt.Print(ansiClear)
-			return 0
-		case 13, 10: // Enter
-			panels[sel].expanded = !panels[sel].expanded
-			panels[sel].scroll = 0
-			draw()
-		case 'n', 'N': // 新任务
-			form = newTaskForm()
-			draw()
-		case 'o', 'O': // 新机会
-			form = newOppForm()
-			draw()
-		case 'd', 'D': // 新决策
-			form = newDecideForm()
-			draw()
-		case 'a', 'A': // AI 目标（phase-3 粘合）
-			form = newAIGoalForm()
-			draw()
-		case 'r', 'R':
-			footer = runCheckInline()
-			if s2, e := osview.Load(base); e == nil {
-				snap = s2
-				panels = buildPanels(snap)
-			}
-			draw()
-		case 'L', 'l':
-			if s2, e := osview.Load(base); e == nil {
-				snap = s2
-				panels = buildPanels(snap)
-				footer = green + "已重新加载" + ansiReset
-			}
-			draw()
-		case '?':
-			footer = yellow + "↑↓ 选择面板，Enter 展开，n/o/d 录入任务/机会/决策，a=AI 目标（经内核受控提议），r=check，L=reload，q=退出" + ansiReset
-			draw()
-		}
+	m := newOSModel(base, snap)
+	p := tea.NewProgram(m)
+	if _, err := p.Run(); err != nil {
+		return fail("os tui: %v", err)
 	}
 	return 0
 }
 
-// newAIGoalForm 构造 AI 目标表单（goal 必填；provider/model 可空 → env/默认）。
-func newAIGoalForm() *formState {
-	provider := os.Getenv("HUSHFUSION_AI_PROVIDER")
-	if provider == "" {
-		provider = "zai"
-	}
-	return &formState{
-		title: "AI 目标（经内核受控系统调用提议）",
-		kind:  "aigoal",
-		fields: []formField{
-			{label: "目标"},
-			{label: "provider", buf: []byte(provider)},
-			{label: "model（空=provider 默认）"},
-		},
-	}
-}
-
-// runAISync 同步跑一次 AI 粘合（阻塞；调用前已画"思考中"屏）。
-func runAISync(base, goal, provider, model string) (*aios.Report, error) {
-	agent := aios.NewAgent(oskernel.New(base), provider, model, os.Getenv("HUSHFUSION_AI_BASE_URL"))
-	return agent.Run(context.Background(), goal, false)
-}
-
-func drawThinking(goal, provider, model string) {
-	cols, _ := termSize()
-	if cols < 40 {
-		cols = 80
-	}
-	var b strings.Builder
-	b.WriteString(ansiClear)
-	title := " AI 思考中… "
-	b.WriteString(rev + bold + title + strings.Repeat(" ", max(0, cols-dispWidth(title))) + ansiReset + "\n\n")
-	box := []string{
-		"目标: " + goal,
-		"provider: " + provider + "   model: " + model,
-		"",
-		"已发送请求，正在等待响应并执行受控系统调用…",
-		"（同步等待中；报告随后呈现，任意键可返回）",
-	}
-	b.WriteString(renderPanel("phase-3 AI 粘合", box, cols, true))
-	fmt.Print(b.String())
-}
-
-func drawAIScreen(rep *aios.Report, err error, footer string) {
-	cols, rows := termSize()
-	if cols < 40 {
-		cols = 80
-	}
-	if rows < 10 {
-		rows = 24
-	}
-	var b strings.Builder
-	b.WriteString(ansiClear)
-	title := " AI 粘合报告 "
-	b.WriteString(rev + bold + title + strings.Repeat(" ", max(0, cols-dispWidth(title))) + ansiReset + "\n\n")
-	var lines []string
-	switch {
-	case err != nil:
-		lines = append(lines, "运行失败: "+err.Error())
-	case rep != nil:
-		lines = append(lines, "目标: "+rep.Goal, "", "计划（准入判定）:")
-		for i, p := range rep.Plan {
-			mark := "✓允许"
-			if !p.Allowed {
-				mark = "✗拒绝: " + p.Reason
-			}
-			lines = append(lines, fmt.Sprintf("  %d. %s %s — %s", i+1, p.Syscall, mark, argsSummary(p.Args)))
-		}
-		if len(rep.Results) > 0 {
-			lines = append(lines, "", "执行结果（经内核）:")
-			for _, r := range rep.Results {
-				if r.OK {
-					lines = append(lines, "  ✓ "+r.Syscall+" "+r.Message)
-				} else {
-					lines = append(lines, "  ✗ "+r.Syscall+" "+r.Err)
-				}
-			}
-		}
-		for _, n := range rep.Notes {
-			lines = append(lines, "", "> "+n)
-		}
-	}
-	maxLines := rows - 6
-	if maxLines < 1 {
-		maxLines = 1
-	}
-	if len(lines) > maxLines {
-		lines = lines[len(lines)-maxLines:]
-	}
-	b.WriteString(renderPanel("结果", lines, cols, true))
-	b.WriteString(bar("任意键返回 · q 退出", cols))
-	_ = footer
-	fmt.Print(b.String())
-}
-
-// ---- 表单录入（TUI 内直接录入任务/机会/决策） ----
-
-type formField struct {
-	label string
-	buf   []byte
-	hide  bool // 是否回显（预留）
-}
-
-type formState struct {
-	title  string
-	kind   string // task | opp | decide
-	fields []formField
-	idx    int
-}
-
-func newTaskForm() *formState {
-	return &formState{
-		title: "新任务（proposed）",
-		kind:  "task",
-		fields: []formField{
-			{label: "ID (T-XX)"},
-			{label: "标题"},
-			{label: "I (1-5)"},
-			{label: "E (1-5)"},
-			{label: "R (1-5)"},
-			{label: "C (1-5)"},
-			{label: "依赖/阻塞 (可空)"},
-		},
-	}
-}
-
-func newOppForm() *formState {
-	return &formState{
-		title: "新机会",
-		kind:  "opp",
-		fields: []formField{
-			{label: "机会"},
-			{label: "来源"},
-			{label: "研究方向匹配"},
-			{label: "下一步"},
-		},
-	}
-}
-
-func newDecideForm() *formState {
-	return &formState{
-		title: "新决策",
-		kind:  "decide",
-		fields: []formField{
-			{label: "决策"},
-			{label: "依据（证据路径，禁止「我觉得」）"},
-		},
-	}
-}
-
-func (f *formState) val(i int) string { return string(f.fields[i].buf) }
-
-// handleByte 处理一个按键；返回 (完成, 取消, 消息)。
-func (f *formState) handleByte(reader *bufio.Reader, b byte) (done, cancelled bool, msg string) {
-	switch b {
-	case 27: // Esc（含方向键转义序列）：若为方向键则忽略，否则取消
-		if reader.Buffered() >= 2 {
-			nb, _ := reader.ReadByte()
-			if nb == '[' {
-				_, _ = reader.ReadByte()
-				return false, false, ""
-			}
-		}
-		return false, true, ""
-	case 13, 10: // Enter：下一字段 / 提交
-		f.idx++
-		if f.idx >= len(f.fields) {
-			return true, false, ""
-		}
-		return false, false, ""
-	case 127, 8: // 退格：删一个 rune
-		buf := f.fields[f.idx].buf
-		f.fields[f.idx].buf = trimLastRune(buf)
-		return false, false, ""
-	default:
-		// 可打印字符（含 UTF-8 多字节：>=0x80）
-		if (b >= 0x20 && b < 0x7f) || b >= 0x80 {
-			f.fields[f.idx].buf = append(f.fields[f.idx].buf, b)
-		}
-		return false, false, ""
-	}
-}
-
-// submitForm 把表单写进 os/（复用 CLI 的 append 核心）。
-func submitForm(base string, f *formState) (string, error) {
-	switch f.kind {
-	case "task":
-		i := atoiSafe(f.val(2))
-		e := atoiSafe(f.val(3))
-		r := atoiSafe(f.val(4))
-		c := atoiSafe(f.val(5))
-		deps := f.val(6)
-		if deps == "" {
-			deps = "—"
-		}
-		p, err := doPropose(base, f.val(0), i, e, r, c, f.val(1), deps)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("任务 %s 已录入（P=%d）", f.val(0), p), nil
-	case "opp":
-		if err := doOpp(base, f.val(0), f.val(1), f.val(2), f.val(3), "proposed", today()); err != nil {
-			return "", err
-		}
-		return "机会已录入", nil
-	case "decide":
-		id, err := doDecide(base, f.val(0), f.val(1), "—", "—", "active")
-		if err != nil {
-			return "", err
-		}
-		return id + " 已录入", nil
-	}
-	return "", fmt.Errorf("未知表单类型 %q", f.kind)
-}
-
-func today() string { return time.Now().Format("2006-01-02") }
-
-func trimLastRune(b []byte) []byte {
-	if len(b) == 0 {
-		return b
-	}
-	i := len(b) - 1
-	for i > 0 && (b[i]&0xC0) == 0x80 {
-		i--
-	}
-	return b[:i]
-}
-
-func drawForm(f *formState, footer string) {
-	cols, rows := termSize()
-	if cols < 40 {
-		cols = 80
-	}
-	if rows < 8 {
-		rows = 24
-	}
-	var b strings.Builder
-	b.WriteString(ansiClear)
-
-	// 顶部栏
-	title := " 录入：" + f.title + " "
-	b.WriteString(rev + bold + title + strings.Repeat(" ", max(0, cols-dispWidth(title))) + ansiReset + "\n\n")
-
-	// 表单字段（当前字段高亮 + 块光标）
-	for i, fld := range f.fields {
-		active := i == f.idx
-		label := fld.label + ": "
-		val := string(fld.buf)
-		if active {
-			val += "█"
-		}
-		line := label + val
-		// 前缀：当前字段用 ▶，其它用空格
-		prefix := "  "
-		if active {
-			prefix = cyan + bold + "▶ " + ansiReset
-		}
-		b.WriteString(prefix + fitLine(line, cols-4) + "\n")
-	}
-
-	// 中部留白，底栏贴底
-	pad := rows - 4 - len(f.fields)
-	for i := 0; i < pad; i++ {
-		b.WriteString("\n")
-	}
-	hint := "Enter=下一字段/提交 · Esc=取消"
-	b.WriteString(bar(hint, cols))
-	b.WriteString(bar(footer, cols))
-	fmt.Print(b.String())
-}
-
-// enterRaw 进入终端原始模式；返回还原函数。
-func enterRaw() (func(), error) {
-	if os.Getenv("TERM") == "" {
-		return nil, fmt.Errorf("非终端")
-	}
-	if err := exec.Command("stty", "raw", "-echo").Run(); err != nil {
-		return nil, err
-	}
-	restore := func() {
-		_ = exec.Command("stty", "-raw", "echo").Run()
-		fmt.Print(ansiReset)
-	}
-	return restore, nil
-}
+// ---------------------------------------------------------------------------
+// 复用的展示/工具（与旧版一致，供 buildPanels / runCheckInline 使用）
+// ---------------------------------------------------------------------------
 
 func buildPanels(snap *osview.Snapshot) []panel {
 	return []panel{
@@ -567,179 +620,6 @@ func buildPanels(snap *osview.Snapshot) []panel {
 	}
 }
 
-func renderTUI(panels []panel, sel int, footer string) {
-	cols, rows := termSize()
-	if cols < 40 {
-		cols = 80
-	}
-	if rows < 10 {
-		rows = 24
-	}
-	var b strings.Builder
-	b.WriteString(ansiClear)
-
-	// 顶部应用栏
-	title := " HUSHFUSION OS · 宏内核 TUI "
-	b.WriteString(rev + bold + title + strings.Repeat(" ", max(0, cols-dispWidth(title))) + ansiReset + "\n")
-
-	// 面板区：折叠面板各占 3 行（边框+1 行内容+边框），展开面板吃剩余高度。
-	avail := rows - 3 // 顶栏 + 底栏 + 一行间隔
-	expandedIdx := -1
-	for i, p := range panels {
-		if p.expanded {
-			expandedIdx = i
-		}
-	}
-	used := 0
-	for i, p := range panels {
-		ls := p.lines()
-		var content []string
-		height := 3
-		if i == expandedIdx {
-			// 展开：给它剩余可用高度。
-			room := avail - used - 2
-			if room < 1 {
-				room = 1
-			}
-			if p.scroll < 0 {
-				p.scroll = 0
-			}
-			if p.scroll > len(ls) {
-				p.scroll = len(ls)
-			}
-			for j := p.scroll; j < len(ls) && len(content) < room; j++ {
-				content = append(content, ls[j])
-			}
-			if len(content) == 0 {
-				content = []string{"（空）"}
-			}
-			height = len(content) + 2
-		} else if len(ls) > 0 {
-			content = []string{ls[0]}
-		} else {
-			content = []string{"（空）"}
-		}
-		b.WriteString(renderPanel(p.name, content, cols, i == sel))
-		used += height
-		if used >= avail {
-			break
-		}
-	}
-
-	// 底部状态栏
-	b.WriteString(bar(footer, cols))
-	fmt.Print(b.String())
-}
-
-// renderPanel 画一个圆角边框面板，标题嵌在上边框；active 时边框高亮。
-func renderPanel(name string, content []string, width int, active bool) string {
-	border := gray
-	if active {
-		border = cyan + bold
-	}
-	inner := width - 2
-	if inner < 4 {
-		inner = 4
-	}
-	title := " " + marker(active) + " " + name + " "
-	pad := inner - dispWidth(title)
-	if pad < 0 {
-		pad = 0
-	}
-	top := border + "╭" + title + strings.Repeat("─", pad) + "╮" + ansiReset
-	var b strings.Builder
-	b.WriteString(top + "\n")
-	for _, ln := range content {
-		b.WriteString(border + "│" + ansiReset + fitLine(ln, inner) + border + "│" + ansiReset + "\n")
-	}
-	b.WriteString(border + "╰" + strings.Repeat("─", inner) + "╯" + ansiReset + "\n")
-	return b.String()
-}
-
-// bar 画一条全宽底栏（反色）。
-func bar(text string, width int) string {
-	t := " " + text + " "
-	pad := width - dispWidth(t)
-	if pad < 0 {
-		pad = 0
-	}
-	return rev + t + strings.Repeat(" ", pad) + ansiReset + "\n"
-}
-
-// fitLine 把一行内容适配到 inner 显示宽：左一空格 + 内容（按显示宽截断）+ 右补齐。
-func fitLine(s string, inner int) string {
-	s = strings.TrimSpace(s)
-	const lead = 1
-	budget := inner - lead - 1 // 留一个尾随空格
-	if budget < 1 {
-		budget = 1
-	}
-	// 按显示宽截断
-	var out []rune
-	w := 0
-	for _, r := range s {
-		rw := runeWidth(r)
-		if w+rw > budget {
-			break
-		}
-		out = append(out, r)
-		w += rw
-	}
-	body := string(out)
-	tail := budget - w
-	if tail < 0 {
-		tail = 0
-	}
-	return " " + body + strings.Repeat(" ", tail) + " "
-}
-
-// dispWidth 计算字符串显示宽度（跳过 ANSI 转义，CJK 记 2）。
-func dispWidth(s string) int {
-	w := 0
-	i := 0
-	for i < len(s) {
-		if s[i] == 0x1b { // ESC：跳过 \033[...m
-			j := strings.IndexByte(s[i:], 'm')
-			if j < 0 {
-				break
-			}
-			i += j + 1
-			continue
-		}
-		r := []rune(s[i:])[0]
-		w += runeWidth(r)
-		i += len(string(r))
-	}
-	return w
-}
-
-func runeWidth(r rune) int {
-	if (r >= 0x1100 && r <= 0x115F) ||
-		(r >= 0x2E80 && r <= 0xA4CF) ||
-		(r >= 0xAC00 && r <= 0xD7A3) ||
-		(r >= 0xF900 && r <= 0xFAFF) ||
-		(r >= 0xFE30 && r <= 0xFE6F) ||
-		(r >= 0xFF00 && r <= 0xFF60) ||
-		(r >= 0xFFE0 && r <= 0xFFE6) ||
-		(r >= 0x20000 && r <= 0x3FFFD) {
-		return 2
-	}
-	return 1
-}
-
-func marker(on bool) string {
-	if on {
-		return "▶"
-	}
-	return " "
-}
-
-// blankCell 判断实验某态是否为空位（与 oscore.IsEmpty 同口径，TUI 本地用）。
-func blankCell(s string) bool {
-	s = strings.TrimSpace(s)
-	return s == "" || s == "—" || s == "-" || s == "–"
-}
-
 func runCheckInline() string {
 	cmd := exec.Command("go", "run", "./os/tools/oscheck")
 	cmd.Dir = repoRoot()
@@ -753,20 +633,16 @@ func runCheckInline() string {
 	return green + "oscheck: 全绿（T1–T8 / K1–K2 / E1 / A1）" + ansiReset
 }
 
-func termSize() (int, int) {
-	out, err := exec.Command("stty", "size").Output()
-	if err != nil {
-		return 80, 24
+func blankCell(s string) bool {
+	s = strings.TrimSpace(s)
+	return s == "" || s == "—" || s == "-" || s == "–"
+}
+
+func marker(on bool) string {
+	if on {
+		return "▶"
 	}
-	var rows, cols int
-	fmt.Sscan(string(out), &rows, &cols)
-	if cols == 0 {
-		cols = 80
-	}
-	if rows == 0 {
-		rows = 24
-	}
-	return cols, rows
+	return " "
 }
 
 func truncateLine(s string, n int) string {
@@ -787,11 +663,14 @@ func firstNonEmptyLine(s string) string {
 	return "(无输出)"
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
 	}
-	return b
+	if v > hi {
+		return hi
+	}
+	return v
 }
 
 func ternary(cond bool, a, b string) string {
