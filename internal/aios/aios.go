@@ -31,6 +31,11 @@ type Agent struct {
 	BaseURL  string // 可选覆盖（custom 代理/网关）
 	MaxCalls int    // 单次计划允许的最大写系统调用数（防失控）
 
+	// 多步自愈循环参数（学 Hermes 智能体循环）。
+	MaxSteps    int // 自愈循环最大轮数（默认 6）
+	JSONRetries int // 单轮 AI 输出非合法 JSON 时的最大重试（默认 3）
+	MaxRepeats  int // 同一被拒步骤重复提议的循环检测阈值（默认 3）
+
 	// ChatFunc 注入对话函数（默认走 internal/ai；测试注入假实现）。
 	ChatFunc func(ctx context.Context, system, user string) (string, error)
 }
@@ -76,7 +81,11 @@ type Report struct {
 	Notes   []string
 }
 
-// Run 读 OS 状态 → 让 AI 出计划 → 校验 → （非 dry-run）经内核执行。
+// Run 读 OS 状态 → 多步自愈循环让 AI 出计划并校正 → （非 dry-run）经内核执行。
+//
+// 学 Hermes 智能体循环：AI 只「提议」，内核执行；当某步被拒/执行失败（或 AI 输出
+// 非合法 JSON），把原因回灌给 AI 让它自愈重提，直到全部接纳 / 返回空计划 / 达步数
+// 上限 / 检测到循环 / ctx 取消。所有「自愈失败」均以 fail-closed 收场（不假装成功）。
 func (a *Agent) Run(ctx context.Context, goal string, dryRun bool) (*Report, error) {
 	if strings.TrimSpace(goal) == "" {
 		return nil, fmt.Errorf("aios: goal 为空")
@@ -85,74 +94,158 @@ func (a *Agent) Run(ctx context.Context, goal string, dryRun bool) (*Report, err
 		a.ChatFunc = a.defaultChat
 	}
 
+	maxSteps := a.MaxSteps
+	if maxSteps <= 0 {
+		maxSteps = 6
+	}
+	jsonRetries := a.JSONRetries
+	if jsonRetries <= 0 {
+		jsonRetries = 3
+	}
+	maxRepeats := a.MaxRepeats
+	if maxRepeats <= 0 {
+		maxRepeats = 3
+	}
+	maxCalls := a.MaxCalls
+	if maxCalls <= 0 {
+		maxCalls = 8
+	}
+
 	state, err := a.readState()
 	if err != nil {
 		return nil, fmt.Errorf("aios: 读 OS 状态失败: %w", err)
 	}
 
-	raw, err := a.ChatFunc(ctx, systemPrompt, buildUser(goal, state))
-	if err != nil {
-		return nil, fmt.Errorf("aios: AI 对话失败: %w", err)
-	}
-
-	steps, err := parsePlan(raw)
-	if err != nil {
-		return nil, fmt.Errorf("aios: AI 输出不是合法 JSON 计划，拒绝执行: %w", err)
-	}
-
 	rep := &Report{Goal: goal}
-	max := a.MaxCalls
-	if max <= 0 {
-		max = 8
-	}
-	allowedCount := 0
-	for _, s := range steps {
-		ps := PlanStep{Syscall: s.Syscall, Args: s.Args}
-		switch {
-		case !allowedWrites[s.Syscall]:
-			ps.Allowed = false
-			ps.Reason = "不在 AI 允许的写系统调用集（AI 不能自称完成/翻状态）"
-		case allowedCount >= max:
-			ps.Allowed = false
-			ps.Reason = fmt.Sprintf("超过单次计划上限 %d 步", max)
-		default:
-			if r := validateArgs(s.Syscall, s.Args); r != "" {
-				ps.Allowed = false
-				ps.Reason = r
-			} else {
-				ps.Allowed = true
-				allowedCount++
-			}
+	var history []string // 反馈轮次（被拒/失败原因），回灌给 AI 自愈
+	seen := map[string]int{}
+	executed := map[string]bool{}
+	jsonAttempts := 0
+
+	for step := 0; step < maxSteps; step++ {
+		if err := ctx.Err(); err != nil {
+			return rep, fmt.Errorf("aios: 循环被 context 中断: %w", err)
 		}
-		rep.Plan = append(rep.Plan, ps)
+		user := buildUser(goal, state, history)
+		raw, err := a.ChatFunc(ctx, systemPrompt, user)
+		if err != nil {
+			return nil, fmt.Errorf("aios: AI 对话失败: %w", err)
+		}
+
+		steps, perr := parsePlan(raw)
+		if perr != nil {
+			// 补 JSON 重试：把错误反馈回去，让模型修正输出（不立即 fail-closed）。
+			jsonAttempts++
+			if jsonAttempts > jsonRetries {
+				return rep, fmt.Errorf("aios: AI 连续 %d 次未输出合法 JSON 步骤数组，拒绝执行: %w", jsonAttempts, perr)
+			}
+			history = append(history, fmt.Sprintf("⚠️ 你上一轮的回复不是合法 JSON 步骤数组（解析错误：%s）。请只输出 JSON 数组，不要解释、不要围栏之外多余文字。", perr))
+			rep.Notes = append(rep.Notes, "AI 输出非合法 JSON：已要求重试并附错误原因")
+			continue
+		}
+
+		// 校验 + 执行本轮步骤；被拒/失败的原因收集起来回灌（自愈）。
+		rejections := []string{}
+		progress := false
+		for _, s := range steps {
+			key := stepKey(s)
+			seen[key]++
+			if seen[key] >= maxRepeats {
+				return rep, fmt.Errorf("aios: 检测到循环——步骤 %q 被重复提议 %d 次且无法自愈，fail-closed", s.Syscall, seen[key])
+			}
+			ps := a.classifyStep(s, maxCalls, countAllowed(rep))
+			if seen[key] == 1 { // 去重：每份独特提案只在 Plan 记一次
+				rep.Plan = append(rep.Plan, ps)
+			}
+			if !ps.Allowed {
+				rejections = append(rejections, fmt.Sprintf("- %s 被拒：%s（参数：%v）", s.Syscall, ps.Reason, s.Args))
+				if seen[key] == 1 {
+					rep.Results = append(rep.Results, ExecResult{Syscall: s.Syscall, OK: false, Err: "拒绝执行: " + ps.Reason})
+				}
+				continue
+			}
+			if executed[key] {
+				continue // 已执行过，跳过去重
+			}
+			if !dryRun {
+				res, e := a.Kernel.Syscall(s.Syscall, s.Args)
+				if e != nil {
+					rejections = append(rejections, fmt.Sprintf("- %s 执行失败：%s（参数：%v）", s.Syscall, e.Error(), s.Args))
+					if seen[key] == 1 {
+						rep.Results = append(rep.Results, ExecResult{Syscall: s.Syscall, OK: false, Err: e.Error()})
+					}
+					continue
+				}
+				if seen[key] == 1 {
+					rep.Results = append(rep.Results, ExecResult{Syscall: s.Syscall, OK: res.OK, Message: res.Message})
+				}
+			}
+			executed[key] = true
+			progress = true
+		}
+
+		if len(rejections) > 0 {
+			// 自愈：回灌被拒/失败原因，让 AI 下一轮修正（只输出待修正步骤，或 []）。
+			history = append(history, "以下步骤被内核拒绝或执行失败，请修正后重新提议（只输出待修正的步骤数组；若已无修正空间，输出 []）：\n"+strings.Join(rejections, "\n"))
+			rep.Notes = append(rep.Notes, "部分步骤被拒/失败：已回灌原因让 AI 自愈")
+			continue
+		}
+		if len(steps) == 0 {
+			rep.Notes = append(rep.Notes, "AI 返回空计划，收敛。")
+			break
+		}
+		if !progress {
+			rep.Notes = append(rep.Notes, "无新可执行动作（已执行的步被重复提议），收敛。")
+			break
+		}
+		// 本轮全部接纳且有进展 → 收敛（不无限追问；多轮推进由自愈触发）。
+		rep.Notes = append(rep.Notes, "本轮计划全部接纳，收敛。")
+		break
 	}
+
 	if len(rep.Plan) == 0 {
 		rep.Notes = append(rep.Notes, "AI 未提出任何动作。")
 	}
-
-	if dryRun {
-		rep.Notes = append(rep.Notes, "dry-run：只校验计划，不执行。")
-		return rep, nil
-	}
-
-	for _, ps := range rep.Plan {
-		if !ps.Allowed {
-			rep.Results = append(rep.Results, ExecResult{
-				Syscall: ps.Syscall, OK: false, Err: "拒绝执行: " + ps.Reason,
-			})
-			continue
-		}
-		res, err := a.Kernel.Syscall(ps.Syscall, ps.Args)
-		if err != nil {
-			rep.Results = append(rep.Results, ExecResult{Syscall: ps.Syscall, OK: false, Err: err.Error()})
-			continue
-		}
-		rep.Results = append(rep.Results, ExecResult{
-			Syscall: ps.Syscall, OK: res.OK, Message: res.Message,
-		})
-	}
 	rep.Notes = append(rep.Notes, "以上为 AI 提议经内核执行的结果；科学结论/完成判定仍归 leo 或独立反馈。")
 	return rep, nil
+}
+
+// classifyStep 判定单步是否准入（对齐 allowedWrites + MaxCalls + validateArgs）。
+func (a *Agent) classifyStep(s rawStep, maxCalls, allowedSoFar int) PlanStep {
+	ps := PlanStep{Syscall: s.Syscall, Args: s.Args}
+	switch {
+	case !allowedWrites[s.Syscall]:
+		ps.Allowed = false
+		ps.Reason = "不在 AI 允许的写系统调用集（AI 不能自称完成/翻状态）"
+	case allowedSoFar >= maxCalls:
+		ps.Allowed = false
+		ps.Reason = fmt.Sprintf("超过单次计划上限 %d 步", maxCalls)
+	default:
+		if r := validateArgs(s.Syscall, s.Args); r != "" {
+			ps.Allowed = false
+			ps.Reason = r
+		} else {
+			ps.Allowed = true
+		}
+	}
+	return ps
+}
+
+// stepKey 归一化一个步骤（syscall + 参数），用于去重与循环检测。
+func stepKey(s rawStep) string {
+	b, _ := json.Marshal(s.Args)
+	return s.Syscall + "|" + string(b)
+}
+
+// countAllowed 统计报告里已接纳的步数（用于 MaxCalls 上限）。
+func countAllowed(rep *Report) int {
+	n := 0
+	for _, p := range rep.Plan {
+		if p.Allowed {
+			n++
+		}
+	}
+	return n
 }
 
 // readState 经内核读系统调用取决策层状态（AI 的"感官"只经内核）。
@@ -298,7 +391,11 @@ const systemPrompt = `你是 HUSHFUSION OS 的操作助手。OS 是一个决策�
 3. 只输出 JSON 数组，不要解释、不要 markdown 围栏之外的多余文字。若无需动作，输出 []。
 4. 依据不足时保守：宁可少提议，也不要编造人选/数据/结论。`
 
-func buildUser(goal, state string) string {
-	return "目标：" + goal + "\n\n当前 OS 状态（只读快照）：\n" + state +
+func buildUser(goal, state string, history []string) string {
+	u := "目标：" + goal + "\n\n当前 OS 状态（只读快照）：\n" + state +
 		"\n\n请基于以上状态，给出一个 JSON 步骤数组来推进目标（只含上面允许的系统调用）。"
+	if len(history) > 0 {
+		u += "\n\n—— 之前的轮次反馈（请据此修正你的提议）：\n" + strings.Join(history, "\n\n")
+	}
+	return u
 }

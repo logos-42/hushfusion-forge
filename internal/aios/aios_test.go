@@ -41,6 +41,22 @@ func fakeAgent(t *testing.T, reply string) (*Agent, *int) {
 	return a, &calls
 }
 
+// fakeAgentSeq 按调用次序返回不同回复，用于模拟「自愈」——模型在收到反馈后修正。
+func fakeAgentSeq(t *testing.T, replies []string) (*Agent, *int) {
+	t.Helper()
+	calls := 0
+	a := NewAgent(oskernel.New(writeOS(t)), "test", "", "")
+	a.ChatFunc = func(ctx context.Context, system, user string) (string, error) {
+		i := calls
+		calls++
+		if i < len(replies) {
+			return replies[i], nil
+		}
+		return replies[len(replies)-1], nil
+	}
+	return a, &calls
+}
+
 func TestParsePlanHandlesFenceAndNoise(t *testing.T) {
 	raw := "好的，这是我的计划：\n```json\n[{\"syscall\":\"tasks.propose\",\"args\":{\"id\":\"T-09\",\"title\":\"x\",\"i\":3,\"e\":3,\"r\":3,\"c\":2}}]\n```\n以上。"
 	steps, err := parsePlan(raw)
@@ -65,13 +81,13 @@ func TestRunExecutesAllowedAndRejectsForbidden(t *testing.T) {
 	  {"syscall":"tasks.mark_done","args":{"id":"T-01"}},
 	  {"syscall":"tasks.propose","args":{"id":"bad","title":"x","i":9,"e":1,"r":1,"c":1}}
 	]`
-	a, calls := fakeAgent(t, reply)
+	a, calls := fakeAgentSeq(t, []string{reply, "[]"})
 	rep, err := a.Run(context.Background(), "推进主线", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *calls != 1 {
-		t.Fatalf("应调用 AI 一次, got %d", *calls)
+	if *calls != 2 {
+		t.Fatalf("被拒不该触发一轮自愈回灌 → 应调用 AI 两次, got %d", *calls)
 	}
 	allowed, rejected := 0, 0
 	for _, p := range rep.Plan {
@@ -107,6 +123,88 @@ func TestRunDryRunDoesNotWrite(t *testing.T) {
 	after := readFile(t, filepath.Join(a.Kernel.Base, "TASKS.md"))
 	if before != after {
 		t.Fatal("dry-run 不应改动任何文件")
+	}
+}
+
+// TestRunRetriesOnBadJSON：AI 首轮输出非 JSON → 补 JSON 重试，第二轮成功。
+func TestRunRetriesOnBadJSON(t *testing.T) {
+	bad := "我觉得应该继续研究，没有步骤。" // 非 JSON
+	good := `[{"syscall":"decisions.add","args":{"text":"修正后的决策","basis":"证据Y"}}]`
+	a, calls := fakeAgentSeq(t, []string{bad, good})
+	rep, err := a.Run(context.Background(), "推进主线", false)
+	if err != nil {
+		t.Fatalf("bad JSON 后应重试成功: %v", err)
+	}
+	if *calls != 2 {
+		t.Fatalf("应调用 AI 两次（先坏后好）, got %d", *calls)
+	}
+	if len(rep.Results) != 1 || !rep.Results[0].OK {
+		t.Fatalf("重试后应成功执行 1 步: %+v", rep.Results)
+	}
+	hasRetryNote := false
+	for _, n := range rep.Notes {
+		if strings.Contains(n, "重试") {
+			hasRetryNote = true
+		}
+	}
+	if !hasRetryNote {
+		t.Fatal("应记录 JSON 重试说明")
+	}
+}
+
+// TestRunSelfHealsRejectedStep：首轮用非法 id 被拒 → 回灌原因 → 二轮修正为合法 id 并成功。
+func TestRunSelfHealsRejectedStep(t *testing.T) {
+	bad := `[{"syscall":"tasks.propose","args":{"id":"X-1","title":"x","i":3,"e":3,"r":3,"c":2}}]`
+	good := `[{"syscall":"tasks.propose","args":{"id":"T-09","title":"x","i":3,"e":3,"r":3,"c":2}}]`
+	a, calls := fakeAgentSeq(t, []string{bad, good})
+	rep, err := a.Run(context.Background(), "g", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *calls != 2 {
+		t.Fatalf("被拒不该触发一轮自愈, got %d", *calls)
+	}
+	healed := false
+	for _, r := range rep.Results {
+		if r.Syscall == "tasks.propose" && r.OK {
+			healed = true
+		}
+	}
+	if !healed {
+		t.Fatalf("自愈后应成功执行合法 id 的 tasks.propose: %+v", rep.Results)
+	}
+}
+
+// TestRunLoopDetection：始终提议一个被拒的越权 syscall → 循环检测 fail-closed。
+func TestRunLoopDetection(t *testing.T) {
+	reply := `[{"syscall":"tasks.mark_done","args":{"id":"T-01"}}]` // 越权，永远被拒
+	a, calls := fakeAgent(t, reply)
+	_, err := a.Run(context.Background(), "g", false)
+	if err == nil {
+		t.Fatal("重复被拒不该自愈成功，应检测到循环并报错")
+	}
+	if !strings.Contains(err.Error(), "循环") {
+		t.Fatalf("应报循环检测错误，got: %v", err)
+	}
+	if *calls < 2 {
+		t.Fatalf("应至少尝试 2 轮才判定循环, got %d", *calls)
+	}
+}
+
+// TestRunRespectsContextCancel：已取消的 ctx 应让 Run 立即返回错误，且不调用 AI。
+func TestRunRespectsContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a, calls := fakeAgent(t, `[{"syscall":"decisions.add","args":{"text":"x","basis":"y"}}]`)
+	_, err := a.Run(ctx, "g", false)
+	if err == nil {
+		t.Fatal("已取消的 ctx 应让 Run 立即返回错误")
+	}
+	if *calls != 0 {
+		t.Fatalf("ctx 已取消不应调用 AI, got %d", *calls)
+	}
+	if !strings.Contains(err.Error(), "context") && !strings.Contains(err.Error(), "中断") {
+		t.Fatalf("错误应提及 context, got: %v", err)
 	}
 }
 

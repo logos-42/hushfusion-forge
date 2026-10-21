@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	key "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/logos-42/hushfusion-forge/internal/aios"
@@ -121,5 +122,37 @@ func TestTUIViewsNoPanic(t *testing.T) {
 	m.report = &aios.Report{Goal: "g"}
 	if v := m.View(); !strings.Contains(v.Content, "粘合报告") {
 		t.Fatal("报告视图应含粘合报告")
+	}
+}
+
+// ? 键切换帮助覆盖层，且帮助由 keyMap 声明式绑定自动生成。
+func TestTUIHelpOverlay(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	nm, _ := m.Update(keyRune('?'))
+	m = nm.(*osModel)
+	if !m.showHelp {
+		t.Fatal("? 应打开帮助覆盖层")
+	}
+	if !strings.Contains(m.View().Content, "按键帮助") {
+		t.Fatal("帮助屏应含『按键帮助』")
+	}
+	nm, _ = m.Update(keyRune('?'))
+	m = nm.(*osModel)
+	if m.showHelp {
+		t.Fatal("再按 ? 应关闭帮助")
+	}
+}
+
+// keyMap 声明式绑定：km.ai 匹配 a、km.expand 匹配 enter、km.help 匹配 ?。
+func TestKeyMapBindings(t *testing.T) {
+	if !key.Matches(keyRune('a'), km.ai) {
+		t.Fatal("km.ai 应匹配 a")
+	}
+	if !key.Matches(keyCode(rune(tea.KeyEnter)), km.expand) {
+		t.Fatal("km.expand 应匹配 enter")
+	}
+	if !key.Matches(keyRune('?'), km.help) {
+		t.Fatal("km.help 应匹配 ?")
 	}
 }

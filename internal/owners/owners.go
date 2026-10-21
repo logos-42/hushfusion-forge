@@ -48,6 +48,7 @@ var Stages = []Stage{
 			"internal/osview/",  // 2026-10-20 新增：OS 决策层只读视图层（供 forge os 与 TUI 共用，归 parent）
 			"internal/oskernel/", // 2026-10-20 新增：OS 宏内核（syscall 分发 + 子系统驱动 + 写前守卫，归 parent）
 			"internal/aios/",    // 2026-10-20 新增：phase-3 AI 粘合层（AI 经内核受控 syscall 提议，归 parent）
+			"internal/mcp/",     // 2026-10-21 新增：MCP stdio 客户端 + init 门 + 权限门（学 Crush，归 parent）
 			"bridge/",
 			"testdata/",
 			"scripts/",

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -68,7 +69,8 @@ type osModel struct {
 	report       *aios.Report
 	reportErr    error
 
-	status string // 瞬时底部消息
+	status   string // 瞬时底部消息
+	showHelp bool   // ? 切换的按键帮助覆盖层
 
 	width  int
 	height int
@@ -102,6 +104,41 @@ type aiResultMsg struct {
 	rep *aios.Report
 	err error
 }
+
+// keyMap 用 bubbles/key 声明式绑定（学 Crush keys.go），帮助栏由绑定自动生成。
+type keyMap struct {
+	quit   key.Binding
+	reload key.Binding
+	check  key.Binding
+	up     key.Binding
+	down   key.Binding
+	expand key.Binding
+	cancel key.Binding
+	task   key.Binding
+	opp    key.Binding
+	decide key.Binding
+	ai     key.Binding
+	help   key.Binding
+}
+
+func defaultKeyMap() keyMap {
+	return keyMap{
+		quit:   key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q/ctrl+c", "退出")),
+		reload: key.NewBinding(key.WithKeys("L", "l"), key.WithHelp("L", "重载 OS 视图")),
+		check:  key.NewBinding(key.WithKeys("r", "R"), key.WithHelp("r", "跑 oscheck 门")),
+		up:     key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "上移选择")),
+		down:   key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "下移选择")),
+		expand: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "展开/提交")),
+		cancel: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "取消录入")),
+		task:   key.NewBinding(key.WithKeys("n", "N"), key.WithHelp("n", "新任务")),
+		opp:    key.NewBinding(key.WithKeys("o", "O"), key.WithHelp("o", "新机会")),
+		decide: key.NewBinding(key.WithKeys("d", "D"), key.WithHelp("d", "新决策")),
+		ai:     key.NewBinding(key.WithKeys("a", "A"), key.WithHelp("a", "AI 目标")),
+		help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "按键帮助")),
+	}
+}
+
+var km = defaultKeyMap()
 
 func newOSModel(base string, snap *osview.Snapshot) *osModel {
 	m := &osModel{
@@ -168,56 +205,66 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch m.state {
 		case stateThinking:
-			switch msg.String() {
-			case "q", "ctrl+c":
+			if key.Matches(msg, km.quit) {
 				return m, tea.Quit
 			}
 			return m, nil
 		case stateReport:
-			switch msg.String() {
-			case "q", "ctrl+c":
+			if key.Matches(msg, km.quit) {
 				return m, tea.Quit
-			default:
+			}
+			// 任意其它键 → 返回面板
+			m.state = statePanels
+			m.reload()
+			m.status = ""
+			return m, nil
+		case stateForm:
+			if key.Matches(msg, km.cancel) {
 				m.state = statePanels
-				m.reload()
-				m.status = ""
+				m.status = m.styles.err.Render("已取消录入")
+				m.form = nil
 				return m, nil
 			}
-		case stateForm:
+			if key.Matches(msg, km.quit) {
+				return m, tea.Quit
+			}
 			return m.updateForm(msg)
 		default: // statePanels
-			switch msg.String() {
-			case "ctrl+c", "q":
+			switch {
+			case key.Matches(msg, km.quit):
 				return m, tea.Quit
-			case "up", "k":
+			case key.Matches(msg, km.help):
+				m.showHelp = !m.showHelp
+				return m, nil
+			case key.Matches(msg, km.reload):
+				m.reload()
+				m.status = m.styles.ok.Render("已重新加载")
+			case key.Matches(msg, km.check):
+				m.status = runCheckInline()
+				m.reload()
+			case key.Matches(msg, km.up):
 				if m.panels[m.sel].expanded {
 					m.panels[m.sel].scroll--
 				} else if m.sel > 0 {
 					m.sel--
 				}
-			case "down", "j":
+			case key.Matches(msg, km.down):
 				if m.panels[m.sel].expanded {
 					m.panels[m.sel].scroll++
 				} else if m.sel < len(m.panels)-1 {
 					m.sel++
 				}
-			case "enter":
+			case key.Matches(msg, km.expand):
 				m.panels[m.sel].expanded = !m.panels[m.sel].expanded
 				m.panels[m.sel].scroll = 0
-			case "n", "N":
+			case key.Matches(msg, km.task):
 				m.openForm("task")
-			case "o", "O":
+			case key.Matches(msg, km.opp):
 				m.openForm("opp")
-			case "d", "D":
+			case key.Matches(msg, km.decide):
 				m.openForm("decide")
-			case "a", "A":
+			case key.Matches(msg, km.ai):
 				m.openForm("ai")
-			case "r", "R":
-				m.status = runCheckInline()
-				m.reload()
-			case "L", "l":
-				m.reload()
-				m.status = m.styles.ok.Render("已重新加载")
 			}
 			return m, nil
 		}
@@ -240,7 +287,11 @@ func (m *osModel) View() tea.View {
 	case stateReport:
 		b.WriteString(m.renderReport())
 	default:
-		b.WriteString(m.renderPanels())
+		if m.showHelp {
+			b.WriteString(m.renderHelp())
+		} else {
+			b.WriteString(m.renderPanels())
+		}
 	}
 	v := tea.NewView(b.String())
 	v.AltScreen = true
@@ -455,7 +506,7 @@ func (m *osModel) renderPanels() string {
 }
 
 func (m *osModel) renderFooter() string {
-	hint := "↑↓ 选择 · Enter 展开 · n/o/d 录入 · a AI目标 · r check · L 重载 · q 退出"
+	hint := "↑↓ 选择 · Enter 展开 · n/o/d 录入 · a AI目标 · r check · L 重载 · ? 帮助 · q 退出"
 	var s string
 	if m.status != "" {
 		s = m.status + "   " + m.styles.hint.Render(hint)
@@ -463,6 +514,25 @@ func (m *osModel) renderFooter() string {
 		s = m.styles.hint.Render(hint)
 	}
 	return m.styles.footer.Width(m.width-2).Render(s) + "\n"
+}
+
+// renderHelp 由 keyMap 的声明式绑定自动生成（? 切换）。
+func (m *osModel) renderHelp() string {
+	w := m.width
+	if w < 40 {
+		w = 80
+	}
+	var b strings.Builder
+	b.WriteString(m.styles.appTitle.Render(" 按键帮助 ") + "\n\n")
+	for _, bd := range []key.Binding{km.up, km.down, km.expand, km.task, km.opp, km.decide, km.ai, km.check, km.reload, km.help, km.cancel, km.quit} {
+		if !bd.Enabled() {
+			continue
+		}
+		h := bd.Help()
+		b.WriteString(fmt.Sprintf("  %-10s %s\n", h.Key, h.Desc))
+	}
+	b.WriteString("\n" + m.styles.hint.Render("表单内：方向键/字符输入，enter 提交或下一项，esc 取消。按 ? 返回。"))
+	return b.String()
 }
 
 func (m *osModel) renderForm() string {
