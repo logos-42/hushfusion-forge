@@ -2429,6 +2429,7 @@ func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem stri
 			skills := agent.NewSkills([]string{globalSkillsDir(base), projectSkillsDir(base)}, agent.NewKeywordMatcher())
 			s.Skills = skills
 			_ = s.RegisterBuiltinTools(skills) // read / ls / shell / mem.* / tasks.* / skill.view / delegate
+			registerProjectTools(s, base)      // fusion.* / plant.* / plugin.* / mcp.* / acp.* / diap.*
 			// shell 默认 fail-closed；只有显式 HUSHFUSION_ALLOW_SHELL=1 才放行。
 			if os.Getenv("HUSHFUSION_ALLOW_SHELL") == "1" {
 				s.AllowWrites["shell"] = true

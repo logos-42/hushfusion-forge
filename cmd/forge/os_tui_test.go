@@ -18,7 +18,9 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/agent"
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/aios"
+	"github.com/logos-42/hushfusion-forge/internal/app"
 	"github.com/logos-42/hushfusion-forge/internal/osview"
+	"github.com/logos-42/hushfusion-forge/internal/runner"
 )
 
 func keyRune(r rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: r} }
@@ -596,6 +598,52 @@ func TestFrozenContextPersisted(t *testing.T) {
 	}
 	if d.Frozen != "FROZEN-SNAPSHOT" {
 		t.Fatalf("冻结快照未落盘: %q", d.Frozen)
+	}
+}
+
+// 项目能力（fusion/plant/plugin/mcp/acp/diap）应全部注册成工具。
+func TestProjectToolsRegistered(t *testing.T) {
+	base := setupTempOS(t)
+	s := agent.NewSession(agent.DefaultConfig(), nil, agent.NewRegistry(), "")
+	registerProjectTools(s, base)
+	have := map[string]bool{}
+	for _, sp := range s.ToolSpecs() {
+		have[sp.Function.Name] = true
+	}
+	for _, want := range []string{
+		"fusion.evaluate", "fusion.search", "fusion.baseline", "fusion.top", "plant.state",
+		"plugin.list", "plugin.load", "plugin.unload", "plugin.loaded",
+		"mcp.servers", "mcp.tools", "mcp.call",
+		"acp.status", "acp.prompt", "diap.identity", "diap.issue", "diap.authorize",
+	} {
+		if !have[want] {
+			t.Fatalf("缺少工具 %q（已注册 %v）", want, have)
+		}
+	}
+}
+
+// 融合评分接缝可用：基线设计能被评分且长度正确。
+func TestFusionScorerWorks(t *testing.T) {
+	spec := app.DefaultSpec()
+	ev := app.AnalyticEvaluator(spec, 1.0)
+	b, err := app.BaselineDesign(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := (evalScorer{ev}).Score(b.Design, runner.Meta{})
+	if len(res.Design) != spec.NParams() {
+		t.Fatalf("评分结果长度 %d，应为 %d", len(res.Design), spec.NParams())
+	}
+	if res.Score == 0 {
+		t.Fatal("基线评分不应为 0")
+	}
+}
+
+// ACP 未配置时应 fail-closed 并给出配置路径。
+func TestACPNotConfigured(t *testing.T) {
+	t.Setenv("HUSHFUSION_HOME", t.TempDir())
+	if _, err := acpPrompt(context.Background(), t.TempDir(), "hi"); err == nil || !strings.Contains(err.Error(), "未配置") {
+		t.Fatalf("应为未配置错误, got %v", err)
 	}
 }
 

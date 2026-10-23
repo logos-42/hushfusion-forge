@@ -146,6 +146,13 @@ func (r *ToolRegistry) Register(t Tool) error {
 	return nil
 }
 
+// RegisterTool 注册宿主提供的项目工具（fusion / plant / plugin / mcp / acp / diap）。
+// 与内置工具走同一注册表、同一 fail-closed 调度，便于 TUI 与 CLI 共用。
+func (s *Session) RegisterTool(t Tool) error { return s.registry.Register(t) }
+
+// ToolSpecs 返回当前注册的全部工具 schema（宿主自检 / 测试用）。
+func (s *Session) ToolSpecs() []ai.ToolSpec { return s.registry.Specs() }
+
 // Specs 返回模型可见的工具 schema 列表（model() 注入点）。
 func (r *ToolRegistry) Specs() []ai.ToolSpec {
 	out := make([]ai.ToolSpec, 0, len(r.tools))

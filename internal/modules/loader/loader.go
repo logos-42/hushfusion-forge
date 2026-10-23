@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/logos-42/hushfusion-forge/internal/modules/manifest"
 	"github.com/logos-42/hushfusion-forge/internal/modules/types"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -248,4 +249,31 @@ func extractMajorVersion(v string) int {
 	var major int
 	fmt.Sscanf(parts[0], "%d", &major)
 	return major
+}
+
+// ModuleInfo 是给工具/CLI 看的已加载模块摘要（moduleRef 字段不可导出）。
+type ModuleInfo struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	State   string `json:"state"`
+}
+
+// List 返回已加载模块的可读摘要（按 ID 排序，稳定输出）。
+func (ml *ModuleLoader) List() []ModuleInfo {
+	ml.mu.RLock()
+	defer ml.mu.RUnlock()
+	out := make([]ModuleInfo, 0, len(ml.modules))
+	for id, ref := range ml.modules {
+		out = append(out, ModuleInfo{
+			ID:      id,
+			Type:    string(ref.manifest.Identity.Type),
+			Name:    ref.manifest.Identity.Name,
+			Version: ref.version,
+			State:   ref.state,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }

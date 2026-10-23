@@ -313,6 +313,7 @@ func newAgentSession(sessionID string, o agentOpts) *agent.Session {
 	if err := s.RegisterBuiltinTools(skills); err != nil {
 		fmt.Fprintf(o.diag(), "forge agent: 内置工具注册失败: %v\n", err)
 	}
+	registerProjectTools(s, osBaseDir()) // fusion.* / plant.* / plugin.* / mcp.* / acp.* / diap.*
 	if o.usageW != nil {
 		s.OnUsage = func(u ai.Usage) {
 			fmt.Fprintf(o.usageW, "# usage: prompt=%d completion=%d total=%d cached=%d\n",
