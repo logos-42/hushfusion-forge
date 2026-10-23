@@ -40,6 +40,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/logos-42/hushfusion-forge/internal/agent"
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/aios"
@@ -875,7 +876,13 @@ func (m *osModel) appendUserEcho(text string) {
 	if w < 40 {
 		w = 80
 	}
-	rule := strings.Repeat("─", max(0, w-2))
+	// 回显在 forge 框内：横线取框内宽 = 总宽 - 2(框宽) - 2(边框) - 2(内边距)，
+	// 与 renderOutputBox 的 w-6 一致，避免超宽被裁出「…」。
+	ruleW := w - 6
+	if ruleW < 10 {
+		ruleW = 10
+	}
+	rule := strings.Repeat("─", ruleW)
 	m.out = append(m.out,
 		rule,
 		m.styles.label.Render("❯ ")+text,
@@ -2978,10 +2985,15 @@ func marker(on bool) string {
 func truncateLine(s string, n int) string {
 	s = strings.TrimSpace(s)
 	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= n {
+	if n <= 0 {
+		return ""
+	}
+	// 按「显示宽度」而不是字节截断：`─` 是 3 字节，按字节切会把多字节字符
+	// 劈成非法 UTF-8（终端显示 �…）。ansi.Truncate 同时兼容 ANSI 转义。
+	if ansi.StringWidth(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return ansi.Truncate(s, n, "…")
 }
 
 func firstNonEmptyLine(s string) string {

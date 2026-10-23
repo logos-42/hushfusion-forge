@@ -277,6 +277,26 @@ func TestUserEchoFormat(t *testing.T) {
 	}
 }
 
+// 回显横线按框内宽生成，不能再被字节截断成 �…（`─` 是 3 字节）。
+func TestUserEchoNoGarbledRule(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.width, m.height = 120, 40
+	m.appendUserEcho("hi")
+	n := len(m.out)
+	for _, s := range m.out[n-3:] {
+		if strings.ContainsRune(s, '\uFFFD') {
+			t.Fatalf("回显不应含非法 UTF-8: %q", s)
+		}
+		if strings.Contains(s, "…") {
+			t.Fatalf("回显横线不应被裁剪: %q", s)
+		}
+	}
+	if view := m.renderOutputBox(m.width, 20); strings.ContainsRune(view, '\uFFFD') {
+		t.Fatalf("渲染后不应出现 �: %q", view)
+	}
+}
+
 // 主输入框也支持粘贴（bracketed paste → tea.PasteMsg）。
 func TestTUICmdInputPaste(t *testing.T) {
 	base := setupTempOS(t)
