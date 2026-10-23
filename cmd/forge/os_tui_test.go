@@ -476,6 +476,44 @@ func TestAIResultShowsAnswer(t *testing.T) {
 	}
 }
 
+// 首次构建的冻结快照应包含 skills / 经验 / 长期记忆 / 持久记忆，且后续轮次不重建。
+func TestFrozenContextSnapshot(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.mem.Set("project", "低温数据补全")
+	ctx := m.buildFrozenContext()
+	for _, want := range []string{"冻结上下文快照", "Skills", "沉淀经验", "持久记忆", "project"} {
+		if !strings.Contains(ctx, want) {
+			t.Fatalf("快照缺少 %q: %q", want, ctx)
+		}
+	}
+
+	m.startThinking("目标一", "zai", "m")
+	first := m.frozenContext
+	if first == "" {
+		t.Fatal("首次 AI 调用前应构建快照")
+	}
+	m.startThinking("目标二", "zai", "m")
+	if m.frozenContext != first {
+		t.Fatal("后续轮次不应重建快照（冻结）")
+	}
+}
+
+// 冻结快照随会话落盘，--resume 后原样复用。
+func TestFrozenContextPersisted(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.frozenContext = "FROZEN-SNAPSHOT"
+	m.persistSession()
+	d, err := loadSession(base, m.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Frozen != "FROZEN-SNAPSHOT" {
+		t.Fatalf("冻结快照未落盘: %q", d.Frozen)
+	}
+}
+
 // custom 启动即带出 provider 默认型号（不再写死 default）。
 func TestNewOSModelUsesProviderDefaultModel(t *testing.T) {
 	base := setupTempOS(t)
@@ -549,6 +587,8 @@ func TestIdleHeartbeatSkipsBusy(t *testing.T) {
 	m.busy = true
 	m.lastActivity = time.Now().Add(-time.Hour)
 	m.lastIdleRun = time.Time{}
+	// setupTempOS 复制真实 os/，可能自带 dreams.md；先删掉再断言。
+	_ = os.Remove(filepath.Join(base, "dreams.md"))
 	m.idlePulse()
 	if _, err := os.Stat(filepath.Join(base, "dreams.md")); err == nil {
 		t.Fatal("忙时不应做梦")
@@ -559,6 +599,8 @@ func TestIdleHeartbeatSkipsBusy(t *testing.T) {
 func TestEvolvedSkillAccumulates(t *testing.T) {
 	base := setupTempOS(t)
 	m := newOSModel(base, mustLoad(t, base))
+	// setupTempOS 会复制真实 os/（可能已有经验），先清空再断言。
+	_ = os.Remove(evolvedSkillPath(base))
 	m.lastGoal = "测试目标"
 	m.toolLog = []string{"📖 Read index.md  0.01s"}
 	m.evolveSkill("第一条结论")

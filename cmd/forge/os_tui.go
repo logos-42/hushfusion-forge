@@ -46,6 +46,7 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/aios"
 	"github.com/logos-42/hushfusion-forge/internal/osview"
+	"github.com/logos-42/hushfusion-forge/internal/persona"
 )
 
 const (
@@ -149,6 +150,10 @@ type osModel struct {
 
 	// mem 是持久记忆（--persist 时落盘，否则纯内存）。每轮 AI 把它注入 system。
 	mem *agent.MemStore
+	// frozenContext 是会话首次 AI 调用前构建一次的冻结快照：
+	// user/agent/soul 文件 + skills + 沉淀经验 + 长期记忆 + 记忆 + 工作流。
+	// 之后每轮原样注入 system，不随文件变化重建（“每轮不能忘”）。
+	frozenContext string
 
 	// 视图/会话增强（学 Hermes /help 分类，落到 OS/内核架构）
 	title      string // 会话标题（/title）
@@ -486,6 +491,66 @@ func (m *osModel) memBlock() string {
 		return ""
 	}
 	return "—— 持久记忆（/remember 写入，跨会话保留）——\n" + strings.Join(m.mem.Snapshot(), "\n")
+}
+
+// buildFrozenContext 在会话首次 AI 调用前构建一次：
+// user / agent / soul / 规则 / 记忆文件 + skills 索引 + 沉淀经验 + 长期记忆 + agent 记忆 + 工作流。
+// 之后每轮把同一份字符串注入 system（冻结，不随文件变化重建）。
+func (m *osModel) buildFrozenContext() string {
+	var b strings.Builder
+	b.WriteString("# 冻结上下文快照（本会话首次加载；每轮注入，勿忘）\n")
+	b.WriteString("生成时间: " + time.Now().Format("2006-01-02 15:04") + "\n")
+
+	// 1) SOUL.md / AGENTS.md / USER.md / CLAUDE.md / MEMORY.md
+	if block, err := persona.Bootstrap(repoRoot(), 8000); err == nil && strings.TrimSpace(block) != "" {
+		b.WriteString("\n" + block + "\n")
+	}
+
+	// 2) skills 索引（完整正文仍用 skill.view 按需拉取）
+	skills := agent.NewSkills([]string{filepath.Join(m.base, "skills")}, agent.NewKeywordMatcher())
+	if all := skills.All(); len(all) > 0 {
+		b.WriteString("\n## Skills（可按名字用 skill.view 取全文）\n")
+		for _, sk := range all {
+			b.WriteString("- " + sk.Name + "：" + clipSkillText(sk.Description, 160) + "\n")
+		}
+	}
+
+	// 3) 每轮自动沉淀的经验
+	if body := ensureEvolvedSkill(m.base); strings.TrimSpace(body) != "" {
+		b.WriteString("\n## 沉淀经验（os/skills/evolved/SKILL.md）\n" + tailRunes(body, 4000) + "\n")
+	}
+
+	// 4) 跨会话长期记忆（最近 20 条）
+	if recs := loadMemRecords(m.base); len(recs) > 0 {
+		start := len(recs) - 20
+		if start < 0 {
+			start = 0
+		}
+		b.WriteString("\n## 长期记忆（最近 20 条，跨会话）\n")
+		for _, r := range recs[start:] {
+			b.WriteString("- [" + r.Time + "] " + clipSkillText(r.Goal, 60) + " → " + clipSkillText(r.Text, 160) + "\n")
+		}
+	}
+
+	// 5) agent 记忆（/remember + 空闲心跳沉淀的 workflow）
+	if mb := m.memBlock(); mb != "" {
+		b.WriteString("\n" + mb + "\n")
+	}
+
+	// 6) 工作流快照
+	if wf, err := os.ReadFile(filepath.Join(m.base, "memory", "workflow.md")); err == nil {
+		b.WriteString("\n## 工作流快照\n" + tailRunes(string(wf), 1200) + "\n")
+	}
+	return b.String()
+}
+
+// tailRunes 按 rune 取尾部（保留最近内容，不破坏 CJK）。
+func tailRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return "…" + string(r[len(r)-n:])
 }
 
 func envOr(k, def string) string {
@@ -1164,6 +1229,7 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.outScroll = 0
 		m.goalCount, m.toolCalls, m.toolOK, m.toolFail = 0, 0, 0, 0
 		m.queue = nil
+		m.frozenContext = "" // 新会话重新构建快照
 		m.status = m.styles.ok.Render("新会话 " + m.sessionID)
 	case "save":
 		m.persistSession()
@@ -2189,9 +2255,20 @@ func (m *osModel) startThinking(goal, provider, model string) (tea.Model, tea.Cm
 	m.status = ""
 	m.busy = true
 	m.aiStart = time.Now()
+	// 首次 AI 调用前构建一次冻结快照；之后每轮原样注入，不重建。
+	fresh := m.frozenContext == ""
+	if fresh {
+		m.frozenContext = m.buildFrozenContext()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.aiCancel = cancel
-	return m, tea.Batch(m.spinner.Tick, thinkTick(), runAICmd(ctx, m.base, goal, provider, model, m.memBlock()))
+	cmd := tea.Batch(m.spinner.Tick, thinkTick(),
+		runAICmd(ctx, m.base, goal, provider, model, m.frozenContext))
+	if fresh {
+		m.status = m.styles.hint.Render(fmt.Sprintf(
+			"❄ 已冻结上下文快照（%d 字符）：soul/agent/user + skills + 经验 + 记忆", len([]rune(m.frozenContext))))
+	}
+	return m, cmd
 }
 
 func (m *osModel) openForm(kind string) {
@@ -2332,17 +2409,8 @@ func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem stri
 			if strings.TrimSpace(extraSystem) != "" {
 				sys += "\n\n" + extraSystem
 			}
-			// 历史经验 skill：每次启动都检查并注入（第二轮打开同一目录也能复用）。
-			if body := ensureEvolvedSkill(base); body != "" {
-				if len(body) > 4000 {
-					body = body[len(body)-4000:]
-				}
-				sys += "\n\n## 历史经验（本工作区自动积累，仅供参考，不要盲信）\n" + body
-			}
-			// 跨会话长期记忆：按当前目标向量召回 top5（不限 session）。
-			if recs := recallMemories(base, goal, 5); len(recs) > 0 {
-				sys += "\n\n## 长期记忆（跨会话向量召回，仅供参考，不要盲信）\n" + formatRecalledMemories(recs)
-			}
+			// 冻结快照已由 startThinking 构建并通过 extraSystem 传入；
+			// 这里不再动态读取经验/记忆，保证“每轮看到的是同一份快照”。
 			s := agent.NewSession(cfg, chat, agent.NewRegistry(), sys)
 			skills := agent.NewSkills([]string{filepath.Join(base, "skills")}, agent.NewKeywordMatcher())
 			s.Skills = skills
@@ -2804,6 +2872,7 @@ func (m *osModel) persistSession() {
 		ToolFail:  m.toolFail,
 		Out:       m.allOutputLines(),
 		Sent:      m.sentLog,
+		Frozen:    m.frozenContext,
 		Usage:     m.ledger,
 	}
 	if jb, err := json.MarshalIndent(data, "", "  "); err == nil {
@@ -2824,6 +2893,8 @@ type sessionData struct {
 	ToolFail  int      `json:"tool_fail"`
 	Out       []string `json:"out"`
 	Sent      []string `json:"sent,omitempty"`
+	// Frozen 是本次会话的冻结上下文快照（--resume 后原样复用，不重建）。
+	Frozen string `json:"frozen,omitempty"`
 	// Usage 是会话累计的真实 token 用量（provider 上报才有；--resume 后继续累计）。
 	Usage ai.UsageLedger `json:"usage,omitempty"`
 }
@@ -3572,6 +3643,9 @@ func cmdOSTUI(args []string) int {
 			m.goalCount = d.GoalCount
 			m.toolCalls, m.toolOK, m.toolFail = d.ToolCalls, d.ToolOK, d.ToolFail
 			m.ledger = d.Usage // 用量随会话恢复（成本/命中率继续累计）
+			if strings.TrimSpace(d.Frozen) != "" {
+				m.frozenContext = d.Frozen // 恢复同一份冻结快照，不重建
+			}
 			m.out = append(m.out, m.styles.label.Render("── 恢复会话 "+m.sessionID+" ──"))
 			m.out = append(m.out, d.Out...)
 			if len(d.Sent) > 0 {

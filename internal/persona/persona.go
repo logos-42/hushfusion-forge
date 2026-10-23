@@ -50,6 +50,7 @@ var candidates = []struct {
 }{
 	{"SOUL.md", KindPersona, 10},
 	{"AGENTS.md", KindAgents, 20},
+	{"USER.md", KindMemory, 45}, // 用户画像/偏好（放在规则之后、记忆之前）
 	{"CLAUDE.md", KindRules, 30},
 	{".cursorrules", KindRules, 40},
 	{"MEMORY.md", KindMemory, 50},
