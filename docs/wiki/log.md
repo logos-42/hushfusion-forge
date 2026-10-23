@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-23 | HUSHFUSION OS (TUI) | **恢复输出区的圆角 forge 框** | 按反馈保留输出圆角框：`replyBox` 样式恢复（RoundedBorder 蓝色），`renderOutputBox` 用 `bodyH=h-3`、内容裁剪到 `w-6` 并 `replyBox.Width(w-2)` 渲染；输出仍在仪表盘快照下方，输入框上下双线不变。 | `go build/vet/gofmt/test ./...` 全绿；`TestConsoleLayout` 恢复断言输出含圆角框字符。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **用户发送内容回显改为上下分隔线包住** | 新增 `appendUserEcho`：在回复区把用户发送的文本渲染成 `── / ❯ hi / ──` 三行（分隔线宽度取终端宽度 − 2，避免被输出区二次裁剪加省略号）；`submitCommand`（AI 目标）、`/ai <goal>`、AI 表单提交三处统一走它。 | `go build/vet/gofmt/test ./...` 全绿；新增 `TestUserEchoFormat`（三行、中间 `❯ hi`、上下分隔线一致）。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **↑↓ 在输入框回填历史** | 输入框新增会话内历史：`submitCommand` / `runSlashByName` 记录提交文本（连续重复去重、最多 200 条）；`↑` 回填更早一条（首次向上保存当前草稿），`↓` 回到更新一条、越过最新一条恢复草稿；`histBrowsing` 标志确保历史里的 `/xxx` 不会让 `/` 命令面板抢走 ↑↓；Esc / 开始编辑后退出历史浏览。**诚实边界**：仅会话内内存，不落盘（避免把目标/命令写盘）。 | `go build/vet/gofmt/test ./...` 全绿；新增 `TestTUIInputHistory`（↑ 两条、↓ 回最新、↓ 恢复草稿）。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **修正输出位置：输出平铺在仪表盘快照下方，不再套圆角框** | 按反馈把 `renderOutputBox` 改为无边框输出：去掉 `replyBox` 圆角框，`bodyH = h-1`（只留标题行），输出直接接在仪表盘快照下方；保留 `forge · 输出 / 工具调用` 标题与滚动提示。 | `go build/vet/gofmt/test ./...` 全绿；`TestConsoleLayout` 改为断言输出含 `forge` 且**不含**圆角框字符，同时仍断言仪表盘在输出之前、输入框上下双线。 |

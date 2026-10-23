@@ -198,6 +198,7 @@ type uiStyles struct {
 	sel       lipgloss.Style
 	searchBar lipgloss.Style
 	hintBox   lipgloss.Style
+	replyBox  lipgloss.Style // 输出区的圆角「forge」框
 }
 
 type formModel struct {
@@ -449,6 +450,7 @@ func (m *osModel) initStyles() {
 		value:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
 		panel:       lipgloss.NewStyle(), // 仪表盘面板不再套框（纯文本网格）
 		panelActive: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("51")).Padding(0, 1),
+		replyBox:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1),
 		footer:      lipgloss.NewStyle().Reverse(true).Foreground(lipgloss.Color("252")),
 		hint:        lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")),
 		spinner:     lipgloss.NewStyle().Foreground(lipgloss.Color("51")),
@@ -2463,8 +2465,8 @@ func humanNum(n int) string {
 }
 
 func (m *osModel) renderOutputBox(w, h int) string {
-	// 无边框：输出直接平铺在仪表盘快照下方（不再套圆角框）。
-	bodyH := h - 1
+	// 圆角「forge」框：输出在仪表盘快照下方，但保留边框。
+	bodyH := h - 3
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -2486,7 +2488,7 @@ func (m *osModel) renderOutputBox(w, h int) string {
 	}
 	var show []string
 	for i := start; i < end; i++ {
-		show = append(show, truncateLine(lines[i], w-2))
+		show = append(show, truncateLine(lines[i], w-6))
 	}
 	if len(show) == 0 {
 		show = []string{m.styles.hint.Render("  （等待上下文加载…）")}
@@ -2498,7 +2500,7 @@ func (m *osModel) renderOutputBox(w, h int) string {
 	if m.outScroll > 0 {
 		title += m.styles.err.Render(fmt.Sprintf("  ↓ %d 条新内容 · PgDn/End 回到底部", m.outScroll))
 	}
-	return title + "\n" + strings.Join(show, "\n") + "\n"
+	return m.styles.replyBox.Width(w-2).Render(title+"\n"+strings.Join(show, "\n")) + "\n"
 }
 
 // pageSize 是展示框一页的行数（翻页步长）。
