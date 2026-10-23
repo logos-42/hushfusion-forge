@@ -98,6 +98,11 @@ type Session struct {
 	// ledger 是会话累计用量；lastEstimate 是上次调用前的估算（校准 tokenizer 偏差）。
 	ledger       ai.UsageLedger
 	lastEstimate int
+
+	// Skills 可选：每个回合按用户消息把命中技能注入 system（动态、按需，不是一次性全塞）。
+	// nil = 不做技能注入。baseSystem 是构造时的静态 system（注入基于它，不叠加）。
+	Skills     *SkillsDir
+	baseSystem string
 }
 
 // Usage 返回会话累计的真实用量（provider 未上报则为空账本）。
@@ -137,6 +142,7 @@ func NewSession(cfg Config, chat ChatFunc, reg *ToolRegistry, system string) *Se
 		registry:    reg,
 		messages:    []Message{},
 		System:      system,
+		baseSystem:  system,
 		AllowWrites: map[string]bool{}, // 缺省全只读；调用方可加白名单
 		Stage:       StageIdle,
 		Memory:      NewMemStore(),
@@ -233,6 +239,17 @@ func (s *Session) compact() int {
 
 const toolResultBudget = 2000 // 单条工具结果截断上限（字符）
 
+// AppendSystem 把一块静态文本并入基线 system（构造期用：记忆摘要、运行时告示）。
+// 之后每个回合的技能注入都基于更新后的基线 —— 直接改 s.System 会被下一回合的
+// 技能注入覆盖掉（baseSystem 才是持久基线），所以必须走这里。
+func (s *Session) AppendSystem(block string) {
+	if strings.TrimSpace(block) == "" {
+		return
+	}
+	s.baseSystem = strings.TrimSpace(s.baseSystem) + "\n\n" + strings.TrimSpace(block)
+	s.System = s.baseSystem
+}
+
 // assemble 组装一次模型调用的消息（学 Claude Code 的 assemble() 注入点）：
 // system（persona 优先，随后 skills/指令）在最前，工具 schema 附在请求上，
 // 对话历史原样。
@@ -296,6 +313,10 @@ func (s *Session) Turn(ctx context.Context, userMsg string) (string, error) {
 		}
 	}()
 	s.messages = append(s.messages, Message{Role: RoleUser, Content: userMsg})
+	// 技能注入：按本条用户消息匹配（动态）。基于 baseSystem 重算，避免多轮反复叠加。
+	if s.Skills != nil {
+		s.System = s.Skills.Inject(userMsg, s.baseSystem)
+	}
 	if s.compact() > 0 {
 		// 压缩发生：追加说明（去重 —— 模型知道一次即可，重复追加只会吃预算）。
 		// 说明作为最后一条 user 消息的追加（不插在队首，避免打破 system→user 顺序）。
@@ -411,4 +432,5 @@ func compactNotice() string {
 func (s *Session) Reset() {
 	s.messages = nil
 	s.Compacted = false
+	s.System = s.baseSystem // 技能注入跟随回合重算，reset 回到静态基线
 }

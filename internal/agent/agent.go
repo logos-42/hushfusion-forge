@@ -159,7 +159,8 @@ func (r *ToolRegistry) Execute(ctx context.Context, call ai.ToolCall, allowWrite
 	if !ok {
 		return "", fmt.Errorf("未知工具 %q（可用：%v）", name, r.Names())
 	}
-	if t.Write && allowWrites != nil && !allowWrites[name] {
+	// 写门 fail-closed：白名单缺失（nil）= 拒绝一切写，绝不放行。
+	if t.Write && !allowWrites[name] {
 		return "", fmt.Errorf("工具 %q 是写动作，不在本次会话的白名单（AI 只能提议，不能自主写）", name)
 	}
 	var args map[string]any
