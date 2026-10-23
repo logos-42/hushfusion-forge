@@ -477,6 +477,14 @@ func TestAIResultShowsAnswer(t *testing.T) {
 	}
 }
 
+// 工具调用上限应显著高于 150（此前 6/12 太小）。
+func TestAgentToolLimitsHigh(t *testing.T) {
+	cfg := agent.DefaultConfig()
+	if cfg.MaxToolTurns < 150 || cfg.MaxToolResults < 150 {
+		t.Fatalf("工具调用上限应 ≥150, got turns=%d results=%d", cfg.MaxToolTurns, cfg.MaxToolResults)
+	}
+}
+
 // 每条回复独立成框，不能与上一条合并。
 func TestRepliesNotMerged(t *testing.T) {
 	base := setupTempOS(t)

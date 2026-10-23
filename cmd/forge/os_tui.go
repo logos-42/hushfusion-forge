@@ -2339,8 +2339,8 @@ func (m *osModel) appendToolEvents(evs []agent.ToolEvent) {
 		}
 		m.toolLog = append(m.toolLog, m.toolEventLine(ev))
 	}
-	if len(m.toolLog) > 200 {
-		m.toolLog = m.toolLog[len(m.toolLog)-200:]
+	if len(m.toolLog) > 500 {
+		m.toolLog = m.toolLog[len(m.toolLog)-500:]
 	}
 }
 
@@ -2386,8 +2386,8 @@ func (m *osModel) appendToolCalls(rep *aios.Report) {
 			}))
 		}
 	}
-	if len(m.toolLog) > 200 {
-		m.toolLog = m.toolLog[len(m.toolLog)-200:]
+	if len(m.toolLog) > 500 {
+		m.toolLog = m.toolLog[len(m.toolLog)-500:]
 	}
 }
 
@@ -2701,6 +2701,10 @@ func (m *osModel) renderConsole(w int) string {
 	if toolH > maxToolLines {
 		toolH = maxToolLines
 	}
+	// 终端再高也放不下 200 行：显示上限取屏幕高度的 1/3，其余保留在 m.toolLog。
+	if capH := m.height / 3; capH > 3 && toolH > capH {
+		toolH = capH
+	}
 	chrome += toolH // 工具调用列表（框外逐行）
 	outH := m.height - chrome - popupH
 	if outH < 4 {
@@ -2710,8 +2714,12 @@ func (m *osModel) renderConsole(w int) string {
 	curH := 0
 	if len(m.out) > 0 {
 		curH = len(m.out) + 2
-		if curH > outH {
-			curH = outH
+		// 当前框最多占一半，另一半留给历史框；否则第二条会把第一条挤没。
+		if half := outH / 2; curH > half {
+			curH = half
+		}
+		if curH < 3 {
+			curH = 3
 		}
 	}
 	histStr, histH := m.renderHistoryBoxes(w, outH-curH)
@@ -2722,7 +2730,7 @@ func (m *osModel) renderConsole(w int) string {
 		b.WriteString(strings.Join(m.lastEcho, "\n") + "\n")
 	}
 	if len(m.toolLog) > 0 {
-		b.WriteString(m.renderToolLog(w) + "\n")
+		b.WriteString(m.renderToolLog(w, toolH) + "\n")
 	}
 	b.WriteString(m.renderOutputBox(w, outH-histH))
 	if m.loading {
@@ -2750,26 +2758,42 @@ func (m *osModel) allOutputLines() []string {
 func (m *osModel) renderHistoryBoxes(w, room int) (string, int) {
 	var boxes []string
 	used := 0
-	for i := len(m.replyBlocks) - 1; i >= 0 && room > 3; i-- {
-		box := m.styles.replyBox.Width(w - 2).Render(strings.Join(m.replyBlocks[i], "\n"))
+	for i := len(m.replyBlocks) - 1; i >= 0; i-- {
+		if room-used <= 4 {
+			break
+		}
+		avail := room - used - 2 // 上下边框
+		if avail < 1 {
+			break
+		}
+		lines := m.replyBlocks[i]
+		if len(lines) > avail {
+			// 放不下的历史框截断（保留开头），而不是整块丢弃——
+			// 否则第二条回复会看起来“占据了第一条的位置”。
+			lines = append(append([]string{}, lines[:avail-1]...), mdDimStyle.Render("… (折叠)"))
+		}
+		box := m.styles.replyBox.Width(w - 2).Render(strings.Join(lines, "\n"))
 		box = borderTitle(box, m.styles.accent.Render("forge"), "39")
 		bh := lipgloss.Height(box)
-		if used+bh+1 > room {
+		if used+bh > room {
 			break
 		}
 		boxes = append([]string{box}, boxes...)
-		used += bh + 1
+		used += bh
 	}
 	return strings.Join(boxes, "\n"), used
 }
 
-const maxToolLines = 8
+const maxToolLines = 200
 
-// renderToolLog 把工具调用渲染在 forge 框外，逐行（取最近 maxToolLines 行）。
-func (m *osModel) renderToolLog(w int) string {
+// renderToolLog 把工具调用渲染在 forge 框外，逐行（取最近 limit 行）。
+func (m *osModel) renderToolLog(w, limit int) string {
+	if limit <= 0 {
+		limit = 1
+	}
 	lines := m.toolLog
-	if len(lines) > maxToolLines {
-		lines = lines[len(lines)-maxToolLines:]
+	if len(lines) > limit {
+		lines = lines[len(lines)-limit:]
 	}
 	out := make([]string, 0, len(lines))
 	for _, l := range lines {

@@ -70,9 +70,9 @@ type Config struct {
 // DefaultConfig 返回带默认值的配置。
 func DefaultConfig() Config {
 	return Config{
-		MaxToolTurns:    6,
+		MaxToolTurns:    200,
 		MaxBudgetTokens: 12000,
-		MaxToolResults:  12,
+		MaxToolResults:  200,
 		ModelTimeout:    120 * time.Second,
 		ModelRetries:    1,
 		Root:            ".",
@@ -82,13 +82,13 @@ func DefaultConfig() Config {
 // withDefaults 把未设（<=0）的字段补默认（单一处，消灭同构 if<=0）。
 func (c Config) withDefaults() Config {
 	if c.MaxToolTurns <= 0 {
-		c.MaxToolTurns = 6
+		c.MaxToolTurns = 200
 	}
 	if c.MaxBudgetTokens <= 0 {
 		c.MaxBudgetTokens = 12000
 	}
 	if c.MaxToolResults <= 0 {
-		c.MaxToolResults = 12
+		c.MaxToolResults = 200
 	}
 	if c.ModelTimeout <= 0 {
 		c.ModelTimeout = 120 * time.Second
