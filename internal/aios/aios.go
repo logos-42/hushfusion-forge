@@ -124,6 +124,9 @@ type ExecResult struct {
 // Report 是一次 AI 粘合运行的完整记录（可核对）。
 type Report struct {
 	Goal string
+	// Answer 是「没有可执行动作」时补问一次普通对话得到的文字回复
+	// （TUI 用于聊天式回显；规划路径为空）。
+	Answer string
 	// Model 是 provider **实际回报**的模型名（resp.Model）；空 = 未知。
 	// 成本按它查价目（配置里的 Model 可能为空/别名）。
 	Model   string

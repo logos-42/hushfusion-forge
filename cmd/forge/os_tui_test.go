@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +14,7 @@ import (
 	key "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/aios"
 	"github.com/logos-42/hushfusion-forge/internal/osview"
 )
@@ -274,6 +279,70 @@ func TestUserEchoFormat(t *testing.T) {
 	}
 	if ln[0] == "" || ln[0] != ln[2] || !strings.Contains(ln[0], "─") {
 		t.Fatalf("上下分隔线应一致且为横线: %q / %q", ln[0], ln[2])
+	}
+}
+
+// 规划器返回空计划 [] 时，runAICmd 应补问一次普通 chat，把文字回复带回来。
+func TestRunAICmdChatFallback(t *testing.T) {
+	base := setupTempOS(t)
+	ai.RegisterBuiltins()
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		content := "[]" // 规划器：空计划
+		if len(body.Messages) > 0 && strings.Contains(body.Messages[0].Content, "简洁自然语言") {
+			content = "你好！我是 forge。" // 对话兜底
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "m",
+			"choices": []map[string]any{
+				{"message": map[string]any{"role": "assistant", "content": content}},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AI_CUSTOM_API_KEY", "test-key")
+	t.Setenv("HUSHFUSION_AI_BASE_URL", srv.URL)
+
+	msg := runAICmd(context.Background(), base, "你好", "custom", "m", "")()
+	res, ok := msg.(aiResultMsg)
+	if !ok {
+		t.Fatalf("消息类型 = %T", msg)
+	}
+	if res.err != nil {
+		t.Fatalf("空计划后应走 chat 兜底, err=%v", res.err)
+	}
+	if res.rep == nil || res.rep.Answer != "你好！我是 forge。" {
+		t.Fatalf("应带回自然语言回复, got %+v", res.rep)
+	}
+	if calls != 2 {
+		t.Fatalf("应调用 2 次（规划 + 对话兜底），got %d", calls)
+	}
+}
+
+// 纯对话结果（Answer，无动作）应显示在终端，且不再追加空「AI 回合」。
+func TestAIResultShowsAnswer(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	nm, _ := m.Update(aiResultMsg{rep: &aios.Report{Goal: "hi", Answer: "你好！我是 forge。"}})
+	m = nm.(*osModel)
+	joined := stripANSI(strings.Join(m.out, "\n"))
+	if !strings.Contains(joined, "你好！我是 forge。") {
+		t.Fatalf("AI 回复应出现在输出: %q", joined)
+	}
+	if !strings.Contains(joined, "forge · 回复") {
+		t.Fatalf("应有 forge · 回复 标题: %q", joined)
+	}
+	if strings.Contains(joined, "AI 回合") {
+		t.Fatalf("纯对话不应再追加空 AI 回合: %q", joined)
 	}
 }
 

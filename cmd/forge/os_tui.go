@@ -582,6 +582,9 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	m.state = statePanels // 内联：结果直接落展示框，不切「AI 粘合报告」弹窗
 	m.report = msg.rep
 	m.reportErr = msg.err
+	if msg.rep != nil {
+		m.appendAnswer(msg.rep) // 没有动作时的自然语言回复
+	}
 	if msg.err != nil {
 		m.out = append(m.out, m.styles.err.Render("✗ "+msg.err.Error()))
 		if strings.Contains(msg.err.Error(), "API key") {
@@ -591,7 +594,10 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 			m.out = append(m.out, m.styles.hint.Render("⏹ AI 已中断"))
 		}
 	} else if msg.rep != nil {
-		m.appendToolCalls(msg.rep)
+		// 纯对话（有 Answer、无动作）不再追加空的「AI 回合」。
+		if len(msg.rep.Plan) > 0 || len(msg.rep.Results) > 0 || strings.TrimSpace(msg.rep.Answer) == "" {
+			m.appendToolCalls(msg.rep)
+		}
 	}
 	// 真实用量入账（provider 上报才有；假路径为 0）。缓存命中率只在"上报过"时展示。
 	if msg.rep != nil {
@@ -2070,9 +2076,31 @@ func (m *osModel) submitForm() (tea.Model, tea.Cmd) {
 
 func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem string) tea.Cmd {
 	return func() tea.Msg {
-		ag := aios.NewAgent(oskernel.New(base), provider, model, os.Getenv("HUSHFUSION_AI_BASE_URL"))
+		baseURL := os.Getenv("HUSHFUSION_AI_BASE_URL")
+		ag := aios.NewAgent(oskernel.New(base), provider, model, baseURL)
 		ag.ExtraSystem = extraSystem // 持久记忆块（--persist 时非空）
 		rep, err := ag.Run(ctx, goal, false)
+		// 规划器只产出 JSON 动作数组；「你好」这类对话会被模型正确回成 []，
+		// 于是终端只剩「AI 返回空计划」。没有动作时补问一次普通 chat，
+		// 把自然语言回复带回来（动作类目标仍走规划路径，不受影响）。
+		if rep != nil && len(rep.Plan) == 0 && len(rep.Results) == 0 && strings.TrimSpace(rep.Answer) == "" {
+			if resp, cerr := ai.Chat(ctx, provider, ai.ChatRequest{
+				Model: model,
+				Messages: []ai.Message{
+					{Role: "system", Content: "你是 HUSHFUSION OS 的助手。用简洁自然语言回答用户；不要输出 JSON、不要输出步骤数组。"},
+					{Role: "user", Content: goal},
+				},
+			}, ai.ClientOptions{BaseURL: baseURL}); cerr == nil {
+				if ans := strings.TrimSpace(resp.Content); ans != "" {
+					rep.Answer = ans
+					rep.Usage.Add(resp.Usage)
+					if resp.Model != "" {
+						rep.Model = resp.Model
+					}
+					err = nil // 对话已拿到回复，不再把「非 JSON」当失败弹给用户
+				}
+			}
+		}
 		return aiResultMsg{rep: rep, err: err}
 	}
 }
@@ -2109,6 +2137,19 @@ func (m *osModel) appendDashboard() {
 }
 
 // appendToolCalls 把一次 AI 回合的计划/执行/备注作为“工具调用”落进展示框。
+// appendAnswer 渲染「没有可执行动作」时的自然语言回复（聊天式回显）。
+func (m *osModel) appendAnswer(rep *aios.Report) {
+	ans := strings.TrimSpace(rep.Answer)
+	if ans == "" {
+		return
+	}
+	m.out = append(m.out, m.styles.accent.Render("forge")+m.styles.hint.Render(" · 回复"))
+	for _, line := range strings.Split(ans, "\n") {
+		m.out = append(m.out, "  "+line)
+	}
+	m.trimOut()
+}
+
 func (m *osModel) appendToolCalls(rep *aios.Report) {
 	allowed, denied := 0, 0
 	for _, p := range rep.Plan {
