@@ -478,6 +478,75 @@ func TestAIResultShowsAnswer(t *testing.T) {
 	}
 }
 
+// skills 按项目隔离：全局 skill 所有项目可见，项目经验只属于该项目。
+func TestSkillsScopedByProject(t *testing.T) {
+	t.Setenv("HUSHFUSION_HOME", t.TempDir())
+	baseA, baseB := t.TempDir(), t.TempDir()
+	writeSkillFile := func(dir, name, desc, body string) {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := "---\nname: " + name + "\ndescription: " + desc + "\n---\n\n" + body
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSkillFile(filepath.Join(globalSkillsDir(baseA), "global-skill"), "global-skill", "全局技能", "所有项目可用")
+	writeSkillFile(filepath.Join(projectSkillsDir(baseA), "evolved"), evolvedSkillName, "项目 A 经验", "只属于 A")
+
+	loadB := agent.NewSkills([]string{globalSkillsDir(baseB), projectSkillsDir(baseB)}, agent.NewKeywordMatcher())
+	if _, ok := loadB.Lookup("global-skill"); !ok {
+		t.Fatal("全局 skill 应对所有项目可见")
+	}
+	if _, ok := loadB.Lookup(evolvedSkillName); ok {
+		t.Fatal("项目 A 的经验不应出现在项目 B")
+	}
+
+	loadA := agent.NewSkills([]string{globalSkillsDir(baseA), projectSkillsDir(baseA)}, agent.NewKeywordMatcher())
+	if _, ok := loadA.Lookup(evolvedSkillName); !ok {
+		t.Fatal("项目 A 应能加载自己的经验")
+	}
+}
+
+// 旧位置的数据应被“移动”到全局目录（源文件删除，不是复制）。
+func TestMigrateMovesOldFiles(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HUSHFUSION_HOME", filepath.Join(base, "home"))
+
+	oldSkill := filepath.Join(base, "skills", "evolved", "SKILL.md")
+	_ = os.MkdirAll(filepath.Dir(oldSkill), 0o755)
+	_ = os.WriteFile(oldSkill, []byte("skill"), 0o644)
+	oldMem := filepath.Join(base, "memory", "longterm.json")
+	_ = os.MkdirAll(filepath.Dir(oldMem), 0o755)
+	_ = os.WriteFile(oldMem, []byte("[]"), 0o644)
+	oldDream := filepath.Join(base, "dreams.md")
+	_ = os.WriteFile(oldDream, []byte("dream"), 0o644)
+	oldSess := filepath.Join(base, "sessions", "s1.json")
+	_ = os.MkdirAll(filepath.Dir(oldSess), 0o755)
+	_ = os.WriteFile(oldSess, []byte("{}"), 0o644)
+
+	migrateRuntimeData(base)
+
+	for _, src := range []string{oldSkill, oldMem, oldDream, oldSess} {
+		if _, err := os.Stat(src); !os.IsNotExist(err) {
+			t.Fatalf("旧文件应被移走: %s", src)
+		}
+	}
+	if _, err := os.Stat(evolvedSkillPath(base)); err != nil {
+		t.Fatal("skill 未移到全局")
+	}
+	if _, err := os.Stat(memFilePath(base)); err != nil {
+		t.Fatal("memory 未移到全局")
+	}
+	if _, err := os.Stat(filepath.Join(runtimeDreamsDir(base), time.Now().Format("2006-01-02")+".md")); err != nil {
+		t.Fatal("dream 未移到全局")
+	}
+	if _, err := os.Stat(filepath.Join(sessionsDir(base), "s1.json")); err != nil {
+		t.Fatal("session 未移到全局")
+	}
+}
+
 // 运行时数据默认落全局 ~/.forge；HUSHFUSION_HOME 可覆盖。
 func TestRuntimeRootGlobal(t *testing.T) {
 	base := t.TempDir()
@@ -637,7 +706,7 @@ func TestEvolvedSkillAccumulates(t *testing.T) {
 	if !strings.Contains(s, "第一条结论") || !strings.Contains(s, "第二条结论") {
 		t.Fatalf("经验内容丢失: %q", s)
 	}
-	sk := agent.NewSkills([]string{runtimeSkillsDir(base)}, agent.NewKeywordMatcher())
+	sk := agent.NewSkills([]string{globalSkillsDir(base), projectSkillsDir(base)}, agent.NewKeywordMatcher())
 	if _, ok := sk.Lookup("evolved-experience"); !ok {
 		t.Fatal("经验 skill 未被 agent 索引")
 	}

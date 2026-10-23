@@ -509,11 +509,15 @@ func (m *osModel) buildFrozenContext() string {
 	}
 
 	// 2) skills 索引（完整正文仍用 skill.view 按需拉取）
-	skills := agent.NewSkills([]string{runtimeSkillsDir(m.base)}, agent.NewKeywordMatcher())
+	skills := agent.NewSkills([]string{globalSkillsDir(m.base), projectSkillsDir(m.base)}, agent.NewKeywordMatcher())
 	if all := skills.All(); len(all) > 0 {
-		b.WriteString("\n## Skills（可按名字用 skill.view 取全文）\n")
+		b.WriteString("\n## Skills（global + project；project 同名覆盖，可按名字用 skill.view 取全文）\n")
 		for _, sk := range all {
-			b.WriteString("- " + sk.Name + "：" + clipSkillText(sk.Description, 160) + "\n")
+			scope := "global"
+			if strings.HasPrefix(sk.Path, projectSkillsDir(m.base)) {
+				scope = "project"
+			}
+			b.WriteString("- [" + scope + "] " + sk.Name + "：" + clipSkillText(sk.Description, 160) + "\n")
 		}
 	}
 
@@ -2416,7 +2420,7 @@ func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem stri
 			// 冻结快照已由 startThinking 构建并通过 extraSystem 传入；
 			// 这里不再动态读取经验/记忆，保证“每轮看到的是同一份快照”。
 			s := agent.NewSession(cfg, chat, agent.NewRegistry(), sys)
-			skills := agent.NewSkills([]string{runtimeSkillsDir(base)}, agent.NewKeywordMatcher())
+			skills := agent.NewSkills([]string{globalSkillsDir(base), projectSkillsDir(base)}, agent.NewKeywordMatcher())
 			s.Skills = skills
 			_ = s.RegisterBuiltinTools(skills) // read / ls / shell / mem.* / tasks.* / skill.view / delegate
 			// shell 默认 fail-closed；只有显式 HUSHFUSION_ALLOW_SHELL=1 才放行。
@@ -2599,7 +2603,13 @@ func runtimeRoot(base string) string {
 }
 func runtimeDreamsDir(base string) string { return filepath.Join(runtimeRoot(base), "dreams") }
 func runtimeMemoryDir(base string) string { return filepath.Join(runtimeRoot(base), "memory") }
-func runtimeSkillsDir(base string) string { return filepath.Join(runtimeRoot(base), "skills") }
+
+// globalSkillsDir 是跨项目共享的 skills；projectSkillsDir 是本项目沉淀的 skills。
+// 加载顺序为 global → project，同名时 project 覆盖 global。
+func globalSkillsDir(base string) string { return filepath.Join(runtimeRoot(base), "skills") }
+func projectSkillsDir(base string) string {
+	return filepath.Join(runtimeRoot(base), "projects", projectKey(base), "skills")
+}
 
 // projectKey 用 os/ 绝对路径的短哈希区分不同项目（全局 sessions 不串会话）。
 func projectKey(base string) string {
@@ -2621,62 +2631,107 @@ func sessionsDir(base string) string {
 }
 
 // migrateRuntimeData 把旧位置（<os>/... 与 <os>/../forge/...）的数据搬到全局目录，不覆盖已有。
+// moveFileIfAbsent 把 src 移到 dst：dst 已存在时保留 src（不覆盖、不丢数据）。
+func moveFileIfAbsent(src, dst string) bool {
+	if _, err := os.Stat(src); err != nil {
+		return false
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return false
+	}
+	_ = os.MkdirAll(filepath.Dir(dst), 0o755)
+	if err := os.Rename(src, dst); err == nil {
+		return true
+	}
+	// 跨文件系统 rename 失败 → 复制后删源。
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return false
+	}
+	if err := os.WriteFile(dst, b, 0o644); err != nil {
+		return false
+	}
+	_ = os.Remove(src)
+	return true
+}
+
+// moveDirContentsIfAbsent 把 srcDir 下所有文件按相对路径移到 dstDir（不覆盖已有），
+// 最后清理 srcDir 的空目录。
+func moveDirContentsIfAbsent(srcDir, dstDir string) {
+	_ = filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(srcDir, path)
+		if relErr != nil {
+			return nil
+		}
+		moveFileIfAbsent(path, filepath.Join(dstDir, rel))
+		return nil
+	})
+	removeEmptyDirs(srcDir)
+}
+
+// removeEmptyDirs 自底向上删除空目录（非空目录不会被删）。
+func removeEmptyDirs(root string) {
+	var dirs []string
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			dirs = append(dirs, p)
+		}
+		return nil
+	})
+	for i := len(dirs) - 1; i >= 0; i-- {
+		_ = os.Remove(dirs[i])
+	}
+}
+
+// migrateRuntimeData 把旧位置（<os>/... 与 <os>/../forge/...）的数据**移动**到全局目录；
+// 目标已存在时保留旧文件（不覆盖），最后清掉遗留的空目录。
 func migrateRuntimeData(base string) {
-	oldRoots := []string{base, filepath.Clean(filepath.Join(base, "..", "forge"))}
+	oldForge := filepath.Clean(filepath.Join(base, "..", "forge"))
+	oldRoots := []string{base, oldForge}
 
-	// skills/evolved/SKILL.md
+	// 旧的项目内 skills（os/skills、./forge/skills）→ 当前项目 skills
+	for _, root := range oldRoots {
+		moveDirContentsIfAbsent(filepath.Join(root, "skills"), projectSkillsDir(base))
+	}
+	// 旧全局 evolved（此前所有项目共用一个）→ 当前项目 evolved（仅当本项目还没有）
 	if _, err := os.Stat(evolvedSkillPath(base)); err != nil {
-		for _, root := range oldRoots {
-			if b, err := os.ReadFile(filepath.Join(root, "skills", "evolved", "SKILL.md")); err == nil {
-				_ = os.MkdirAll(evolvedSkillDir(base), 0o755)
-				_ = os.WriteFile(evolvedSkillPath(base), b, 0o644)
-				break
-			}
-		}
+		moveFileIfAbsent(filepath.Join(globalSkillsDir(base), "evolved", "SKILL.md"), evolvedSkillPath(base))
 	}
+	_ = os.Remove(filepath.Join(globalSkillsDir(base), "evolved")) // 仅空目录
 
-	// memory/longterm.json + memory/workflow.md
-	for _, name := range []string{"longterm.json", "workflow.md"} {
+	// memory：longterm / workflow / agent-memory
+	for _, name := range []string{"longterm.json", "workflow.md", "agent-memory.json"} {
 		dst := filepath.Join(runtimeMemoryDir(base), name)
-		if _, err := os.Stat(dst); err == nil {
-			continue
-		}
 		for _, root := range oldRoots {
-			if b, err := os.ReadFile(filepath.Join(root, "memory", name)); err == nil {
-				_ = os.MkdirAll(runtimeMemoryDir(base), 0o755)
-				_ = os.WriteFile(dst, b, 0o644)
+			src := filepath.Join(root, "memory", name)
+			if name == "agent-memory.json" {
+				src = filepath.Join(root, name) // 旧 --persist 默认在 <os>/agent-memory.json
+			}
+			if moveFileIfAbsent(src, dst) {
 				break
 			}
 		}
 	}
 
-	// 旧 dreams（os/dreams.md 或 <os>/../forge/dreams/）→ 全局 dreams/
-	if entries, err := os.ReadDir(filepath.Join(filepath.Dir(base), "forge", "dreams")); err == nil {
+	// dreams：旧 <os>/../forge/dreams/* 与 <os>/dreams.md → 全局 dreams/
+	if entries, err := os.ReadDir(filepath.Join(oldForge, "dreams")); err == nil {
 		for _, e := range entries {
 			if e.IsDir() {
 				continue
 			}
-			dst := filepath.Join(runtimeDreamsDir(base), e.Name())
-			if _, err := os.Stat(dst); err != nil {
-				if b, err := os.ReadFile(filepath.Join(filepath.Dir(base), "forge", "dreams", e.Name())); err == nil {
-					_ = os.MkdirAll(runtimeDreamsDir(base), 0o755)
-					_ = os.WriteFile(dst, b, 0o644)
-				}
-			}
+			moveFileIfAbsent(filepath.Join(oldForge, "dreams", e.Name()), filepath.Join(runtimeDreamsDir(base), e.Name()))
 		}
 	}
-	if b, err := os.ReadFile(filepath.Join(base, "dreams.md")); err == nil {
-		dst := filepath.Join(runtimeDreamsDir(base), time.Now().Format("2006-01-02")+".md")
-		if _, err := os.Stat(dst); err != nil {
-			_ = os.MkdirAll(runtimeDreamsDir(base), 0o755)
-			_ = os.WriteFile(dst, b, 0o644)
-		}
-	}
+	moveFileIfAbsent(filepath.Join(base, "dreams.md"),
+		filepath.Join(runtimeDreamsDir(base), time.Now().Format("2006-01-02")+".md"))
 
-	// sessions/*.json + *.md → 全局 sessions/<project>/
+	// sessions：<os>/sessions/* 与 <os>/../forge/sessions/* → 全局 sessions/<project>/
 	for _, dir := range []string{
 		filepath.Join(base, "sessions"),
-		filepath.Join(filepath.Dir(base), "forge", "sessions"),
+		filepath.Join(oldForge, "sessions"),
 	} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -2686,19 +2741,27 @@ func migrateRuntimeData(base string) {
 			if e.IsDir() {
 				continue
 			}
-			dst := filepath.Join(sessionsDir(base), e.Name())
-			if _, err := os.Stat(dst); err == nil {
-				continue
-			}
-			if b, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil {
-				_ = os.MkdirAll(sessionsDir(base), 0o755)
-				_ = os.WriteFile(dst, b, 0o644)
-			}
+			moveFileIfAbsent(filepath.Join(dir, e.Name()), filepath.Join(sessionsDir(base), e.Name()))
 		}
+	}
+
+	// 清空遗留空目录（只删空目录；非空不动）。
+	for _, d := range []string{
+		filepath.Join(base, "skills", "evolved"),
+		filepath.Join(base, "skills"),
+		filepath.Join(base, "memory"),
+		filepath.Join(base, "sessions"),
+		filepath.Join(oldForge, "dreams"),
+		filepath.Join(oldForge, "memory"),
+		filepath.Join(oldForge, "skills", "evolved"),
+		filepath.Join(oldForge, "skills"),
+		filepath.Join(oldForge, "sessions"),
+	} {
+		_ = os.Remove(d)
 	}
 }
 
-func evolvedSkillDir(base string) string  { return filepath.Join(runtimeSkillsDir(base), "evolved") }
+func evolvedSkillDir(base string) string  { return filepath.Join(projectSkillsDir(base), "evolved") }
 func evolvedSkillPath(base string) string { return filepath.Join(evolvedSkillDir(base), "SKILL.md") }
 
 // ensureEvolvedSkill 确保经验 skill 存在并返回全文（frontmatter 必须含 name）。
