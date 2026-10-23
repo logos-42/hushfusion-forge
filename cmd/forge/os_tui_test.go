@@ -477,6 +477,25 @@ func TestAIResultShowsAnswer(t *testing.T) {
 	}
 }
 
+// 每条回复独立成框，不能与上一条合并。
+func TestRepliesNotMerged(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.width, m.height = 120, 40
+	m.appendAnswerText("第一条回复")
+	m.appendAnswerText("第二条回复")
+	if len(m.replyBlocks) != 1 {
+		t.Fatalf("第一条应进历史块, got %d", len(m.replyBlocks))
+	}
+	c := stripANSI(m.renderConsole(m.width))
+	if got := strings.Count(c, "╭─ forge"); got != 2 {
+		t.Fatalf("应有两个独立 forge 框, got %d: %q", got, c)
+	}
+	if strings.Index(c, "第一条回复") > strings.Index(c, "第二条回复") {
+		t.Fatalf("回复顺序应保持时间序: %q", c)
+	}
+}
+
 // 回复里的 Markdown 应渲染成样式文本，不再残留 ## / ** / ` / --- 等标记。
 func TestMarkdownRendered(t *testing.T) {
 	base := setupTempOS(t)

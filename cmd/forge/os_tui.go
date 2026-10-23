@@ -118,8 +118,9 @@ type osModel struct {
 	reportErr    error
 
 	// 展示框（输出 / 工具调用日志）
-	out       []string
-	outScroll int
+	out         []string
+	outScroll   int
+	replyBlocks [][]string // 历史回复：每条回复单独一个 forge 框，不合并
 
 	// 用户发送内容：lastEcho 渲染在 forge 框上方；sentLog 用于会话落盘。
 	lastEcho []string
@@ -2183,6 +2184,14 @@ func (m *osModel) appendAnswerText(ans string) {
 	if ans == "" {
 		return
 	}
+	// 上一条回复收进历史：每条回复独立成框，绝不与下一条合并。
+	if len(m.out) > 0 {
+		m.replyBlocks = append(m.replyBlocks, m.out)
+		if len(m.replyBlocks) > 50 {
+			m.replyBlocks = m.replyBlocks[len(m.replyBlocks)-50:]
+		}
+		m.out = nil
+	}
 	w := m.width
 	if w < 40 {
 		w = 80
@@ -2515,7 +2524,7 @@ func (m *osModel) persistSession() {
 		ToolCalls: m.toolCalls,
 		ToolOK:    m.toolOK,
 		ToolFail:  m.toolFail,
-		Out:       m.out,
+		Out:       m.allOutputLines(),
 		Sent:      m.sentLog,
 		Usage:     m.ledger,
 	}
@@ -2697,14 +2706,25 @@ func (m *osModel) renderConsole(w int) string {
 	if outH < 4 {
 		outH = 4
 	}
-	// 顺序：发送内容 → 工具调用（框外，先发生）→ forge 回复框（后发生）→ 输入框。
+	// 顺序：历史回复框 → 发送内容 → 工具调用（框外）→ 当前回复框 → 输入框。
+	curH := 0
+	if len(m.out) > 0 {
+		curH = len(m.out) + 2
+		if curH > outH {
+			curH = outH
+		}
+	}
+	histStr, histH := m.renderHistoryBoxes(w, outH-curH)
+	if histStr != "" {
+		b.WriteString(histStr + "\n")
+	}
 	if len(m.lastEcho) > 0 {
 		b.WriteString(strings.Join(m.lastEcho, "\n") + "\n")
 	}
 	if len(m.toolLog) > 0 {
 		b.WriteString(m.renderToolLog(w) + "\n")
 	}
-	b.WriteString(m.renderOutputBox(w, outH))
+	b.WriteString(m.renderOutputBox(w, outH-histH))
 	if m.loading {
 		b.WriteString(m.renderProgress(w))
 	}
@@ -2714,6 +2734,33 @@ func (m *osModel) renderConsole(w int) string {
 	}
 	b.WriteString(m.renderInput(w))
 	return b.String()
+}
+
+// allOutputLines 把历史回复块与当前回复拼成扁平日志（会话落盘用）。
+func (m *osModel) allOutputLines() []string {
+	var out []string
+	for _, blk := range m.replyBlocks {
+		out = append(out, blk...)
+	}
+	return append(out, m.out...)
+}
+
+// renderHistoryBoxes 把历史回复逐个渲染成独立的 forge 框（从新到旧取能放下的）。
+// 每条回复一个框，不与下一条合并。
+func (m *osModel) renderHistoryBoxes(w, room int) (string, int) {
+	var boxes []string
+	used := 0
+	for i := len(m.replyBlocks) - 1; i >= 0 && room > 3; i-- {
+		box := m.styles.replyBox.Width(w - 2).Render(strings.Join(m.replyBlocks[i], "\n"))
+		box = borderTitle(box, m.styles.accent.Render("forge"), "39")
+		bh := lipgloss.Height(box)
+		if used+bh+1 > room {
+			break
+		}
+		boxes = append([]string{box}, boxes...)
+		used += bh + 1
+	}
+	return strings.Join(boxes, "\n"), used
 }
 
 const maxToolLines = 8
