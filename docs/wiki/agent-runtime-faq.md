@@ -53,6 +53,14 @@ A：能（v0.2）。`NewMemStoreFile(path)` 把记忆落 JSON 文件（tmp+renam
 
 TUI 用 `--persist`（或 `--memory-file PATH`）开启落盘到 `<os>/agent-memory.json`，并提供 `/remember <k> <v>`、`/forget <k>`、`/memory` 三条命令；每轮 AI 会把记忆块经 `aios.ExtraSystem` 注入系统提示，落盘失败会在状态栏明确告知并退回内存模式。serve 进程的会话记忆同理可文件化。`os/sessions/<id>.json` 另存 TUI 会话的用量账本，可与记忆文件并存。
 
+### Q：serve 重启后对话还在吗？
+
+A：用 `--state-dir DIR` 就在。每个会话的消息栈落盘成 `<DIR>/<session>.history.json`（原子写、0600，因为含用户输入），进程启动时按会话读回并 `Restore` 到消息栈；`reset` 也会把空历史落盘（否则重启后"已清空"的对话会复活）。历史文件损坏时**明说并从空开始**，不会因一个会话坏了而拒绝整个 serve。不带 `--state-dir` 时仍是纯进程内。
+
+### Q：token 计数能精确吗？
+
+A：能，但要你提供 tokenizer。默认是 `len/4` 估算（`Name()` 自报"非精确"），并用 provider 上报的真实 `prompt_tokens` 做比例校准（`tokenScale`，对中文尤其必要）。精确计数依赖模型 BPE 词表（几 MB），本仓零依赖、不塞二进制资源，所以不内置"假精确"；需要时注入：`HUSHFUSION_TOKENIZER_CMD="python3 /path/tokcount.py"`（读 stdin 文本、输出一个整数，内部用 tiktoken 即可），或实现 `agent.Tokenizer` 接口。注入的实现失败会自动回退估算，不影响对话。
+
 ### Q：怎么看 token 用量、成本和缓存命中率？
 
 A：`internal/ai` 现已透出 provider 上报的 usage（兼容 OpenAI `prompt_tokens_details.cached_tokens` 与 DeepSeek `prompt_cache_hit_tokens` 两种形状）。三种入口：
@@ -83,6 +91,10 @@ A：第一层是 runtime 的 `AllowWrites` 白名单；第二层是 OS kernel �
 ### Q：围栏和沙箱分别是什么？
 
 A：围栏是约束集合，沙箱是执行实现。`internal/sandbox` 提供 jail cwd、路径逃逸检查、环境变量白名单、独立进程组、超时 TERM→KILL。它不是完整容器：当前没有 RLIMIT 资源限制、网络隔离，也不能消除符号链接检查竞态。
+
+### Q：怎么给子进程加资源上限和网络隔离？
+
+A：`sandbox.Policy.Limits`（`CPU`/`AS`/`NOFILE`/`NPROC`）与 `NetIsolate`。实现方式是套宿主工具：`prlimit(1)` 施加 RLIMIT、`unshare -n` 建网络命名空间（Linux，通常需特权）。**宿主没有这些工具或权限不足时直接拒绝启动**——绝不静默跑一个"没限制却在报告里说限制了"的进程；结果结构的 `Wrapped` 字段如实列出实际套上的手段（空 = 没套）。`exec.bolloon` 对应 env：`BOLLOON_EXEC_CPU_SECONDS` / `_AS_BYTES` / `_NOFILE` / `_NPROC` / `_NET_ISOLATE=1`。macOS 默认没有 `prlimit`，因此这些开关在 macOS 上会明确报"宿主不支持"。
 
 ### Q：terminal 命令如何执行？
 
@@ -149,7 +161,12 @@ A：不是。bootstrap、skills、memory、goal/task summary 都是有预算的�
 已覆盖并有单测的核心机制包括 loop/tool roundtrip、未知工具和写权限拒绝、上下文裁剪+真实用量校准、session reset/quit、persona 发现与系统提示注入、**按回合技能注入**、DID 签验、sandbox 进程组超时、proc 回收/超时杀组/并发闸/forget、review 规则与任务完成门、token usage 透出（cost/cache）、TUI `--persist` 记忆落盘与 `/remember /forget /memory`、sandbox+proc 已接 `exec.bolloon`、**`forge agent chat/serve` 顶层 CLI 已接线**（`--memory-dir` 按会话落盘 / `--skills` 按回合注入 / `--persona-root` 载入人格 / `--allow-writes` 写白名单，缺省全只读 fail-closed；stdout 只放协议行/最终回复，用量与警告走 stderr）。
 
 仍以代码落地和独立门禁为准、未冻结的部分：
-- **serve 进程的跨重启会话状态**：记忆落盘与 `os/sessions` 已覆盖“记忆”与“TUI 会话”，但不是 serve 进程完整状态（消息栈）的跨重启恢复。
-- 流式输出；通用子智能体 delegation（派发协议/预算继承/结果合并）；精确 tokenizer（现用 `len/4` 估算＋真实用量校准）；网络隔离；RLIMIT 资源限制。
+- **流式输出**（SSE）：`ai` 仍只支持非流式 chat/completions，`stream:true` 明确报错。
+- **通用子智能体 delegation**：派发协议/预算继承/结果合并尚未冻结（现有 kernel channel 与 proc 原语，但没有 `delegate` 工具）。
 
-本页设计状态与已提交代码一致（截至 2026-10-23：sandbox+proc 接 exec、persona 接系统提示、review 门接任务完成判定、记忆持久化 v0.2、token usage 透出、`--persist` 接 TUI、`forge agent chat/serve` 接 CLI）。新增能力以代码和单测为准。
+已经落地的（曾经列在这一节，现已兑现）：
+- **serve 消息栈跨重启恢复**：`--state-dir DIR` 按会话原子落盘 `<session>.history.json`（0600），重启后自动恢复；`reset` 会把空历史落盘，避免旧对话复活；文件损坏会明说并从空开始。
+- **精确 tokenizer 可注入**：`Tokenizer` 接口 + `HUSHFUSION_TOKENIZER_CMD`（读 stdin 文本、输出整数），默认仍是 `len/4` **估算**（`Name()` 自报非精确）并用 provider 真实 `prompt_tokens` 校准；不内置 BPE 词表（零依赖不塞二进制资源，编一个"精确"就是造假）。
+- **RLIMIT 与网络隔离**：`sandbox.Policy.Limits`（CPU/AS/NOFILE/NPROC）与 `NetIsolate`，经宿主 `prlimit(1)`/`unshare(1)` 施加；**工具缺失即拒绝启动**（fail-closed），结果里用 `Wrapped` 如实报告实际套了什么（空 = 没套）。
+
+本页设计状态与已提交代码一致（截至 2026-10-23：sandbox+proc 接 exec、persona 接系统提示、review 门接任务完成判定、记忆持久化 v0.2、token usage 透出、`--persist` 接 TUI、`forge agent chat/serve` 接 CLI、serve 消息栈跨重启恢复、tokenizer 可注入、RLIMIT/网络隔离）。新增能力以代码和单测为准。
