@@ -138,11 +138,10 @@ A：不是。bootstrap、skills、memory、goal/task summary 都是有预算的�
 
 ## 6. 当前边界与验收
 
-已覆盖并有单测的核心机制包括 loop/tool roundtrip、未知工具和写权限拒绝、上下文裁剪+真实用量校准、session reset/quit、persona 发现与系统提示注入、DID 签验、sandbox 进程组超时、proc 回收/超时杀组/并发闸/forget、review 规则与任务完成门、token usage 透出（cost/cache）、TUI `--persist` 记忆落盘与 `/remember /forget /memory`、sandbox+proc 已接 `exec.bolloon`。
+已覆盖并有单测的核心机制包括 loop/tool roundtrip、未知工具和写权限拒绝、上下文裁剪+真实用量校准、session reset/quit、persona 发现与系统提示注入、**按回合技能注入**、DID 签验、sandbox 进程组超时、proc 回收/超时杀组/并发闸/forget、review 规则与任务完成门、token usage 透出（cost/cache）、TUI `--persist` 记忆落盘与 `/remember /forget /memory`、sandbox+proc 已接 `exec.bolloon`、**`forge agent chat/serve` 顶层 CLI 已接线**（`--memory-dir` 按会话落盘 / `--skills` 按回合注入 / `--persona-root` 载入人格 / `--allow-writes` 写白名单，缺省全只读 fail-closed；stdout 只放协议行/最终回复，用量与警告走 stderr）。
 
 仍以代码落地和独立门禁为准、未冻结的部分：
-- **`forge agent` 顶层 CLI 命令**：Agent Runtime 目前只能经 TUI（`forge os tui`）或 stdio serve 使用，未接进 `forge` 顶层 `agent` 子命令。
-- **serve 进程的跨重启会话状态**：记忆落盘与 `os/sessions` 已覆盖“记忆”与“TUI 会话”，但不是 serve 进程完整状态的跨重启恢复。
+- **serve 进程的跨重启会话状态**：记忆落盘与 `os/sessions` 已覆盖“记忆”与“TUI 会话”，但不是 serve 进程完整状态（消息栈）的跨重启恢复。
 - 流式输出；通用子智能体 delegation（派发协议/预算继承/结果合并）；精确 tokenizer（现用 `len/4` 估算＋真实用量校准）；网络隔离；RLIMIT 资源限制。
 
-本页设计状态与已提交代码一致（截至 2026-10-23：sandbox+proc 接 exec、persona 接系统提示、review 门接任务完成判定、记忆持久化 v0.2、token usage 透出、`--persist` 接 TUI）。新增能力以代码和单测为准。
+本页设计状态与已提交代码一致（截至 2026-10-23：sandbox+proc 接 exec、persona 接系统提示、review 门接任务完成判定、记忆持久化 v0.2、token usage 透出、`--persist` 接 TUI、`forge agent chat/serve` 接 CLI）。新增能力以代码和单测为准。
