@@ -7,6 +7,7 @@
 - [os-kernel-architecture.md](./os-kernel-architecture.md) — OS 宏内核架构：syscall 单一入口 + 子系统驱动 + 写前不变量守卫，持久化=Markdown 块设备（phase-1，2026-10-20）
 - [control-fabric.md](./control-fabric.md) — 控制织物（阶段 0）：契约层 + 安全内核 + 仿真装置 + 控制闭环；AI 只提议、fail-closed、判决三态（v0.1，2026-10-21）
 - [ai-provider-design.md](./ai-provider-design.md) — 多 provider AI 接入层：声明式 Profile + 注册表别名 + OpenAI-compatible transport（借鉴 Hermes Agent，v0.1，2026-10-18）
+- [agent-runtime-design.md](./agent-runtime-design.md) — Agent Runtime：单一 queryLoop + 会话记忆 + skills + 目标/计划/待办 + stdio serve + 上下文压缩；模型推理、harness 强制边界、fail-closed 三闸（学 Claude Code，v0.1，2026-10-23）
 - [current-status.md](./current-status.md)
 - [sources-and-data.md](./sources-and-data.md)
 - [github-and-raw-strategy.md](./github-and-raw-strategy.md)

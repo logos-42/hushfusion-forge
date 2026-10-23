@@ -25,17 +25,45 @@ import (
 
 // Message 是一条对话消息（OpenAI-compatible 的 role/content 形状）。
 type Message struct {
-	Role    string `json:"role"`    // system | user | assistant
+	Role    string `json:"role"`    // system | user | assistant | tool
 	Content string `json:"content"` // v0.1 只支持纯文本；multimodal 留待后续
+	// ToolCalls 是 assistant 消息可携带的工具调用请求（tool_calls 协议扩展，
+	// 2026-10-23 合同扩展：runtime 依赖它才能连续对话执行）。
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	// ToolCallID 是 tool 角色消息回填时指向的调用 id（OpenAI 协议要求
+	// tool 消息必须 content + tool_call_id，且紧跟在产生它的 assistant 消息后）。
+	ToolCallID string `json:"tool_call_id,omitempty"`
+}
+
+// ToolCall 是模型的工具调用请求（OpenAI-compatible）。
+type ToolCall struct {
+	ID       string `json:"id"` // 调用 id（回填 tool 消息时原样带回）
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"` // JSON 字符串，执行前解析（runtime 负责校验）
+	} `json:"function"`
+}
+
+// ToolSpec 声明一个可被模型调用的工具（OpenAI-compatible tools[].function；
+// parameters 是 JSON Schema 子集，runtime 用它做参数校验）。
+type ToolSpec struct {
+	Type     string `json:"type"` // "function"
+	Function struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Parameters  any    `json:"parameters,omitempty"` // JSON Schema 对象
+	} `json:"function"`
 }
 
 // ChatRequest 是一次 chat/completions 请求的载荷。
 type ChatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Temperature *float64  `json:"temperature,omitempty"` // nil = 用 provider 默认
-	MaxTokens   int       `json:"max_tokens,omitempty"`
-	Stream      bool      `json:"stream,omitempty"` // v0.1: true 会明确报错（见 Chat）
+	Model       string     `json:"model"`
+	Messages    []Message  `json:"messages"`
+	Temperature *float64   `json:"temperature,omitempty"` // nil = 用 provider 默认
+	MaxTokens   int        `json:"max_tokens,omitempty"`
+	Stream      bool       `json:"stream,omitempty"` // v0.1: true 会明确报错（见 Chat）
+	Tools       []ToolSpec `json:"tools,omitempty"`  // 2026-10-23 扩展：模型可请求工具执行
 }
 
 // Usage 是 token 用量（provider 返回；缺省为 0，不猜测）。
@@ -52,6 +80,10 @@ type ChatResponse struct {
 	Content      string `json:"content"` // choices[0].message.content
 	FinishReason string `json:"finish_reason"`
 	Usage        Usage  `json:"usage"`
+
+	// ToolCalls 是 choices[0].message.tool_calls（模型请求的工具调用）。
+	// 非 tool 响应为 nil。按 OpenAI 协议原样暴露给 runtime（agent 包直接读字段）。
+	ToolCalls []ToolCall `json:"-"`
 }
 
 // Client 是一个 provider 的会话客户端。NewClient 解析 API key；Client.Chat 发请求。
@@ -203,7 +235,8 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content   string     `json:"content"`
+				ToolCalls []ToolCall `json:"tool_calls"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -221,6 +254,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 		Content:      wire.Choices[0].Message.Content,
 		FinishReason: wire.Choices[0].FinishReason,
 		Usage:        wire.Usage,
+		ToolCalls:    wire.Choices[0].Message.ToolCalls,
 	}, nil
 }
 
