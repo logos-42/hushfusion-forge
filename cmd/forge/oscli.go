@@ -397,9 +397,11 @@ func printOneshot(rep *aios.Report) {
 }
 
 // writeUsageFile 写 JSON 用量报告（失败也写，便于管道核算）。
-// 诚实边界：token/成本需 internal/ai 透出 usage（后续）；当前给出时长/步数/工具调用/成败。
+//
+// token / 成本来自 provider 真实上报的 usage（internal/ai）；**价目未知时 cost_usd
+// 写 null 而不是 0** —— 0 会被下游当成"免费"，比未知更危险。
 func writeUsageFile(path, provider, model, goal string, dryRun bool, rep *aios.Report, runErr error, dur time.Duration) {
-	u := map[string]any{
+	rep2 := map[string]any{
 		"provider":    provider,
 		"model":       model,
 		"goal":        goal,
@@ -408,7 +410,7 @@ func writeUsageFile(path, provider, model, goal string, dryRun bool, rep *aios.R
 		"duration_ms": dur.Milliseconds(),
 	}
 	if runErr != nil {
-		u["error"] = runErr.Error()
+		rep2["error"] = runErr.Error()
 	}
 	if rep != nil {
 		allowed, denied := 0, 0
@@ -419,13 +421,40 @@ func writeUsageFile(path, provider, model, goal string, dryRun bool, rep *aios.R
 				denied++
 			}
 		}
-		u["steps_total"] = len(rep.Plan)
-		u["steps_allowed"] = allowed
-		u["steps_denied"] = denied
-		u["tool_calls"] = len(rep.Results)
+		rep2["steps_total"] = len(rep.Plan)
+		rep2["steps_allowed"] = allowed
+		rep2["steps_denied"] = denied
+		rep2["tool_calls"] = len(rep.Results)
+
+		u := rep.Usage
+		rep2["api_calls"] = u.Calls
+		rep2["model_reported"] = rep.Model
+		rep2["tokens"] = map[string]any{
+			"prompt":         u.Prompt,
+			"completion":     u.Completion,
+			"total":          u.Total,
+			"cached":         u.Cached,
+			"reasoning":      u.Reasoning,
+			"cache_reported": u.CacheReported,
+		}
+		// 成本：价目未知 ⇒ null（不写 0，避免被当免费）。
+		if usd, known := u.Cost(rep.Model); known {
+			rep2["cost_usd"] = usd
+		} else {
+			rep2["cost_usd"] = nil
+			rep2["cost_note"] = "价目未知；用 HUSHFUSION_AI_PRICE_INPUT_PER_M/_OUTPUT_PER_M 或 ai.SetPrice 注入"
+		}
+		// 命中率只在 provider 上报过缓存字段时才有意义。
+		if u.CacheReported && u.Prompt > 0 {
+			rep2["cache_hit_rate"] = u.CacheHitRate()
+		} else {
+			rep2["cache_hit_rate"] = nil
+		}
+		if u.Calls == 0 {
+			rep2["usage_note"] = "provider 未上报 usage（假 ChatFunc / 部分代理会这样）"
+		}
 	}
-	u["note"] = "token/cost 计量需 internal/ai 透出 usage（后续）；当前给出时长/步数/工具调用/成败"
-	if b, err := json.MarshalIndent(u, "", "  "); err == nil {
+	if b, err := json.MarshalIndent(rep2, "", "  "); err == nil {
 		_ = os.WriteFile(path, b, 0o644)
 	}
 }

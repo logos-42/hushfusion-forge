@@ -40,6 +40,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/logos-42/hushfusion-forge/internal/agent"
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/aios"
 	"github.com/logos-42/hushfusion-forge/internal/oskernel"
@@ -121,6 +122,13 @@ type osModel struct {
 	provider  string
 	model     string
 	cacheHit  string
+
+	// 真实用量（provider 上报才有）：会话累计账本 + provider 实际回报的模型名。
+	ledger    ai.UsageLedger
+	modelUsed string
+
+	// mem 是持久记忆（--persist 时落盘，否则纯内存）。每轮 AI 把它注入 system。
+	mem *agent.MemStore
 
 	// 视图/会话增强（学 Hermes /help 分类，落到 OS/内核架构）
 	title      string // 会话标题（/title）
@@ -284,6 +292,9 @@ var slashCommands = []slashCmd{
 	{"redraw", "强制重绘", ""},
 	{"diff", "看 os/ git 改动", ""},
 	{"palette", "打开命令面板", ""},
+	{"remember", "写一条持久记忆", "<key> <value>"},
+	{"forget", "删一条持久记忆", "<key>"},
+	{"memory", "查看持久记忆", ""},
 }
 
 // refreshSlash 依据输入框内容刷新命令面板（以 "/" 开头即激活，按已输命令名过滤）。
@@ -345,7 +356,19 @@ func newOSModel(base string, snap *osview.Snapshot) *osModel {
 	m.showStatus = true
 	m.verbose = 1
 	m.indicator = "kaomoji"
+	m.mem = agent.NewMemStore() // 默认纯内存；cmdOSTUI --persist 会换成文件后备
 	return m
+}
+
+// memBlock 返回注入 system 的记忆块（空 = 无记忆，不占预算）。
+func (m *osModel) memBlock() string {
+	if m.mem == nil {
+		return ""
+	}
+	if m.mem.Len() == 0 {
+		return ""
+	}
+	return "—— 持久记忆（/remember 写入，跨会话保留）——\n" + strings.Join(m.mem.Snapshot(), "\n")
 }
 
 func envOr(k, def string) string {
@@ -450,7 +473,12 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	} else if msg.rep != nil {
 		m.appendToolCalls(msg.rep)
 	}
-	m.cacheHit = "miss" // 占位：无缓存信号时记 miss（后续接 ai 层 cache Usage）
+	// 真实用量入账（provider 上报才有；假路径为 0）。缓存命中率只在"上报过"时展示。
+	if msg.rep != nil {
+		m.ledger = m.ledger.Merged(msg.rep.Usage)
+		m.modelUsed = firstNonEmptyStr(msg.rep.Model, m.modelUsed)
+	}
+	m.cacheHit = m.cacheLabel()
 	m.reload()
 	if len(m.queue) > 0 {
 		next := m.queue[0]
@@ -760,6 +788,55 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 			m.appendQueue()
 			m.status = fmt.Sprintf("队列 %d 条", len(m.queue))
 		}
+	case "remember":
+		rest := strings.TrimSpace(strings.TrimPrefix(cmd, fields[0]))
+		parts := strings.SplitN(rest, " ", 2)
+		if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			m.status = m.styles.err.Render("用法: /remember <key> <value>")
+			return m, nil
+		}
+		k, v := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		old, existed := m.mem.Set(k, v)
+		m.out = append(m.out, m.styles.ok.Render("✓ 记忆已写入: "+k+"="+v))
+		if m.mem.LastPersistErr != nil {
+			// 落盘失败要说出来：否则用户以为"记住了"，重启就没了。
+			m.out = append(m.out, m.styles.err.Render("⚠ 未落盘: "+m.mem.LastPersistErr.Error()))
+			m.status = m.styles.err.Render("记忆仅在内存")
+		} else if existed {
+			m.status = m.styles.ok.Render("已更新 " + k + "（旧值: " + old + "）")
+		} else {
+			m.status = m.styles.ok.Render("已记住 " + k)
+		}
+		m.trimOut()
+	case "forget":
+		k := strings.TrimSpace(strings.TrimPrefix(cmd, fields[0]))
+		if k == "" {
+			m.status = m.styles.err.Render("用法: /forget <key>")
+			return m, nil
+		}
+		if m.mem.Delete(k) {
+			m.out = append(m.out, m.styles.ok.Render("✓ 已删除记忆: "+k))
+			m.status = m.styles.ok.Render("已删除 " + k)
+		} else {
+			m.status = m.styles.hint.Render("没有这条记忆: " + k)
+		}
+		m.trimOut()
+	case "memory":
+		m.out = append(m.out, m.styles.label.Render("── 持久记忆 ──"))
+		if m.mem.Len() == 0 {
+			m.out = append(m.out, m.styles.hint.Render("  （无；用 /remember <key> <value> 写）"))
+		} else {
+			for _, kv := range m.mem.Snapshot() {
+				m.out = append(m.out, "  "+kv)
+			}
+		}
+		if p := m.mem.Path(); p != "" {
+			m.out = append(m.out, m.styles.hint.Render("  文件: "+p))
+		} else {
+			m.out = append(m.out, m.styles.hint.Render("  内存模式（重启即失忆）；用 --persist 落盘"))
+		}
+		m.status = m.styles.ok.Render(fmt.Sprintf("记忆 %d 条", m.mem.Len()))
+		m.trimOut()
 	case "check":
 		m.status = runCheckInline()
 		m.out = append(m.out, stripANSI(m.status))
@@ -973,7 +1050,7 @@ func (m *osModel) startThinking(goal, provider, model string) (tea.Model, tea.Cm
 	m.aiStart = time.Now()
 	ctx, cancel := context.WithCancel(context.Background())
 	m.aiCancel = cancel
-	return m, tea.Batch(m.spinner.Tick, thinkTick(), runAICmd(ctx, m.base, goal, provider, model))
+	return m, tea.Batch(m.spinner.Tick, thinkTick(), runAICmd(ctx, m.base, goal, provider, model, m.memBlock()))
 }
 
 func (m *osModel) openForm(kind string) {
@@ -1100,10 +1177,11 @@ func (m *osModel) submitForm() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func runAICmd(ctx context.Context, base, goal, provider, model string) tea.Cmd {
+func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem string) tea.Cmd {
 	return func() tea.Msg {
-		agent := aios.NewAgent(oskernel.New(base), provider, model, os.Getenv("HUSHFUSION_AI_BASE_URL"))
-		rep, err := agent.Run(ctx, goal, false)
+		ag := aios.NewAgent(oskernel.New(base), provider, model, os.Getenv("HUSHFUSION_AI_BASE_URL"))
+		ag.ExtraSystem = extraSystem // 持久记忆块（--persist 时非空）
+		rep, err := ag.Run(ctx, goal, false)
 		return aiResultMsg{rep: rep, err: err}
 	}
 }
@@ -1244,6 +1322,7 @@ func (m *osModel) persistSession() {
 		ToolOK:    m.toolOK,
 		ToolFail:  m.toolFail,
 		Out:       m.out,
+		Usage:     m.ledger,
 	}
 	if jb, err := json.MarshalIndent(data, "", "  "); err == nil {
 		_ = os.WriteFile(filepath.Join(dir, m.sessionID+".json"), jb, 0o644)
@@ -1262,6 +1341,8 @@ type sessionData struct {
 	ToolOK    int      `json:"tool_ok"`
 	ToolFail  int      `json:"tool_fail"`
 	Out       []string `json:"out"`
+	// Usage 是会话累计的真实 token 用量（provider 上报才有；--resume 后继续累计）。
+	Usage ai.UsageLedger `json:"usage,omitempty"`
 }
 
 // loadSession 读取一个会话（sel 为空/latest=最新；否则按 id）。best-effort。
@@ -1422,10 +1503,56 @@ func (m *osModel) renderHeader(w int) string {
 	if m.title != "" {
 		sess = m.title
 	}
-	meta := fmt.Sprintf("model:%s/%s · cache:%s · ⏱ %s · %s",
-		m.provider, m.model, m.cacheHit, el, sess)
+	model := m.model
+	if m.modelUsed != "" {
+		model = m.modelUsed
+	}
+	meta := fmt.Sprintf("model:%s · tok:%s · cache:%s · %s · ⏱ %s · %s",
+		model, m.tokenLabel(), m.cacheLabel(), m.costLabel(), el, sess)
 	line := left + "  " + m.styles.header.Render(meta)
 	return line + "\n"
+}
+
+// cacheLabel 渲染缓存命中率。provider **没上报过**缓存字段时显示 "–"
+// （那是"无从得知"，不是 0% 命中 —— 拿 0% 冒充会误导优化方向）。
+func (m *osModel) cacheLabel() string {
+	if !m.ledger.CacheReported || m.ledger.Prompt == 0 {
+		return "–"
+	}
+	return fmt.Sprintf("%.0f%%", m.ledger.CacheHitRate()*100)
+}
+
+// tokenLabel 渲染累计 token（prompt/completion）。
+func (m *osModel) tokenLabel() string {
+	if m.ledger.Calls == 0 {
+		return "–"
+	}
+	return humanNum(m.ledger.Prompt) + "/" + humanNum(m.ledger.Completion)
+}
+
+// costLabel 渲染累计成本；价目未知显示 "—"（不显示 0，避免被当成免费）。
+func (m *osModel) costLabel() string {
+	model := m.modelUsed
+	if model == "" {
+		model = m.model
+	}
+	usd, known := m.ledger.Cost(model)
+	if !known {
+		return "—"
+	}
+	return fmt.Sprintf("$%.4f", usd)
+}
+
+// humanNum 把 token 数压成 1.2k / 3.4M 形式。
+func humanNum(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	default:
+		return strconv.Itoa(n)
+	}
 }
 
 func (m *osModel) renderOutputBox(w, h int) string {
@@ -1772,12 +1899,15 @@ func (m *osModel) helpBody() string {
 // ---------------------------------------------------------------------------
 
 func cmdOSTUI(args []string) int {
-	fs := newFlagSet("os tui", "forge os tui [--resume <id|latest>] [--continue <id|latest>] [--in DIR]",
-		"启动 TUI 控制台。--resume/--continue 恢复历史会话（latest=最近）；--in 指定 os/ 根目录。")
+	fs := newFlagSet("os tui", "forge os tui [--resume <id|latest>] [--continue <id|latest>] [--in DIR] [--persist] [--memory-file PATH]",
+		"启动 TUI 控制台。--resume/--continue 恢复历史会话（latest=最近）；--in 指定 os/ 根目录；"+
+			"--persist 把 agent 记忆落盘（/remember 写入，跨会话保留）。")
 	resume := fs.String("resume", "", "恢复会话：session id 或 latest")
 	cont := fs.String("continue", "", "恢复会话（同 --resume）")
 	contShort := fs.String("c", "", "同 --continue")
 	inDir := fs.String("in", "", "工作目录（设为 os/ 根，等同 HUSHFUSION_OS_DIR）")
+	persist := fs.Bool("persist", false, "持久化 agent 记忆到 <os>/agent-memory.json（跨会话保留）")
+	memFile := fs.String("memory-file", "", "记忆文件路径（隐含 --persist；默认 <os>/agent-memory.json）")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
@@ -1794,6 +1924,21 @@ func cmdOSTUI(args []string) int {
 		return 0
 	}
 	m := newOSModel(base, snap)
+	// 记忆持久化（--persist / --memory-file）。失败不挡启动，但必须说清楚已退化为内存模式
+	// —— 静默"以为记住了"是最坏的结果。
+	if *persist || *memFile != "" {
+		path := *memFile
+		if path == "" {
+			path = filepath.Join(base, "agent-memory.json")
+		}
+		if st, merr := agent.NewMemStoreFile(path); merr == nil {
+			m.mem = st
+			m.out = append(m.out, m.styles.ok.Render("✓ 记忆持久化: "+path))
+		} else {
+			fmt.Fprintln(os.Stderr, "os tui: 记忆文件不可用（退回内存模式）:", merr)
+			m.out = append(m.out, m.styles.err.Render("⚠ 记忆文件不可用，已退回内存模式: "+merr.Error()))
+		}
+	}
 	if sel := firstNonEmptyStr(*resume, *cont, *contShort); sel != "" {
 		if d, lerr := loadSession(base, sel); lerr == nil {
 			m.sessionID = orDefault(d.SessionID, m.sessionID)
@@ -1802,6 +1947,7 @@ func cmdOSTUI(args []string) int {
 			m.model = orDefault(d.Model, m.model)
 			m.goalCount = d.GoalCount
 			m.toolCalls, m.toolOK, m.toolFail = d.ToolCalls, d.ToolOK, d.ToolFail
+			m.ledger = d.Usage // 用量随会话恢复（成本/命中率继续累计）
 			m.out = append(m.out, m.styles.label.Render("── 恢复会话 "+m.sessionID+" ──"))
 			m.out = append(m.out, d.Out...)
 			m.startTime = time.Now() // 计时自恢复时刻起
