@@ -477,6 +477,34 @@ func TestAIResultShowsAnswer(t *testing.T) {
 	}
 }
 
+// 每轮沉淀经验：同一 skill 追加多条，且能被 agent 索引（下次启动复用）。
+func TestEvolvedSkillAccumulates(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.lastGoal = "测试目标"
+	m.toolLog = []string{"📖 Read index.md  0.01s"}
+	m.evolveSkill("第一条结论")
+	m.evolveSkill("第二条结论")
+	b, err := os.ReadFile(evolvedSkillPath(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "name: evolved-experience") {
+		t.Fatalf("frontmatter 缺失: %q", s)
+	}
+	if n := strings.Count(s, "\n## "); n != 2 {
+		t.Fatalf("应有 2 条经验, got %d: %q", n, s)
+	}
+	if !strings.Contains(s, "第一条结论") || !strings.Contains(s, "第二条结论") {
+		t.Fatalf("经验内容丢失: %q", s)
+	}
+	sk := agent.NewSkills([]string{filepath.Join(base, "skills")}, agent.NewKeywordMatcher())
+	if _, ok := sk.Lookup("evolved-experience"); !ok {
+		t.Fatal("经验 skill 未被 agent 索引")
+	}
+}
+
 // 工具调用上限应显著高于 150（此前 6/12 太小）。
 func TestAgentToolLimitsHigh(t *testing.T) {
 	cfg := agent.DefaultConfig()

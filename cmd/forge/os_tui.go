@@ -451,6 +451,12 @@ func newOSModel(base string, snap *osview.Snapshot) *osModel {
 	m.verbose = 1
 	m.indicator = "kaomoji"
 	m.mem = agent.NewMemStore() // 默认纯内存；cmdOSTUI --persist 会换成文件后备
+	// 检查工作区经验 skill：存在则加载（第二轮打开同一目录也能复用/继续迭代）。
+	if b := ensureEvolvedSkill(base); b != "" {
+		if n := strings.Count(b, "\n## "); n > 0 {
+			m.status = m.styles.hint.Render(fmt.Sprintf("📚 已加载历史经验 %d 条（os/skills/evolved）", n))
+		}
+	}
 	return m
 }
 
@@ -624,6 +630,14 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	}
 	if len(msg.tools) > 0 {
 		m.appendToolEvents(msg.tools) // 工具调用：框外逐行
+	}
+	// 每轮结束自动“进化”：把目标/工具/结论沉淀进工作区经验 skill，下次启动复用。
+	if msg.err == nil {
+		ans := msg.answer
+		if ans == "" && msg.rep != nil {
+			ans = msg.rep.Answer
+		}
+		m.evolveSkill(ans)
 	}
 	if msg.err != nil {
 		m.out = append(m.out, m.styles.err.Render("✗ "+msg.err.Error()))
@@ -2137,8 +2151,15 @@ func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem stri
 			if strings.TrimSpace(extraSystem) != "" {
 				sys += "\n\n" + extraSystem
 			}
+			// 历史经验 skill：每次启动都检查并注入（第二轮打开同一目录也能复用）。
+			if body := ensureEvolvedSkill(base); body != "" {
+				if len(body) > 4000 {
+					body = body[len(body)-4000:]
+				}
+				sys += "\n\n## 历史经验（本工作区自动积累，仅供参考，不要盲信）\n" + body
+			}
 			s := agent.NewSession(cfg, chat, agent.NewRegistry(), sys)
-			skills := agent.NewSkills(nil, agent.NewKeywordMatcher())
+			skills := agent.NewSkills([]string{filepath.Join(base, "skills")}, agent.NewKeywordMatcher())
 			s.Skills = skills
 			_ = s.RegisterBuiltinTools(skills) // read / ls / shell / mem.* / tasks.* / skill.view / delegate
 			// shell 默认 fail-closed；只有显式 HUSHFUSION_ALLOW_SHELL=1 才放行。
@@ -2298,6 +2319,81 @@ func mdLines(text string) []string {
 		out = append(out, mdInline(line))
 	}
 	return out
+}
+
+// ---- 工作区经验 skill：每轮结束自动沉淀，下次启动加载复用 ----
+
+const evolvedSkillName = "evolved-experience"
+
+func evolvedSkillDir(base string) string  { return filepath.Join(base, "skills", "evolved") }
+func evolvedSkillPath(base string) string { return filepath.Join(evolvedSkillDir(base), "SKILL.md") }
+
+// ensureEvolvedSkill 确保经验 skill 存在并返回全文（frontmatter 必须含 name）。
+func ensureEvolvedSkill(base string) string {
+	path := evolvedSkillPath(base)
+	if b, err := os.ReadFile(path); err == nil {
+		return string(b)
+	}
+	_ = os.MkdirAll(evolvedSkillDir(base), 0o755)
+	content := "---\nname: " + evolvedSkillName +
+		"\ndescription: 本工作区历次对话自动积累的经验（工作区 项目 任务 代码 文档 历史 经验）\n---\n\n# 历史经验\n"
+	_ = os.WriteFile(path, []byte(content), 0o644)
+	return content
+}
+
+// evolveSkill 把本轮目标 / 工具 / 结论确定性沉淀进经验 skill（不额外调模型）。
+func (m *osModel) evolveSkill(answer string) {
+	if strings.TrimSpace(answer) == "" {
+		return
+	}
+	var tools []string
+	for _, l := range m.toolLog {
+		if s := strings.TrimSpace(stripANSI(l)); s != "" {
+			tools = append(tools, s)
+		}
+	}
+	if len(tools) > 10 {
+		tools = tools[len(tools)-10:]
+	}
+	goal := clipSkillText(m.lastGoal, 80)
+	if goal == "" {
+		goal = "（无目标）"
+	}
+	content := ensureEvolvedSkill(m.base)
+	var b strings.Builder
+	b.WriteString("\n## " + time.Now().Format("2006-01-02 15:04") + " · " + goal + "\n")
+	if len(tools) > 0 {
+		b.WriteString("- 工具: " + strings.Join(tools, ", ") + "\n")
+	}
+	b.WriteString("- 结论: " + clipSkillText(answer, 400) + "\n")
+	content += b.String()
+	if err := os.WriteFile(evolvedSkillPath(m.base), []byte(trimEvolved(content, 60)), 0o644); err != nil {
+		m.status = m.styles.err.Render("经验 skill 写入失败: " + err.Error())
+	}
+}
+
+func clipSkillText(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
+}
+
+// trimEvolved 只保留最近 maxEntries 条经验，避免文件无限膨胀。
+func trimEvolved(content string, maxEntries int) string {
+	const marker = "\n# 历史经验\n"
+	i := strings.Index(content, marker)
+	if i < 0 {
+		return content
+	}
+	head := content[:i+len(marker)]
+	parts := strings.Split(content[i+len(marker):], "\n## ")
+	if len(parts) > maxEntries {
+		parts = parts[len(parts)-maxEntries:]
+	}
+	return head + strings.Join(parts, "\n## ")
 }
 
 // borderTitle 把标题嵌进圆角框的上边框（避免标题作为内容第一行再出现一次）。
