@@ -2611,20 +2611,16 @@ func (m *osModel) renderThinkingLine(w int) string {
 }
 
 func (m *osModel) renderHeader(w int) string {
+	// 头部只留项目标识、模型与运行时长；token/cache/成本为空时不再显示占位符，
+	// 也不再拼会话标题（如「宏内核 TUI — 设计 → …」）。
 	el := time.Since(m.startTime).Round(time.Second)
 	left := m.styles.logo.Render("◉ FORGE")
-	sess := m.sessionID
-	if m.title != "" {
-		sess = m.title
-	}
 	model := m.model
 	if m.modelUsed != "" {
 		model = m.modelUsed
 	}
-	meta := fmt.Sprintf("model:%s · tok:%s · cache:%s · %s · ⏱ %s · %s",
-		model, m.tokenLabel(), m.cacheLabel(), m.costLabel(), el, sess)
-	line := left + "  " + m.styles.header.Render(meta)
-	return line + "\n"
+	meta := fmt.Sprintf("model:%s · ⏱ %s", model, el)
+	return left + "  " + m.styles.header.Render(meta) + "\n"
 }
 
 // cacheLabel 渲染缓存命中率。provider **没上报过**缓存字段时显示 "–"
