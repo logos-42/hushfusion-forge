@@ -85,10 +85,48 @@ type Session struct {
 	// Turns 是已完成的回合数（审计 / 状态展示）。
 	Turns int
 
-	// Memory 是会话内记忆（KV；跨回合保留；预留持久化）。
+	// Memory 是会话内记忆（KV；跨回合保留；可文件持久化）。
 	Memory *MemStore
 	// Tasks 是会话内目标/待办/计划存储（长期目标执行）。
 	Tasks *TaskStore
+
+	// LastUsage 是最近一次模型调用的**真实**用量（provider 未上报 ⇒ PromptTokens=0）。
+	LastUsage ai.Usage
+	// OnUsage 可选回调：每次调用成功后收到真实用量（TUI/serve 实时显示）。
+	OnUsage func(ai.Usage)
+
+	// ledger 是会话累计用量；lastEstimate 是上次调用前的估算（校准 tokenizer 偏差）。
+	ledger       ai.UsageLedger
+	lastEstimate int
+}
+
+// Usage 返回会话累计的真实用量（provider 未上报则为空账本）。
+func (s *Session) Usage() ai.UsageLedger { return s.ledger }
+
+// recordUsage 记录一次调用的真实用量（唯一入口，避免多处漏记）。
+func (s *Session) recordUsage(u ai.Usage) {
+	s.LastUsage = u
+	s.ledger.Add(u)
+	if s.OnUsage != nil {
+		s.OnUsage(u)
+	}
+}
+
+// tokenScale 是「真实 prompt_tokens / 估算 token」的校准系数。
+//
+// 为什么需要：estimateTokens 用 len/4，对中文（1 字≈1~2 token，UTF-8 3 字节）
+// 会**严重低估**，导致压缩永远不触发、上下文一路撑爆 provider 上限。首次真调用
+// 之后用实测比例修正估算，比换一个重 tokenizer 便宜得多。
+//
+// 荒谬值（<0.1 或 >20）不采信 —— 防脏数据把预算拉爆。
+func (s *Session) tokenScale() float64 {
+	if s.LastUsage.PromptTokens > 0 && s.lastEstimate > 0 {
+		r := float64(s.LastUsage.PromptTokens) / float64(s.lastEstimate)
+		if r >= 0.1 && r <= 20 {
+			return r
+		}
+	}
+	return 1
 }
 
 // NewSession 构造一个会话。
@@ -128,6 +166,19 @@ func estimateTokens(msgs []Message) int {
 	return n
 }
 
+// estimateAIMessages 估算 assemble 后请求体的 token（含 system，与 estimateTokens
+// 同口径 len/4）。用于和 provider 真实 prompt_tokens 对比，校准 tokenizer 偏差。
+func estimateAIMessages(msgs []ai.Message) int {
+	n := 0
+	for _, m := range msgs {
+		n += len(m.Content)/4 + 4
+		for _, tc := range m.ToolCalls {
+			n += len(tc.Function.Name)/4 + len(tc.Function.Arguments)/4
+		}
+	}
+	return n
+}
+
 // compact 渐进压缩（学 Claude Code 5 层压缩的最简两段）：
 //   - 预算削减：单条工具结果超长直接截断（不删，保审计）；
 //   - 历史裁剪：仍超预算 → 丢最旧轮次（v0.1 无智能摘要，诚实标记 Compacted）。
@@ -142,10 +193,14 @@ func (s *Session) compact() int {
 			m.Content = m.Content[:toolResultBudget] + " …(截断)"
 		}
 	}
-	// 阶段2：整体估算超预算 → 从最旧逐条丢（保留最后一条 = 当前 user 消息）。
+	// 阶段2：整体超预算 → 从最旧逐条丢（保留最后一条 = 当前 user 消息）。
 	// 注意：system 不占 messages 栈（是 Session.System 单独字段，assemble 时注入），
 	// 所以这里所有消息都可丢，只是必须保住最后一条让模型有东西可回应。
-	for estimateTokens(s.messages) > s.cfg.MaxBudgetTokens && len(s.messages) > 1 {
+	//
+	// 预算判定用「估算 × 校准系数」：系数来自上一次真实 prompt_tokens / 当次估算，
+	// 让中文这类被低估的上下文也能按**真实**预算压缩。
+	scale := s.tokenScale()
+	for int(float64(estimateTokens(s.messages))*scale) > s.cfg.MaxBudgetTokens && len(s.messages) > 1 {
 		dropped := false
 		for i := 0; i < len(s.messages)-1; i++ {
 			m := s.messages[i]
@@ -305,13 +360,19 @@ func (s *Session) chatWithRetry(ctx context.Context) (*ai.ChatResponse, error) {
 		if s.cfg.ModelTimeout > 0 {
 			callCtx, cancel = context.WithTimeout(ctx, s.cfg.ModelTimeout)
 		}
+		msgs := s.assemble()
+		// 记录调用前的估算，供 tokenScale 校准 tokenizer 偏差。
+		s.lastEstimate = estimateAIMessages(msgs)
 		resp, err := s.chat(callCtx, ai.ChatRequest{
 			Model:    s.cfg.Model,
-			Messages: s.assemble(),
+			Messages: msgs,
 			Tools:    s.registry.Specs(),
 		})
 		cancel()
 		if err == nil {
+			if resp != nil {
+				s.recordUsage(resp.Usage) // 真实用量入账（provider 未上报则全 0）
+			}
 			return resp, nil
 		}
 		lastErr = err

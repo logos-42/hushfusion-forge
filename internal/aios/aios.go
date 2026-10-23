@@ -74,6 +74,18 @@ type Agent struct {
 
 	// ChatFunc 注入对话函数（默认走 internal/ai；测试注入假实现）。
 	ChatFunc func(ctx context.Context, system, user string) (string, error)
+
+	// OnUsage 可选回调：每次对话成功后收到 provider 上报的用量（TUI 实时显示用）。
+	// ChatFunc 注入假实现时不会触发（假实现没有 usage 可报）。
+	OnUsage func(ai.Usage)
+
+	// ExtraSystem 追加到内置 system 提示之后（如持久记忆块、persona 文档）。
+	// 空 = 只用内置提示。内置提示与追加块之间空一行，避免粘成一句。
+	ExtraSystem string
+
+	// usage 累计本次运行的用量；modelUsed 是 provider 实际回报的模型名。
+	usage     ai.UsageLedger
+	modelUsed string
 }
 
 // NewAgent 构造 AI 操作器。内置 provider 目录幂等注册（让 aios 独立可用，
@@ -111,10 +123,16 @@ type ExecResult struct {
 
 // Report 是一次 AI 粘合运行的完整记录（可核对）。
 type Report struct {
-	Goal    string
+	Goal string
+	// Model 是 provider **实际回报**的模型名（resp.Model）；空 = 未知。
+	// 成本按它查价目（配置里的 Model 可能为空/别名）。
+	Model   string
 	Plan    []PlanStep
 	Results []ExecResult
 	Notes   []string
+	// Usage 是本次运行累计的真实 token 用量（provider 上报）。
+	// 注入假 ChatFunc 时为 0 —— 那是"没上报"，不是"没用 token"。
+	Usage ai.UsageLedger
 }
 
 // Run 读 OS 状态 → 多步自愈循环让 AI 出计划并校正 → （非 dry-run）经内核执行。
@@ -132,6 +150,9 @@ func (a *Agent) Run(ctx context.Context, goal string, dryRun bool) (*Report, err
 	if a.ChatFunc == nil {
 		a.ChatFunc = a.defaultChat
 	}
+	// 每次 Run 重置用量账本（Report 只反映本次运行）。
+	a.usage = ai.UsageLedger{}
+	a.modelUsed = ""
 	state, err := a.readState()
 	if err != nil {
 		return nil, fmt.Errorf("aios: 读 OS 状态失败: %w", err)
@@ -156,6 +177,11 @@ func (a *Agent) Run(ctx context.Context, goal string, dryRun bool) (*Report, err
 		}
 	}
 	finalize(rs)
+	rs.rep.Usage = a.usage
+	rs.rep.Model = a.modelUsed
+	if rs.rep.Model == "" {
+		rs.rep.Model = a.Model // provider 没回报时退回配置值（可能为空）
+	}
 	return rs.rep, nil
 }
 
@@ -173,7 +199,7 @@ type runState struct {
 // runRound 执行一轮 AI 回合：问一次 → 解析 → 校验/执行 → 判定是否继续自愈。
 // 返回 done=true 表示收敛（Run 应停止循环）。
 func (a *Agent) runRound(ctx context.Context, rs *runState, dryRun bool) (done bool, err error) {
-	raw, err := a.ChatFunc(ctx, systemPrompt, buildUser(rs.rep.Goal, rs.state, rs.history))
+	raw, err := a.ChatFunc(ctx, a.systemPrompt(), buildUser(rs.rep.Goal, rs.state, rs.history))
 	if err != nil {
 		return false, fmt.Errorf("aios: AI 对话失败: %w", err)
 	}
@@ -317,6 +343,14 @@ func (a *Agent) readState() (string, error) {
 	return s, nil
 }
 
+// systemPrompt 返回实际 system 文本：内置提示 + 可选 ExtraSystem（记忆块等）。
+func (a *Agent) systemPrompt() string {
+	if strings.TrimSpace(a.ExtraSystem) == "" {
+		return systemPrompt
+	}
+	return systemPrompt + "\n\n" + a.ExtraSystem
+}
+
 func (a *Agent) defaultChat(ctx context.Context, system, user string) (string, error) {
 	resp, err := ai.Chat(ctx, a.Provider, ai.ChatRequest{
 		Model:    a.Model,
@@ -324,6 +358,14 @@ func (a *Agent) defaultChat(ctx context.Context, system, user string) (string, e
 	}, ai.ClientOptions{BaseURL: a.BaseURL})
 	if err != nil {
 		return "", err
+	}
+	// 真实用量只在真调用路径上存在：累计进账本 + 上报模型名 + 回调。
+	a.usage.Add(resp.Usage)
+	if resp.Model != "" {
+		a.modelUsed = resp.Model
+	}
+	if a.OnUsage != nil {
+		a.OnUsage(resp.Usage)
 	}
 	return resp.Content, nil
 }
