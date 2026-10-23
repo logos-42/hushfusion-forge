@@ -2155,7 +2155,7 @@ func (m *osModel) appendAnswerText(ans string) {
 	if ans == "" {
 		return
 	}
-	m.out = append(m.out, m.styles.accent.Render("forge")+m.styles.hint.Render(" · 回复"))
+	// 框内只放回复正文；标题已嵌在框的上边框，不再重复。
 	for _, line := range strings.Split(ans, "\n") {
 		m.out = append(m.out, "  "+line)
 	}
@@ -2707,7 +2707,7 @@ func (m *osModel) renderOutputBox(w, h int) string {
 			show = []string{""}
 		}
 	}
-	title := m.styles.accent.Render("forge") + m.styles.hint.Render(" · 回复")
+	title := m.styles.accent.Render("forge")
 	if maxScroll > 0 {
 		title += m.styles.hint.Render(fmt.Sprintf("  (%d/%d)", len(lines)-m.outScroll, len(lines)))
 	}

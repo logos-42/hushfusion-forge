@@ -446,8 +446,11 @@ func TestAIResultShowsAnswer(t *testing.T) {
 		t.Fatalf("AI 回复应出现在输出: %q", joined)
 	}
 	m.width = 120
-	if out := stripANSI(m.renderOutputBox(m.width, 10)); !strings.Contains(out, "forge · 回复") {
+	if out := stripANSI(m.renderOutputBox(m.width, 10)); !strings.Contains(out, "forge") {
 		t.Fatalf("标题应在框上: %q", out)
+	}
+	if strings.Contains(joined, "forge · 回复") {
+		t.Fatalf("框内不应再重复标题: %q", joined)
 	}
 	if strings.Contains(joined, "AI 回合") {
 		t.Fatalf("纯对话不应再追加空 AI 回合: %q", joined)
