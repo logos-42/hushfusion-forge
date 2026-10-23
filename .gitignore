@@ -21,6 +21,10 @@ runs/**/*.tmp
 # os/DECISIONS.md / os/EXPERIMENTS.md 结构化文档, 不进 git
 os/evidence/
 
+# TUI 会话落盘(os/sessions/*.md + *.json): 运行时产物, 可由 --resume 现场用,
+# 不是决策证据(证据在 os/ 与 docs/wiki/), 不进 git
+os/sessions/
+
 # raw 原件(与仓库平级的本地 raw 根,外加编辑器状态): 只进 manifest,不进 git
 .obsidian/
 raw/
