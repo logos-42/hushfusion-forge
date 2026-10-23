@@ -194,6 +194,12 @@ func run(args []string) int {
 		// 设计借鉴 hermes-agent 的 ProviderProfile: 声明式 profile + 注册表别名 +
 		// OpenAI-compatible 默认 transport, 一个客户端覆盖大多数 provider。
 		return cmdAI(rest)
+	case "agent":
+		// 连续对话执行 Agent Runtime (internal/agent, docs/wiki/agent-runtime-design.md):
+		// chat    单发: 一次对话后进程退出即失忆 (无状态)
+		// serve   stdio JSONL 会话服务器: 每行请求->每行响应, 会话驻留进程内
+		//         (TUI 后端; 请求带 session 字段区分会话, reset/quit 管理生命周期)
+		return cmdAgent(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "forge: unknown command %q\n\n", cmd)
 		usage(os.Stderr)
@@ -221,6 +227,7 @@ commands:
   harness     本地自优化闭环: run / self / report (internal/harness)
   bolloon     去中心化智能体 CLI 透传: 把参数转发给本机 bolloon (network/agent/task/engine)
   ai          multi-provider AI gateway: list / chat / models (docs/ai-provider-design.md)
+  agent       continuous-conversation agent runtime: chat / serve (docs/wiki/agent-runtime-design.md)
   lsp         LSP server 查询: definition / hover / references / list (internal/lsp)
   version     print version, spec shape and frozen schema facts
 
