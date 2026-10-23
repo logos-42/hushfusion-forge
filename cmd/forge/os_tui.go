@@ -2291,6 +2291,18 @@ func toolIconDesc(syscall string, args map[string]any) (string, string) {
 		return "📖", "Read " + firstNonEmptyStr(get("path", "file"), argsSummary(args))
 	case "tasks.propose":
 		return "📋", "Task " + firstNonEmptyStr(get("id", "title"), argsSummary(args))
+	case "tasks.list":
+		return "📋", "Task list"
+	case "tasks.add":
+		return "📋", "Task add " + firstNonEmptyStr(get("title"), argsSummary(args))
+	case "tasks.set_state":
+		return "📋", fmt.Sprintf("Task %s → %v", get("id"), args["state"])
+	case "mem.get", "mem.set", "mem.reset":
+		return "🧠", "Memory " + syscall
+	case "ls", "list", "dir":
+		return "📂", "List " + firstNonEmptyStr(get("path"), ".")
+	case "delegate":
+		return "🤝", "Delegate " + firstNonEmptyStr(get("goal", "prompt", "task"), argsSummary(args))
 	case "opportunities.add":
 		return "🎯", "Opportunity " + get("chance")
 	case "decisions.add":
@@ -2559,14 +2571,14 @@ func (m *osModel) renderConsole(w int) string {
 	if outH < 4 {
 		outH = 4
 	}
-	// 顺序：发送内容（❯ hi）→ forge 回复框（回复在发送内容下面）→ 输入框。
+	// 顺序：发送内容 → 工具调用（框外，先发生）→ forge 回复框（后发生）→ 输入框。
 	if len(m.lastEcho) > 0 {
 		b.WriteString(strings.Join(m.lastEcho, "\n") + "\n")
 	}
-	b.WriteString(m.renderOutputBox(w, outH))
 	if len(m.toolLog) > 0 {
 		b.WriteString(m.renderToolLog(w) + "\n")
 	}
+	b.WriteString(m.renderOutputBox(w, outH))
 	if m.loading {
 		b.WriteString(m.renderProgress(w))
 	}

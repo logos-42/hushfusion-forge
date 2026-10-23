@@ -307,10 +307,10 @@ func TestToolLogOutsideForgeBox(t *testing.T) {
 		t.Fatalf("工具行格式不对: %#v", m.toolLog)
 	}
 	c := stripANSI(m.renderConsole(m.width))
-	boxBottom := strings.LastIndex(c, "╰")
+	boxTop := strings.LastIndex(c, "╭")
 	toolIdx := strings.Index(c, "📖 Read index.md")
-	if boxBottom < 0 || toolIdx < 0 || toolIdx < boxBottom {
-		t.Fatalf("工具调用应在 forge 框外/下方: boxBottom=%d tool=%d", boxBottom, toolIdx)
+	if boxTop < 0 || toolIdx < 0 || toolIdx > boxTop {
+		t.Fatalf("工具调用应在 forge 框外/上方（先工具后回复框）: boxTop=%d tool=%d", boxTop, toolIdx)
 	}
 }
 
