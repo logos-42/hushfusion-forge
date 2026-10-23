@@ -682,6 +682,46 @@ func TestIdleHeartbeatSkipsBusy(t *testing.T) {
 	}
 }
 
+// 沉淀提示词应写入经验 skill，约束只记真正值得记的东西。
+func TestEvolvedSkillHasDistillPrompt(t *testing.T) {
+	base := setupTempOS(t)
+	b := ensureEvolvedSkill(base)
+	for _, want := range []string{"沉淀规则", "只记录可复用", "同一结论不重复"} {
+		if !strings.Contains(b, want) {
+			t.Fatalf("经验 skill 缺少沉淀提示词 %q: %q", want, b)
+		}
+	}
+}
+
+// 寒暄/无工具闲聊不沉淀。
+func TestEvolveSkillSkipsTrivial(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	_ = os.Remove(evolvedSkillPath(base))
+	m.lastGoal = "你好"
+	m.toolLog = nil
+	m.evolveSkill("你好！很高兴见到你。")
+	b, _ := os.ReadFile(evolvedSkillPath(base))
+	if strings.Contains(string(b), "- 结论:") {
+		t.Fatalf("寒暄不应沉淀: %q", b)
+	}
+}
+
+// 同一结论只记一次。
+func TestEvolveSkillDedupes(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	_ = os.Remove(evolvedSkillPath(base))
+	m.lastGoal = "修复问题"
+	m.toolLog = []string{"📖 Read index.md  0.01s"}
+	m.evolveSkill("同一结论")
+	m.evolveSkill("同一结论")
+	b, _ := os.ReadFile(evolvedSkillPath(base))
+	if n := strings.Count(string(b), "- 结论: 同一结论"); n != 1 {
+		t.Fatalf("同一结论应只记一次, got %d: %q", n, b)
+	}
+}
+
 // 每轮沉淀经验：同一 skill 追加多条，且能被 agent 索引（下次启动复用）。
 func TestEvolvedSkillAccumulates(t *testing.T) {
 	base := setupTempOS(t)

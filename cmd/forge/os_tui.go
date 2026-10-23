@@ -523,7 +523,13 @@ func (m *osModel) buildFrozenContext() string {
 
 	// 3) 每轮自动沉淀的经验
 	if body := ensureEvolvedSkill(m.base); strings.TrimSpace(body) != "" {
-		b.WriteString("\n## 沉淀经验（forge/skills/evolved/SKILL.md）\n" + tailRunes(body, 4000) + "\n")
+		tail := tailRunes(body, 4000)
+		b.WriteString("\n## 沉淀经验（本项目 skills/evolved/SKILL.md）\n")
+		// 长文件尾部可能把规则截掉；确保提示词始终在快照里。
+		if !strings.Contains(tail, "沉淀规则") {
+			b.WriteString(skillDistillPrompt + "\n\n")
+		}
+		b.WriteString(tail + "\n")
 	}
 
 	// 4) 跨会话长期记忆（最近 20 条）
@@ -2583,6 +2589,14 @@ func mdLines(text string) []string {
 
 const evolvedSkillName = "evolved-experience"
 
+// skillDistillPrompt 是给“沉淀经验”这一步的提示词：
+// 约束它只写真正值得复用的东西，不要把每轮对话全文都塞进 skill。
+const skillDistillPrompt = `> 沉淀规则（只沉淀真正值得沉淀的）：
+> - 只记录可复用的方法、关键坑、决策依据、验证证据；
+> - 不摘录整段对话、不复制用户原话、不写“你好/谢谢”这类寒暄；
+> - 同一结论不重复记录；没有新教训时本轮不写；
+> - 每条一句话，写成“做了什么 → 结果/证据”。`
+
 // 运行时数据统一放全局目录（默认 ~/.forge），按类型分子目录：
 //
 //	~/.forge/dreams/   ~/.forge/memory/   ~/.forge/skills/   ~/.forge/sessions/<project>/
@@ -2765,21 +2779,42 @@ func evolvedSkillDir(base string) string  { return filepath.Join(projectSkillsDi
 func evolvedSkillPath(base string) string { return filepath.Join(evolvedSkillDir(base), "SKILL.md") }
 
 // ensureEvolvedSkill 确保经验 skill 存在并返回全文（frontmatter 必须含 name）。
+// 已有文件会补上“沉淀规则”提示词，避免历史文件缺少约束。
 func ensureEvolvedSkill(base string) string {
 	path := evolvedSkillPath(base)
 	if b, err := os.ReadFile(path); err == nil {
-		return string(b)
+		content := ensureDistillPrompt(string(b))
+		if content != string(b) {
+			_ = os.WriteFile(path, []byte(content), 0o644)
+		}
+		return content
 	}
 	_ = os.MkdirAll(evolvedSkillDir(base), 0o755)
 	content := "---\nname: " + evolvedSkillName +
-		"\ndescription: 本工作区历次对话自动积累的经验（工作区 项目 任务 代码 文档 历史 经验）\n---\n\n# 历史经验\n"
+		"\ndescription: 本项目历次对话自动积累的可复用经验（方法 坑 决策 证据）\n---\n\n# 历史经验\n\n" +
+		skillDistillPrompt + "\n"
 	_ = os.WriteFile(path, []byte(content), 0o644)
 	return content
 }
 
+// ensureDistillPrompt 在 “# 历史经验” 后插入沉淀规则（幂等）。
+func ensureDistillPrompt(content string) string {
+	if strings.Contains(content, "沉淀规则") {
+		return content
+	}
+	const marker = "\n# 历史经验\n"
+	i := strings.Index(content, marker)
+	if i < 0 {
+		return content
+	}
+	at := i + len(marker)
+	return content[:at] + "\n" + skillDistillPrompt + "\n" + content[at:]
+}
+
 // evolveSkill 把本轮目标 / 工具 / 结论确定性沉淀进经验 skill（不额外调模型）。
 func (m *osModel) evolveSkill(answer string) {
-	if strings.TrimSpace(answer) == "" {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
 		return
 	}
 	var tools []string
@@ -2788,24 +2823,73 @@ func (m *osModel) evolveSkill(answer string) {
 			tools = append(tools, s)
 		}
 	}
-	if len(tools) > 10 {
-		tools = tools[len(tools)-10:]
+	if len(tools) > 6 {
+		tools = tools[len(tools)-6:]
+	}
+	// 先过质量门：寒暄/无工具的短闲聊不沉淀；再按 200 字压缩成一句结论。
+	concl := clipSkillText(answer, 200)
+	if !m.worthEvolving(concl, tools) {
+		return
+	}
+	content := ensureEvolvedSkill(m.base)
+	if last := lastEntryConclusion(content); last != "" && (last == concl || strings.Contains(last, concl)) {
+		return // 同一结论不重复记录
 	}
 	goal := clipSkillText(m.lastGoal, 80)
 	if goal == "" {
 		goal = "（无目标）"
 	}
-	content := ensureEvolvedSkill(m.base)
 	var b strings.Builder
 	b.WriteString("\n## " + time.Now().Format("2006-01-02 15:04") + " · " + goal + "\n")
 	if len(tools) > 0 {
 		b.WriteString("- 工具: " + strings.Join(tools, ", ") + "\n")
 	}
-	b.WriteString("- 结论: " + clipSkillText(answer, 400) + "\n")
+	b.WriteString("- 结论: " + concl + "\n")
 	content += b.String()
 	if err := os.WriteFile(evolvedSkillPath(m.base), []byte(trimEvolved(content, 60)), 0o644); err != nil {
 		m.status = m.styles.err.Render("经验 skill 写入失败: " + err.Error())
 	}
+}
+
+// worthEvolving 判断本轮是否值得沉淀（宁可少记，不把寒暄/闲聊塞进 skill）：
+//   - 有工具调用/验证过程 → 值得；
+//   - 纯寒暄（你好/谢谢/…）且无工具 → 不记；
+//   - 无工具时，结论需足够长且含结论性词汇才记。
+func (m *osModel) worthEvolving(concl string, tools []string) bool {
+	if strings.TrimSpace(concl) == "" {
+		return false
+	}
+	if len(tools) > 0 {
+		return true
+	}
+	low := strings.ToLower(m.lastGoal)
+	for _, greet := range []string{"你好", "您好", "hi", "hello", "谢谢", "在吗", "ok", "好的"} {
+		if strings.Contains(low, greet) {
+			return false
+		}
+	}
+	if len([]rune(concl)) < 40 {
+		return false
+	}
+	for _, kw := range []string{"结论", "原因", "根因", "修复", "验证", "证据", "失败", "成功", "应该", "必须", "注意"} {
+		if strings.Contains(concl, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// lastEntryConclusion 取最后一条经验的结论（用于去重）。
+func lastEntryConclusion(content string) string {
+	idx := strings.LastIndex(content, "- 结论:")
+	if idx < 0 {
+		return ""
+	}
+	s := content[idx+len("- 结论:"):]
+	if end := strings.Index(s, "\n"); end >= 0 {
+		s = s[:end]
+	}
+	return strings.TrimSpace(s)
 }
 
 func clipSkillText(s string, n int) string {
