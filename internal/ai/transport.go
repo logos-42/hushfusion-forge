@@ -66,12 +66,7 @@ type ChatRequest struct {
 	Tools       []ToolSpec `json:"tools,omitempty"`  // 2026-10-23 扩展：模型可请求工具执行
 }
 
-// Usage 是 token 用量（provider 返回；缺省为 0，不猜测）。
-type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-}
+// Usage 定义见 usage.go（兼容多家 provider 形状 + 缓存/推理字段 + 成本估算）。
 
 // ChatResponse 是 chat/completions 响应的最小形状。
 type ChatResponse struct {
