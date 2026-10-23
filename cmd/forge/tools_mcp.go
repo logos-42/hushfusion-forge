@@ -114,8 +114,26 @@ func (r *mcpRuntime) client(name string) (*mcp.Client, error) {
 	return c, nil
 }
 
+// MCP 子进程跨轮次复用，避免每轮重复拉起。
+var (
+	mcpMu       sync.Mutex
+	mcpRuntimes = map[string]*mcpRuntime{}
+)
+
+func mcpRuntimeFor(base string) *mcpRuntime {
+	key := runtimeRoot(base)
+	mcpMu.Lock()
+	defer mcpMu.Unlock()
+	if r := mcpRuntimes[key]; r != nil {
+		return r
+	}
+	r := newMCPRuntime(base)
+	mcpRuntimes[key] = r
+	return r
+}
+
 func registerMCPTools(s *agent.Session, base string) {
-	rt := newMCPRuntime(base)
+	rt := mcpRuntimeFor(base)
 	register := func(t agent.Tool) { _ = s.RegisterTool(t) }
 
 	register(agent.Tool{

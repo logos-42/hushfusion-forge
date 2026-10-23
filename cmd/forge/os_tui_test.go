@@ -638,7 +638,7 @@ func TestProjectToolsRegistered(t *testing.T) {
 	}
 	for _, want := range []string{
 		"fusion.evaluate", "fusion.search", "fusion.baseline", "fusion.top", "plant.state",
-		"plugin.list", "plugin.load", "plugin.unload", "plugin.loaded",
+		"plugin.spec", "plugin.list", "plugin.load", "plugin.call", "plugin.unload", "plugin.loaded",
 		"mcp.servers", "mcp.tools", "mcp.call",
 		"acp.status", "acp.prompt", "diap.identity", "diap.issue", "diap.authorize",
 	} {
