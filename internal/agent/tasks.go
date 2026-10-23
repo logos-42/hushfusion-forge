@@ -54,11 +54,23 @@ type TaskStore struct {
 	mu    sync.Mutex
 	tasks map[string]*Task
 	seq   int
+
+	// CompleteGate 是「转 done」的额外门（注入 reviewer；nil = 只要求证据）。
+	// 返回签名与 internal/review.ApprovedGate 对齐，可直接接线：
+	// 没有"已批准"的二审结论就不许自称完成（AI 不能自称完成的铁律再加一道）。
+	CompleteGate func(t *Task) (approved bool, reason string, err error)
 }
 
 // NewTaskStore 构造空任务存储。
 func NewTaskStore() *TaskStore {
 	return &TaskStore{tasks: map[string]*Task{}}
+}
+
+// NewTaskStoreWithGate 构造带完成门的任务存储（完成门不过 ⇒ 转 done 被拒）。
+func NewTaskStoreWithGate(gate func(t *Task) (bool, string, error)) *TaskStore {
+	ts := NewTaskStore()
+	ts.CompleteGate = gate
+	return ts
 }
 
 // nextID 生成形如 A-001 的自增 id（对齐 T-NN 风格；数字不补零到 2 位，因为
@@ -106,6 +118,17 @@ func (ts *TaskStore) SetState(id string, to TaskState, by, evidence string) erro
 	}
 	if to == TaskDone && strings.TrimSpace(evidence) == "" {
 		return fmt.Errorf("task %s 转 done 必须附证据路径（完成只能被证明，不能被声称）", id)
+	}
+	// 完成门（若注入）：证据之外还要过二审。传副本，门不该改任务状态。
+	if to == TaskDone && ts.CompleteGate != nil {
+		cp := *t
+		ok, reason, gerr := ts.CompleteGate(&cp)
+		if gerr != nil {
+			return fmt.Errorf("task %s 完成门执行失败: %v", id, gerr)
+		}
+		if !ok {
+			return fmt.Errorf("task %s 未被完成门批准: %s", id, reason)
+		}
 	}
 	now := time.Now()
 	t.State = to

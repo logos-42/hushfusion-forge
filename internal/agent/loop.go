@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/logos-42/hushfusion-forge/internal/ai"
+	"github.com/logos-42/hushfusion-forge/internal/persona"
 )
 
 // Stage 是会话生命周期状态（供 TUI / serve 展示；任何时刻只在一个状态）。
@@ -69,6 +70,10 @@ type Session struct {
 
 	// System 是 system 消息（skills 注入 + 指令，装配时放在最前）。
 	System string
+
+	// Persona 是人格/协作文档块（SOUL.md/AGENTS.md 等，经 persona.Bootstrap 合成）。
+	// 它比 System 更权威：装配时拼在 System 之前（人格 > 指令）。
+	Persona string
 
 	// Compacted 记录发生过上下文压缩（真实发生过，不是假装无损）。
 	Compacted bool
@@ -174,11 +179,12 @@ func (s *Session) compact() int {
 const toolResultBudget = 2000 // 单条工具结果截断上限（字符）
 
 // assemble 组装一次模型调用的消息（学 Claude Code 的 assemble() 注入点）：
-// system（含 skills 注入）在最前，工具 schema 附在请求上，对话历史原样。
+// system（persona 优先，随后 skills/指令）在最前，工具 schema 附在请求上，
+// 对话历史原样。
 func (s *Session) assemble() []ai.Message {
 	out := make([]ai.Message, 0, 1+len(s.messages))
-	if s.System != "" {
-		out = append(out, ai.Message{Role: "system", Content: s.System})
+	if sys := s.systemText(); sys != "" {
+		out = append(out, ai.Message{Role: "system", Content: sys})
 	}
 	for _, m := range s.messages {
 		am := ai.Message{Role: string(m.Role), Content: m.Content}
@@ -189,6 +195,34 @@ func (s *Session) assemble() []ai.Message {
 		out = append(out, am)
 	}
 	return out
+}
+
+// systemText 合成最终 system 文本：persona（人格/协约）优先于 System（指令）。
+// 单一来源 —— 避免"persona 注入了但 assemble 忘了拼"的静默失效。
+func (s *Session) systemText() string {
+	switch {
+	case s.Persona == "":
+		return s.System
+	case s.System == "":
+		return s.Persona
+	default:
+		return s.Persona + "\n\n" + s.System
+	}
+}
+
+// WithPersona 从 root 发现 persona/agent 文档（SOUL.md/AGENTS.md/…）并注入。
+// root 为空用 cwd；目录里没有任何文档不是错误（此时 Persona 保持空）。
+// 注入是"锦上添花"：失败由调用方决定是否致命，本方法只如实回报。
+func (s *Session) WithPersona(root string, budget int) error {
+	if strings.TrimSpace(root) == "" {
+		root = "."
+	}
+	block, err := persona.Bootstrap(root, budget)
+	if err != nil {
+		return fmt.Errorf("agent: 载入 persona 文档失败: %w", err)
+	}
+	s.Persona = block
+	return nil
 }
 
 // Turn 处理一个 user 消息：整轮循环直到模型最终回复或预算耗尽。
