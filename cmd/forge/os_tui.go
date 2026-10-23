@@ -2520,6 +2520,10 @@ func humanNum(n int) string {
 }
 
 func (m *osModel) renderOutputBox(w, h int) string {
+	// 还没有任何输出（用户尚未发送 / AI 未回复）时，整个回复框不显示。
+	if len(m.out) == 0 {
+		return ""
+	}
 	// 圆角「forge」框：输出在仪表盘快照下方，但保留边框。
 	bodyH := h - 3
 	if bodyH < 1 {

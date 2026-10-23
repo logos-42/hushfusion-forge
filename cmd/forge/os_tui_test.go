@@ -208,6 +208,7 @@ func TestConsoleLayout(t *testing.T) {
 	base := setupTempOS(t)
 	m := newOSModel(base, mustLoad(t, base))
 	m.width, m.height = 120, 40
+	m.out = append(m.out, "hello") // 有输出才渲染 forge 框
 
 	c := m.renderConsole(m.width)
 	iDash := strings.Index(c, "仪表盘")
@@ -291,6 +292,9 @@ func TestOutputBoxStartsEmpty(t *testing.T) {
 	m := newOSModel(base, mustLoad(t, base))
 	m.width, m.height = 120, 40
 	out := stripANSI(m.renderOutputBox(m.width, 10))
+	if out != "" {
+		t.Fatalf("没有输入/输出前不应显示回复框, got %q", out)
+	}
 	if strings.Contains(out, "仪表盘快照") {
 		t.Fatalf("输出框不应含仪表盘快照转储: %q", out)
 	}
@@ -301,6 +305,7 @@ func TestUserEchoAboveForgeBox(t *testing.T) {
 	base := setupTempOS(t)
 	m := newOSModel(base, mustLoad(t, base))
 	m.width, m.height = 120, 40
+	m.out = append(m.out, "reply") // 有输出才渲染 forge 框
 	m.appendUserEcho("hi")
 	c := stripANSI(m.renderConsole(m.width))
 	forgeIdx := strings.Index(c, "forge")
