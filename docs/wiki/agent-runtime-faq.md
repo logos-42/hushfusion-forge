@@ -31,7 +31,7 @@ A：工具失败会以明确错误文本回灌模型自愈；未知工具、坏 
 
 ### Q：超时和取消如何处理？
 
-A：模型调用由 context 取消和 client timeout 控制；`Session.Turn` 每轮检查 `ctx.Err()`。终端执行由 sandbox Policy.Timeout 控制，超时先 TERM、宽限后 KILL；取消会杀整个进程组。尚未把所有 runtime 的超时、重试、预算统一成一个全局调度器。
+A：模型调用由 context 取消和 client timeout 控制；`Session.Turn` 每轮检查 `ctx.Err()`。终端执行现在统一经 `internal/sandbox` + `internal/proc`：`kernel.BolloonExecContext` 取消即杀**整个进程组**（含 shell 的孙进程——修复了 `exec.CommandContext` 只杀直接子进程、管道被孙进程持住导致 `Wait` 阻塞到超时的坑）；超时由 `proc.Options.Timeout` 强杀整组（`sandbox.Policy.Timeout` 同效），`KillGrace` 字段为将来分级保留。exec 围栏策略全部由 env 驱动：`BOLLOON_EXEC_ROOT`/`_TIMEOUT`/`_ENV_ALLOW`/`_MAX_CONCURRENT`，默认最小权限（`PATH,HOME,BOLLOON_BIN`）。全局超时/重试/预算调度器仍未统一成一个。
 
 ## 2. Session、记忆、历史与上下文
 
@@ -45,11 +45,26 @@ A：Session 历史保存 system 外的 user、assistant、tool 消息；assistan
 
 ### Q：智能体记忆和对话历史有什么区别？
 
-A：历史是本轮协议上下文；`internal/agent/memory.go` 的 `MemStore` 是会话内 KV，可跨回合读写、按键排序注入。它不是秘密存储，也不应放 API key、私钥等敏感值。当前退出进程即失忆，文件持久化属于后续能力。
+A：历史是本轮协议上下文；`internal/agent/memory.go` 的 `MemStore` 是会话内 KV，可跨回合读写、按键排序注入。它不是秘密存储，也不应放 API key、私钥等敏感值。
+
+### Q：记忆能跨进程/跨重启保留吗？
+
+A：能（v0.2）。`NewMemStoreFile(path)` 把记忆落 JSON 文件（tmp+rename 原子替换，权限 0600）；**文件损坏会在构造期报错**（不会静默从空开始＝悄悄丢光记忆），文件不存在则视为首次运行空库，落盘失败记入 `LastPersistErr` 不吞。`NewMemStore()` 仍是纯内存模式（不写文件）。
+
+TUI 用 `--persist`（或 `--memory-file PATH`）开启落盘到 `<os>/agent-memory.json`，并提供 `/remember <k> <v>`、`/forget <k>`、`/memory` 三条命令；每轮 AI 会把记忆块经 `aios.ExtraSystem` 注入系统提示，落盘失败会在状态栏明确告知并退回内存模式。serve 进程的会话记忆同理可文件化。`os/sessions/<id>.json` 另存 TUI 会话的用量账本，可与记忆文件并存。
+
+### Q：怎么看 token 用量、成本和缓存命中率？
+
+A：`internal/ai` 现已透出 provider 上报的 usage（兼容 OpenAI `prompt_tokens_details.cached_tokens` 与 DeepSeek `prompt_cache_hit_tokens` 两种形状）。三种入口：
+- **TUI**：header 显示 `tok:prompt/completion · cache:% · $成本`；缓存未上报显示 `–`（不是 0%，那是「无从得知」），价目未知显示 `—`（不是 $0）。
+- **CLI**：`forge os ai -z "..." --usage-file /tmp/u.json` 写 JSON（tokens/cache_hit_rate/api_calls/model_reported；价目未知时 `cost_usd: null`，**绝不写 0**）。
+- **代码**：`aios.Report.Usage`（`ai.UsageLedger`）与 `Usage.Cost(model)`。
+
+成本需要价目，且**默认未知即不显示**（不编价格造假）。注入方式：`HUSHFUSION_AI_PRICE_INPUT_PER_M` / `_OUTPUT_PER_M` / `_CACHED_PER_M`（每 100 万 token 美元）或 `ai.SetPrice`。有缓存价则按更低缓存价计费，未给则按输入价高估（不低报）。命中率只在 provider 真上报 `cached_tokens` 时有意义——`Usage.CacheReported` 专门区分「0 命中」与「没上报」，避免拿 0% 误导优化方向。
 
 ### Q：上下文压缩怎么做？
 
-A：当前 loop 先截断超长 tool 结果，再从最旧轮次删除并保留当前请求；会设置 `Compacted` 并追加“较早轮次已被压缩丢弃”的诚实提示。它不是无损摘要，精确 tokenizer 也尚未接入。独立的确定性摘要/预算模块若随并行线合并，必须继续保留被压缩标记和预算边界。
+A：loop 先截断超长 tool 结果，再从最旧轮次删除并保留当前请求；会设置 `Compacted` 并追加“较早轮次已被压缩丢弃”的诚实提示。预算判定用「估算 × 校准系数」：用上次真实 `prompt_tokens` 与当次 `len/4` 估算之比修正——专门修中文（UTF-8 一字常被低估 5~18 倍）导致压缩永远不触发、上下文撑爆 provider 上限的根因；荒谬比例（<0.1 或 >20）拒采信防脏数据拉爆预算。它不是无损摘要，精确 tokenizer 也尚未接入。
 
 ## 3. 工具、权限、围栏与进程
 
@@ -115,7 +130,7 @@ A：`internal/identity` 用标准库 Ed25519 派生 `did:key:z...`，签发和�
 
 ### Q：模型如何选择？
 
-A：provider 由 `internal/ai` 的声明式 Profile 和注册表选择；模型由 Agent Config 的 Provider/Model/BaseURL 指定，空 model 使用 provider 默认值。`forge ai list/models` 是查询入口。密钥只能通过环境变量或受控注入进入，不能写进 CLI 参数、日志或 memory。
+A：provider 由 `internal/ai` 的声明式 Profile 和注册表选择；模型由 Agent Config 的 Provider/Model/BaseURL 指定，空 model 使用 provider 默认值。查询入口：`forge ai models`（某 provider 模型列表）、`forge ai list`（已注册 provider）。密钥只能通过环境变量或受控注入进入，不能写进 CLI 参数、日志或 memory。
 
 ### Q：bootstrap 是否等于加载所有上下文？
 
@@ -123,6 +138,11 @@ A：不是。bootstrap、skills、memory、goal/task summary 都是有预算的�
 
 ## 6. 当前边界与验收
 
-已覆盖并有单测的核心机制包括 loop/tool roundtrip、未知工具和写权限拒绝、上下文裁剪、session reset/quit、persona 发现、DID 签验、sandbox 进程组超时、proc 回收和 review 规则。CLI `forge agent` 的正式接线、跨进程 session 持久化、流式输出、通用 delegation、真实 tokenizer、网络/资源隔离仍应以代码落地和独立门禁为准。
+已覆盖并有单测的核心机制包括 loop/tool roundtrip、未知工具和写权限拒绝、上下文裁剪+真实用量校准、session reset/quit、persona 发现与系统提示注入、DID 签验、sandbox 进程组超时、proc 回收/超时杀组/并发闸/forget、review 规则与任务完成门、token usage 透出（cost/cache）、TUI `--persist` 记忆落盘与 `/remember /forget /memory`、sandbox+proc 已接 `exec.bolloon`。
 
-并行施工期间，目录合并、owners 名册和 CLI 接线可能暂时不同步；在这些改动提交前，不把本页的设计状态当成已发布能力。
+仍以代码落地和独立门禁为准、未冻结的部分：
+- **`forge agent` 顶层 CLI 命令**：Agent Runtime 目前只能经 TUI（`forge os tui`）或 stdio serve 使用，未接进 `forge` 顶层 `agent` 子命令。
+- **serve 进程的跨重启会话状态**：记忆落盘与 `os/sessions` 已覆盖“记忆”与“TUI 会话”，但不是 serve 进程完整状态的跨重启恢复。
+- 流式输出；通用子智能体 delegation（派发协议/预算继承/结果合并）；精确 tokenizer（现用 `len/4` 估算＋真实用量校准）；网络隔离；RLIMIT 资源限制。
+
+本页设计状态与已提交代码一致（截至 2026-10-23：sandbox+proc 接 exec、persona 接系统提示、review 门接任务完成判定、记忆持久化 v0.2、token usage 透出、`--persist` 接 TUI）。新增能力以代码和单测为准。
