@@ -601,6 +601,32 @@ func TestFrozenContextPersisted(t *testing.T) {
 	}
 }
 
+// 做梦与工作流必须写全局，不再落项目内。
+func TestDreamAndWorkflowWriteGlobal(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.out = []string{"这是一段足够长的测试结论，用来做梦与整理工作流。"}
+	m.lastGoal = "测试目标"
+	m.toolLog = []string{"📖 Read index.md  0.01s"}
+	if !m.dream() {
+		t.Fatal("dream 应成功")
+	}
+	m.organizeWorkflow()
+
+	if _, err := os.Stat(filepath.Join(runtimeDreamsDir(base), time.Now().Format("2006-01-02")+".md")); err != nil {
+		t.Fatalf("dreams 未写全局: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(runtimeMemoryDir(base), "workflow.md")); err != nil {
+		t.Fatalf("workflow 未写全局: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "dreams.md")); !os.IsNotExist(err) {
+		t.Fatalf("项目内不应再写 dreams.md: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "memory", "workflow.md")); !os.IsNotExist(err) {
+		t.Fatalf("项目内不应再写 memory/workflow.md: %v", err)
+	}
+}
+
 // 项目能力（fusion/plant/plugin/mcp/acp/diap）应全部注册成工具。
 func TestProjectToolsRegistered(t *testing.T) {
 	base := setupTempOS(t)

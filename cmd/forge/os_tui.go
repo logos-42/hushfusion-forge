@@ -2670,6 +2670,32 @@ func moveFileIfAbsent(src, dst string) bool {
 	return true
 }
 
+// mergeDreamsFile 把旧 dreams 合并进全局当天文件：全局没有就移动；
+// 已存在则只追加旧文件里没有的内容，最后删除旧文件（项目内不再残留）。
+func mergeDreamsFile(src, dst string) {
+	sb, err := os.ReadFile(src)
+	if err != nil {
+		return
+	}
+	if _, err := os.Stat(dst); err != nil {
+		moveFileIfAbsent(src, dst)
+		return
+	}
+	db, _ := os.ReadFile(dst)
+	body := bytes.TrimSpace(sb)
+	if len(body) > 0 && !bytes.Contains(db, body) {
+		f, ferr := os.OpenFile(dst, os.O_APPEND|os.O_WRONLY, 0o644)
+		if ferr == nil {
+			if len(db) > 0 && !bytes.HasSuffix(db, []byte("\n")) {
+				_, _ = f.WriteString("\n")
+			}
+			_, _ = f.Write(append([]byte("\n"), sb...))
+			_ = f.Close()
+		}
+	}
+	_ = os.Remove(src)
+}
+
 // moveDirContentsIfAbsent 把 srcDir 下所有文件按相对路径移到 dstDir（不覆盖已有），
 // 最后清理 srcDir 的空目录。
 func moveDirContentsIfAbsent(srcDir, dstDir string) {
@@ -2725,8 +2751,10 @@ func migrateRuntimeData(base string) {
 			if name == "agent-memory.json" {
 				src = filepath.Join(root, name) // 旧 --persist 默认在 <os>/agent-memory.json
 			}
-			if moveFileIfAbsent(src, dst) {
-				break
+			moveFileIfAbsent(src, dst)
+			// 全局已有同名文件时，旧位置也清掉（全局是权威快照）。
+			if _, err := os.Stat(dst); err == nil {
+				_ = os.Remove(src)
 			}
 		}
 	}
@@ -2740,7 +2768,7 @@ func migrateRuntimeData(base string) {
 			moveFileIfAbsent(filepath.Join(oldForge, "dreams", e.Name()), filepath.Join(runtimeDreamsDir(base), e.Name()))
 		}
 	}
-	moveFileIfAbsent(filepath.Join(base, "dreams.md"),
+	mergeDreamsFile(filepath.Join(base, "dreams.md"),
 		filepath.Join(runtimeDreamsDir(base), time.Now().Format("2006-01-02")+".md"))
 
 	// sessions：<os>/sessions/* 与 <os>/../forge/sessions/* → 全局 sessions/<project>/
@@ -2756,7 +2784,11 @@ func migrateRuntimeData(base string) {
 			if e.IsDir() {
 				continue
 			}
-			moveFileIfAbsent(filepath.Join(dir, e.Name()), filepath.Join(sessionsDir(base), e.Name()))
+			src, dst := filepath.Join(dir, e.Name()), filepath.Join(sessionsDir(base), e.Name())
+			moveFileIfAbsent(src, dst)
+			if _, err := os.Stat(dst); err == nil {
+				_ = os.Remove(src) // 全局已有同名会话时清掉旧副本
+			}
 		}
 	}
 
