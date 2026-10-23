@@ -163,3 +163,17 @@ func TestKeyMapBindings(t *testing.T) {
 		t.Fatal("km.help 应匹配 ?")
 	}
 }
+
+// 主输入框也支持粘贴（bracketed paste → tea.PasteMsg）。
+func TestTUICmdInputPaste(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	nm, _ := m.Update(tea.PasteMsg{Content: "/model"})
+	m = nm.(*osModel)
+	if got := m.cmdInput.Value(); got != "/model" {
+		t.Fatalf("粘贴应写入输入框, got %q", got)
+	}
+	if !m.slashActive {
+		t.Fatal("粘贴 /model 后应激活命令面板")
+	}
+}

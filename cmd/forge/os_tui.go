@@ -496,8 +496,55 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onAIResult(msg)
 	case wizModelsMsg:
 		return m.onWizModels(msg)
+	case tea.PasteMsg:
+		return m.handlePaste(msg)
 	case tea.KeyPressMsg:
 		return m.updateKey(msg)
+	}
+	return m, nil
+}
+
+// handlePaste 把终端粘贴内容送进当前焦点输入框。
+// bubbletea v2 的 bracketed paste 走 tea.PasteMsg（不是 KeyPressMsg），
+// 若不在顶层路由就会静默丢掉 —— 表现就是向导里粘贴 API key 没反应。
+func (m *osModel) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	if m.busy { // 思考中吞输入，与按键行为保持一致
+		return m, nil
+	}
+	switch m.state {
+	case stateModelWizard:
+		w := m.wiz
+		if w == nil {
+			return m, nil
+		}
+		switch {
+		case w.step == wizStepKey && w.keyEditing:
+			var cmd tea.Cmd
+			w.key, cmd = w.key.Update(msg)
+			return m, cmd
+		case w.step == wizStepModel:
+			var cmd tea.Cmd
+			w.filter, cmd = w.filter.Update(msg)
+			m.applyModelFilter()
+			return m, cmd
+		case w.step == wizStepURL:
+			var cmd tea.Cmd
+			w.url, cmd = w.url.Update(msg)
+			return m, cmd
+		}
+		return m, nil
+	case stateForm:
+		if m.form == nil || len(m.form.inputs) == 0 {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.form.inputs[m.form.focus], cmd = m.form.inputs[m.form.focus].Update(msg)
+		return m, cmd
+	case statePanels:
+		var cmd tea.Cmd
+		m.cmdInput, cmd = m.cmdInput.Update(msg)
+		m.refreshSlash()
+		return m, cmd
 	}
 	return m, nil
 }

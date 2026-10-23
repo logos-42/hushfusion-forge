@@ -368,6 +368,27 @@ func TestModelWizardModelScroll(t *testing.T) {
 	assertVisible()
 }
 
+// 粘贴（bracketed paste → tea.PasteMsg）应能写进 key 输入框。
+func TestModelWizardKeyPaste(t *testing.T) {
+	m := openWizard(t)
+	m = pressEnter(t, m) // provider → key
+	m = pressKey(t, m, 'r')
+	if !m.wiz.keyEditing {
+		t.Fatal("r 应进入 key 输入态")
+	}
+	const pasted = "sk-pasted-secret-12345678"
+	nm, _ := m.Update(tea.PasteMsg{Content: pasted})
+	m = nm.(*osModel)
+	if got := m.wiz.key.Value(); got != pasted {
+		t.Fatalf("粘贴应写入 key 输入, got %q", got)
+	}
+	// 按 Enter 应正常进入模型步，而不是再报「key 为空」。
+	m = pressEnter(t, m)
+	if m.wiz == nil || m.wiz.step != wizStepModel {
+		t.Fatalf("粘贴后 Enter 应进入 model 步, got %+v", m.wiz)
+	}
+}
+
 func TestKeyPreviewNeverLeaksPlaintext(t *testing.T) {
 	p := &ai.Profile{Name: "t", EnvVars: []string{"T_KEY"}}
 	const secret = "sk-super-secret-value"
