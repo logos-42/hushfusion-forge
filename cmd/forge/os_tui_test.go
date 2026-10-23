@@ -421,7 +421,8 @@ func TestWorkspaceConfigRoundTrip(t *testing.T) {
 	if err := saveWorkspaceConfig(base, want); err != nil {
 		t.Fatal(err)
 	}
-	if got := loadWorkspaceConfig(base); got != want {
+	got := loadWorkspaceConfig(base)
+	if got.Provider != want.Provider || got.Model != want.Model || got.BaseURL != want.BaseURL || got.APIKey != want.APIKey {
 		t.Fatalf("config 往返不一致: %+v", got)
 	}
 	info, err := os.Stat(workspaceConfigPath(base))
@@ -627,7 +628,61 @@ func TestDreamAndWorkflowWriteGlobal(t *testing.T) {
 	}
 }
 
-// 项目能力（fusion/plant/plugin/mcp/acp/diap）应全部注册成工具。
+// LSP 配置从 <os>/forge.config.json 的 lsp_servers 读取，并自动补 rootUri。
+func TestLSPServersFromWorkspaceConfig(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "os")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 隔离全局 ai.json，避免机器上的 lsp_servers 干扰断言。
+	t.Setenv("HUSHFUSION_AI_CONFIG", filepath.Join(root, "none.json"))
+	cfg := `{"lsp_servers":[{"id":"go","command":"gopls","allow":["definition","hover"]}]}`
+	if err := os.WriteFile(filepath.Join(base, "forge.config.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgs := lspConfigsFor(base)
+	if len(cfgs) != 1 {
+		t.Fatalf("应只加载 1 个 server, got %+v", cfgs)
+	}
+	if cfgs[0].ID != "go" || cfgs[0].Command != "gopls" {
+		t.Fatalf("server 解析错误: %+v", cfgs[0])
+	}
+	wantRoot := "file://" + filepath.ToSlash(root)
+	if cfgs[0].RootURI != wantRoot {
+		t.Fatalf("rootUri = %q, want %q", cfgs[0].RootURI, wantRoot)
+	}
+	if len(cfgs[0].Allow) != 2 || cfgs[0].Allow[0] != "definition" {
+		t.Fatalf("allow 未保留: %+v", cfgs[0].Allow)
+	}
+}
+
+// 没配 lsp_servers 时，应能探测到 GOPATH/bin 里的 gopls（不在 PATH 也可）。
+func TestLSPAutoDetectGopls(t *testing.T) {
+	p, ok := lookPathExtended("gopls")
+	if !ok {
+		t.Skip("本机未安装 gopls")
+	}
+	root := t.TempDir()
+	base := filepath.Join(root, "os")
+	_ = os.MkdirAll(base, 0o755)
+	t.Setenv("HUSHFUSION_AI_CONFIG", filepath.Join(root, "none.json"))
+	cfgs := lspConfigsFor(base)
+	for _, c := range cfgs {
+		if c.ID == "go" {
+			if c.Command != p {
+				t.Fatalf("command = %q, want %q", c.Command, p)
+			}
+			if len(c.Allow) != 3 {
+				t.Fatalf("allow = %v", c.Allow)
+			}
+			return
+		}
+	}
+	t.Fatalf("未探测到 gopls: %+v", cfgs)
+}
+
+// 项目能力（fusion/plant/plugin/mcp/lsp/acp/diap）应全部注册成工具。
 func TestProjectToolsRegistered(t *testing.T) {
 	base := setupTempOS(t)
 	s := agent.NewSession(agent.DefaultConfig(), nil, agent.NewRegistry(), "")
@@ -640,6 +695,7 @@ func TestProjectToolsRegistered(t *testing.T) {
 		"fusion.evaluate", "fusion.search", "fusion.baseline", "fusion.top", "plant.state",
 		"plugin.spec", "plugin.list", "plugin.load", "plugin.call", "plugin.unload", "plugin.loaded",
 		"mcp.servers", "mcp.tools", "mcp.call",
+		"lsp.status", "lsp.definition", "lsp.hover", "lsp.references", "lsp.caps",
 		"acp.status", "acp.prompt", "diap.identity", "diap.issue", "diap.authorize",
 	} {
 		if !have[want] {

@@ -18,6 +18,7 @@ func registerProjectTools(s *agent.Session, base string) {
 	registerFusionTools(s, base)
 	registerPluginTools(s, base)
 	registerMCPTools(s, base)
+	registerLSPTools(s, base)
 	registerProtocolTools(s, base)
 }
 
