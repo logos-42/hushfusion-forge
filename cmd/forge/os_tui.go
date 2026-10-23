@@ -106,6 +106,12 @@ type osModel struct {
 	spinner  spinner.Model
 	cmdInput textinput.Model
 
+	// 输入历史：↑↓ 在输入框里回填以前提交过的文本（仅会话内，不落盘）。
+	inputHistory []string
+	histPos      int    // 当前浏览位置；== len(inputHistory) 表示草稿
+	histDraft    string // 开始浏览历史前输入框里的草稿
+	histBrowsing bool   // 正在浏览历史：↑↓ 优先给历史而不是 / 命令面板
+
 	thinkingGoal string
 	report       *aios.Report
 	reportErr    error
@@ -382,6 +388,7 @@ func (m *osModel) refreshSlash() {
 func (m *osModel) runSlashByName(name string) (tea.Model, tea.Cmd) {
 	m.cmdInput.SetValue("")
 	m.slashActive = false
+	m.pushHistory("/" + name)
 	return m.runSlash(name)
 }
 
@@ -707,8 +714,9 @@ func (m *osModel) updatePanels(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cmdInput.Focus()
 		return m, nil
 	}
-	// / 命令面板激活时：↑↓ 选择、Enter/Tab 补全或执行、Esc 取消、其它键继续输入并过滤
-	if m.slashActive {
+	// / 命令面板激活时：↑↓ 选择、Enter/Tab 补全或执行、Esc 取消、其它键继续输入并过滤。
+	// 正在浏览输入历史时让位给历史（否则历史里的 "/xxx" 会激活面板，↑↓ 就切不动了）。
+	if m.slashActive && !m.histBrowsing {
 		switch msg.String() {
 		case "up", "k":
 			if m.slashSel > 0 {
@@ -751,18 +759,30 @@ func (m *osModel) updatePanels(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
+	// ↑↓ 浏览输入历史（/ 命令面板激活时优先给面板，上面已 return）。
+	switch msg.String() {
+	case "up":
+		m.historyUp()
+		return m, nil
+	case "down":
+		m.historyDown()
+		return m, nil
+	}
 	// 面板只读：不再用方向键 / 单键快捷键选择面板，所有可打印键都进输入框。
 	// （之前输入框为空时按 a/n/o 等会直接开表单，方向键会切换选中面板，属误触源。）
 	switch msg.String() {
 	case "esc":
 		m.cmdInput.SetValue("")
+		m.histPos, m.histDraft, m.histBrowsing = len(m.inputHistory), "", false
 		return m, nil
 	case "enter":
+		m.histBrowsing = false
 		if t := strings.TrimSpace(m.cmdInput.Value()); t != "" {
 			return m.submitCommand(t)
 		}
 		return m, nil // 空回车不再打开面板详情（避免误触）
 	default:
+		m.histBrowsing = false // 一旦开始编辑，↑↓ 重新交给 / 命令面板
 		var cmd tea.Cmd
 		m.cmdInput, cmd = m.cmdInput.Update(msg)
 		m.refreshSlash()
@@ -784,12 +804,72 @@ func (m *osModel) moveSel(delta int) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// 输入历史（↑↓ 回填，仅会话内，不落盘）
+// ---------------------------------------------------------------------------
+
+const maxInputHistory = 200
+
+// pushHistory 记录一次提交（连续重复去重、最多 200 条），并重置浏览位置。
+func (m *osModel) pushHistory(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if n := len(m.inputHistory); n > 0 && m.inputHistory[n-1] == text {
+		m.histPos, m.histDraft, m.histBrowsing = len(m.inputHistory), "", false
+		return
+	}
+	m.inputHistory = append(m.inputHistory, text)
+	if len(m.inputHistory) > maxInputHistory {
+		m.inputHistory = m.inputHistory[len(m.inputHistory)-maxInputHistory:]
+	}
+	m.histPos, m.histDraft, m.histBrowsing = len(m.inputHistory), "", false
+}
+
+// historyUp 回填更早一条；第一次向上时先存下当前草稿。
+func (m *osModel) historyUp() {
+	if len(m.inputHistory) == 0 {
+		return
+	}
+	m.histBrowsing = true
+	if m.histPos == len(m.inputHistory) {
+		m.histDraft = m.cmdInput.Value()
+	}
+	if m.histPos > 0 {
+		m.histPos--
+	}
+	m.cmdInput.SetValue(m.inputHistory[m.histPos])
+	m.cmdInput.CursorEnd()
+	m.refreshSlash()
+}
+
+// historyDown 回填更新一条；越过最新一条则恢复草稿。
+func (m *osModel) historyDown() {
+	if len(m.inputHistory) == 0 {
+		return
+	}
+	m.histBrowsing = true
+	if m.histPos < len(m.inputHistory) {
+		m.histPos++
+	}
+	if m.histPos >= len(m.inputHistory) {
+		m.histPos = len(m.inputHistory)
+		m.cmdInput.SetValue(m.histDraft)
+	} else {
+		m.cmdInput.SetValue(m.inputHistory[m.histPos])
+	}
+	m.cmdInput.CursorEnd()
+	m.refreshSlash()
+}
+
 // submitCommand：忙则入队；否则立即跑（/ 命令 或 AI 目标）。
 func (m *osModel) submitCommand(text string) (tea.Model, tea.Cmd) {
 	m.cmdInput.SetValue("")
 	if text == "" {
 		return m, nil
 	}
+	m.pushHistory(text)
 	if m.busy {
 		m.queue = append(m.queue, text)
 		m.out = append(m.out, m.styles.hint.Render(fmt.Sprintf("⏳ 已入队 (%d): %s", len(m.queue), text)))

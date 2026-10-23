@@ -235,6 +235,32 @@ func TestConsoleLayout(t *testing.T) {
 	}
 }
 
+// ↑↓ 在输入框里回填以前提交过的文本；↓ 越过最新一条恢复草稿。
+func TestTUIInputHistory(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.pushHistory("first goal")
+	m.pushHistory("/check")
+
+	m.cmdInput.SetValue("draft")
+	m = pressKey(t, m, rune(tea.KeyUp))
+	if got := m.cmdInput.Value(); got != "/check" {
+		t.Fatalf("↑ 应回填最近一条, got %q", got)
+	}
+	m = pressKey(t, m, rune(tea.KeyUp))
+	if got := m.cmdInput.Value(); got != "first goal" {
+		t.Fatalf("再 ↑ 应回填更早一条, got %q", got)
+	}
+	m = pressKey(t, m, rune(tea.KeyDown))
+	if got := m.cmdInput.Value(); got != "/check" {
+		t.Fatalf("↓ 应回到更新一条, got %q", got)
+	}
+	m = pressKey(t, m, rune(tea.KeyDown))
+	if got := m.cmdInput.Value(); got != "draft" {
+		t.Fatalf("↓ 越过最新一条应恢复草稿, got %q", got)
+	}
+}
+
 // 主输入框也支持粘贴（bracketed paste → tea.PasteMsg）。
 func TestTUICmdInputPaste(t *testing.T) {
 	base := setupTempOS(t)
