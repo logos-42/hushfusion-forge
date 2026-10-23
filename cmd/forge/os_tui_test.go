@@ -285,6 +285,17 @@ func TestUserEchoFormat(t *testing.T) {
 	}
 }
 
+// 输出框初始应为空：不再把仪表盘快照转储进去。
+func TestOutputBoxStartsEmpty(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.width, m.height = 120, 40
+	out := stripANSI(m.renderOutputBox(m.width, 10))
+	if strings.Contains(out, "仪表盘快照") {
+		t.Fatalf("输出框不应含仪表盘快照转储: %q", out)
+	}
+}
+
 // 发送内容在上、forge 回复框在下（回复出现在发送内容下面）。
 func TestUserEchoAboveForgeBox(t *testing.T) {
 	base := setupTempOS(t)

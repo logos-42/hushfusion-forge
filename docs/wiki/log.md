@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-23 | HUSHFUSION OS (TUI) | **清空输出框里的固定仪表盘快照转储** | 删除 `appendDashboard` 及其全部调用（初始化加载完成、`/reset`、`/check`、`/reload`、AI 表单提交）：仪表盘已在上方常驻，不再把 `── 仪表盘快照 ──` + 各面板前 4 行写进 forge 输出框；空闲时输出框为空，仅加载中显示「（加载中…）」，回复仍只在 `❯ hi` 下方的 forge 框内。 | `go build/vet/gofmt/test ./...` 全绿；新增 `TestOutputBoxStartsEmpty`（输出框不含「仪表盘快照」转储）。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **回退仪表盘外框、压低发送区高度** | 按反馈去掉上一版加的仪表盘外框（`dashBox` 删除），恢复无框快照，只保留「▌ 仪表盘 · skills / 参数」标题；`renderInput` 去掉输入框前置空行，`chrome` 21→20（focus 9→8），发送区少一行；顺序保持 仪表盘（无框）→ 发送内容 `❯ hi` → forge 回复框 → 输入框。 | `go build/vet/gofmt/test ./...` 全绿；`TestUserEchoAboveForgeBox`（`❯ hi` 在 `forge` 标题之前）与 `TestConsoleLayout`（输入框上下双线）保持通过。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **两个区域定稿：顶部方框=仪表盘(skills/参数)，发送内容下方只放 forge 回复框** | `renderDashboard` 用新增的 `dashBox` 把仪表盘快照整体套框（标题「▌ 仪表盘 · skills / 参数」，面板本身仍无边框）；`renderConsole` 顺序为 仪表盘框 → 发送内容（`❯ hi`）→ forge 回复框 → 输入框，回复只落在发送内容下方的框里；`chrome` 为仪表盘外框 +2 行，避免挤压输出。 | `go build/vet/gofmt/test ./...` 全绿；`TestUserEchoAboveForgeBox` 断言 `❯ hi` 在 `forge` 标题之前；`TestConsoleLayout` 仍断言面板无框、输出区有 forge 框。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **确定对话顺序：发送内容在上、forge 回复框在下；新回复吸底** | `renderConsole` 顺序改为 仪表盘 → 发送内容（`lastEcho`）→ forge 回复框 → 输入框，回复出现在 `❯ hi` 下方而不是上方旧框；`onAIResult` 重置 `outScroll=0`，用户上翻后新回复仍自动可见。另让 `forge os ai` / `forge agent` 的 provider/model/base_url 缺省读 workspace config/env（不再写死 `zai`）。 | `go build/vet/gofmt/test ./...` 全绿；`TestUserEchoAboveForgeBox`（`❯ hi` 在 forge 框 `╭` 之前）。 |

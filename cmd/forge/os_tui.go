@@ -514,7 +514,6 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.progPct >= 100 {
 			m.progPct = 100
 			m.loading = false
-			m.appendDashboard()
 			return m, nil
 		}
 		return m, loadTick()
@@ -949,7 +948,6 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.outScroll = 0
 		m.goalCount, m.toolCalls, m.toolOK, m.toolFail = 0, 0, 0, 0
 		m.queue = nil
-		m.appendDashboard()
 		m.status = m.styles.ok.Render("新会话 " + m.sessionID)
 	case "save":
 		m.persistSession()
@@ -1026,10 +1024,8 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.status = runCheckInline()
 		m.out = append(m.out, stripANSI(m.status))
 		m.reload()
-		m.appendDashboard()
 	case "reload":
 		m.reload()
-		m.appendDashboard()
 		m.status = m.styles.ok.Render("已重载")
 	case "help":
 		m.showHelp = true
@@ -2086,7 +2082,6 @@ func (m *osModel) submitForm() (tea.Model, tea.Cmd) {
 		return m.startThinking(goal, provider, model)
 	}
 	m.reload()
-	m.appendDashboard()
 	m.form = nil
 	m.state = statePanels
 	return m, nil
@@ -2134,24 +2129,6 @@ func (m *osModel) reload() {
 			m.sel = len(m.panels) - 1
 		}
 	}
-}
-
-// appendDashboard 把当前仪表盘快照追加进展示框。
-func (m *osModel) appendDashboard() {
-	m.out = append(m.out, m.styles.label.Render("── 仪表盘快照 ──"))
-	for _, p := range m.panels {
-		ls := p.lines()
-		head := fmt.Sprintf("  %s (%d)", p.name, len(ls))
-		m.out = append(m.out, m.styles.value.Render(head))
-		for i, l := range ls {
-			if i >= 4 {
-				m.out = append(m.out, m.styles.hint.Render("    …"))
-				break
-			}
-			m.out = append(m.out, "    "+truncateLine(l, 60))
-		}
-	}
-	m.trimOut()
 }
 
 // appendToolCalls 把一次 AI 回合的计划/执行/备注作为“工具调用”落进展示框。
@@ -2569,7 +2546,12 @@ func (m *osModel) renderOutputBox(w, h int) string {
 		show = append(show, truncateLine(lines[i], w-6))
 	}
 	if len(show) == 0 {
-		show = []string{m.styles.hint.Render("  （等待上下文加载…）")}
+		// 空闲时清空输出框（不塞固定内容）；仅加载中给一行提示。
+		if m.loading {
+			show = []string{m.styles.hint.Render("  （加载中…）")}
+		} else {
+			show = []string{""}
+		}
 	}
 	title := m.styles.accent.Render("forge") + m.styles.hint.Render(" · 输出 / 工具调用")
 	if maxScroll > 0 {
