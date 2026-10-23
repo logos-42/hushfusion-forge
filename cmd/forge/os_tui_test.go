@@ -261,6 +261,25 @@ func TestTUIInputHistory(t *testing.T) {
 	}
 }
 
+// 用户发送内容在回复区用上下两条分隔线包住：── / ❯ hi / ──。
+func TestUserEchoFormat(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.width = 40
+	m.appendUserEcho("hi")
+	n := len(m.out)
+	if n < 3 {
+		t.Fatalf("回显应追加三行, got %d", n)
+	}
+	ln := m.out[n-3:]
+	if !strings.Contains(stripANSI(ln[1]), "❯ hi") {
+		t.Fatalf("中间应是 ❯ hi: %q", ln[1])
+	}
+	if ln[0] == "" || ln[0] != ln[2] || !strings.Contains(ln[0], "─") {
+		t.Fatalf("上下分隔线应一致且为横线: %q / %q", ln[0], ln[2])
+	}
+}
+
 // 主输入框也支持粘贴（bracketed paste → tea.PasteMsg）。
 func TestTUICmdInputPaste(t *testing.T) {
 	base := setupTempOS(t)

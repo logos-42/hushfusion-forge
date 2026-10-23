@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-23 | HUSHFUSION OS (TUI) | **用户发送内容回显改为上下分隔线包住** | 新增 `appendUserEcho`：在回复区把用户发送的文本渲染成 `── / ❯ hi / ──` 三行（分隔线宽度取终端宽度 − 2，避免被输出区二次裁剪加省略号）；`submitCommand`（AI 目标）、`/ai <goal>`、AI 表单提交三处统一走它。 | `go build/vet/gofmt/test ./...` 全绿；新增 `TestUserEchoFormat`（三行、中间 `❯ hi`、上下分隔线一致）。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **↑↓ 在输入框回填历史** | 输入框新增会话内历史：`submitCommand` / `runSlashByName` 记录提交文本（连续重复去重、最多 200 条）；`↑` 回填更早一条（首次向上保存当前草稿），`↓` 回到更新一条、越过最新一条恢复草稿；`histBrowsing` 标志确保历史里的 `/xxx` 不会让 `/` 命令面板抢走 ↑↓；Esc / 开始编辑后退出历史浏览。**诚实边界**：仅会话内内存，不落盘（避免把目标/命令写盘）。 | `go build/vet/gofmt/test ./...` 全绿；新增 `TestTUIInputHistory`（↑ 两条、↓ 回最新、↓ 恢复草稿）。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **修正输出位置：输出平铺在仪表盘快照下方，不再套圆角框** | 按反馈把 `renderOutputBox` 改为无边框输出：去掉 `replyBox` 圆角框，`bodyH = h-1`（只留标题行），输出直接接在仪表盘快照下方；保留 `forge · 输出 / 工具调用` 标题与滚动提示。 | `go build/vet/gofmt/test ./...` 全绿；`TestConsoleLayout` 改为断言输出含 `forge` 且**不含**圆角框字符，同时仍断言仪表盘在输出之前、输入框上下双线。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **布局改版：仪表盘去框并置顶、输出下移、forge 回复框、输入框双线分隔** | (1) **仪表盘去框**：`styles.panel` 去掉圆角边框（纯文本网格），面板名用亮蓝、内容用高亮白，列间加 3 空格间距；移除仪表盘上那几个面板框。(2) **顺序**：`renderConsole` 改为 仪表盘快照 → 输出 → 输入框；`chrome` 调为 21/9，为输入框上下两条分隔线留位。(3) **输入框双线**：`renderInput` 在输入行上下各渲染一条 `─` 分隔线。(4) **forge 回复框**：新增 `styles.replyBox`（蓝色圆角框），输出区标题改为 `forge · 输出 / 工具调用`；AI 回合分隔改为 `forge · AI 回合`，每个回复都落在 forge 框内。 | `go build/vet/gofmt/test ./...` 全绿；新增 `TestConsoleLayout`（仪表盘在 forge 输出之前、输入框上下有分隔线、面板无边框、输出区带 forge 框）。 |

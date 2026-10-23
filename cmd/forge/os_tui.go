@@ -863,6 +863,25 @@ func (m *osModel) historyDown() {
 	m.refreshSlash()
 }
 
+// appendUserEcho 把用户发送的内容回显到回复区：上下两条分隔线包住，
+//
+//	─────────────
+//	❯ hi
+//	─────────────
+func (m *osModel) appendUserEcho(text string) {
+	w := m.width
+	if w < 40 {
+		w = 80
+	}
+	rule := strings.Repeat("─", max(0, w-2))
+	m.out = append(m.out,
+		rule,
+		m.styles.label.Render("❯ ")+text,
+		rule,
+	)
+	m.trimOut()
+}
+
 // submitCommand：忙则入队；否则立即跑（/ 命令 或 AI 目标）。
 func (m *osModel) submitCommand(text string) (tea.Model, tea.Cmd) {
 	m.cmdInput.SetValue("")
@@ -880,7 +899,7 @@ func (m *osModel) submitCommand(text string) (tea.Model, tea.Cmd) {
 		return m.runSlash(strings.TrimPrefix(text, "/"))
 	}
 	m.goalCount++
-	m.out = append(m.out, m.styles.label.Render("❯ ")+text)
+	m.appendUserEcho(text)
 	return m.startThinking(text, "", "")
 }
 
@@ -900,7 +919,7 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		goal := strings.TrimSpace(strings.TrimPrefix(cmd, fields[0]))
 		if goal != "" {
 			m.goalCount++
-			m.out = append(m.out, m.styles.label.Render("❯ ")+goal)
+			m.appendUserEcho(goal)
 			return m.startThinking(goal, "", "")
 		}
 		m.openForm("ai")
@@ -2030,7 +2049,7 @@ func (m *osModel) submitForm() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.goalCount++
-		m.out = append(m.out, m.styles.label.Render("❯ ")+goal)
+		m.appendUserEcho(goal)
 		return m.startThinking(goal, provider, model)
 	}
 	m.reload()
