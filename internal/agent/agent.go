@@ -60,6 +60,9 @@ type Config struct {
 	Provider string
 	Model    string
 	BaseURL  string
+	// Tokenizer 是可注入的 token 计数器（nil = 默认 len/4 估算，见 tokenizer.go）。
+	// 注入精确实现后，预算判断与压缩触发都按真实 token 数走。
+	Tokenizer Tokenizer
 }
 
 // DefaultConfig 返回带默认值的配置。

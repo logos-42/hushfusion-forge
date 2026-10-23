@@ -103,6 +103,9 @@ type Session struct {
 	// nil = 不做技能注入。baseSystem 是构造时的静态 system（注入基于它，不叠加）。
 	Skills     *SkillsDir
 	baseSystem string
+
+	// tok 是 token 计数器（缺省 LenDiv4 估算；可注入精确实现）。
+	tok Tokenizer
 }
 
 // Usage 返回会话累计的真实用量（provider 未上报则为空账本）。
@@ -147,11 +150,76 @@ func NewSession(cfg Config, chat ChatFunc, reg *ToolRegistry, system string) *Se
 		Stage:       StageIdle,
 		Memory:      NewMemStore(),
 		Tasks:       NewTaskStore(),
+		tok:         orLenDiv4(cfg.Tokenizer),
 	}
+}
+
+// orLenDiv4 缺省计数器（nil 接口用一个空实现的估算器兜底）。
+func orLenDiv4(t Tokenizer) Tokenizer {
+	if t == nil {
+		return LenDiv4{}
+	}
+	return t
+}
+
+// TokenizerName 返回当前计数器的标识（审计/展示用；能看出是否精确）。
+func (s *Session) TokenizerName() string { return orLenDiv4(s.tok).Name() }
+
+// countText 计一段文本：注入的 tokenizer 失败则回退 len/4（不中断对话）。
+func (s *Session) countText(text string) int {
+	if t := s.tok; t != nil {
+		if n, ok := t.Count(text); ok && n >= 0 {
+			return n
+		}
+	}
+	return len(text) / 4
+}
+
+// countMessages 计一轮对话历史（runtime Message 形状）。
+func (s *Session) countMessages(msgs []Message) int {
+	n := 0
+	for _, m := range msgs {
+		n += s.countText(m.Content)
+		for _, tc := range m.ToolCalls {
+			n += s.countText(tc.Function.Name) + s.countText(tc.Function.Arguments)
+		}
+	}
+	return n
+}
+
+// countAI 计 assemble 后的请求体（含 system，另加每条消息的结构开销 4）。
+func (s *Session) countAI(msgs []ai.Message) int {
+	n := 0
+	for _, m := range msgs {
+		n += s.countText(m.Content) + 4
+		for _, tc := range m.ToolCalls {
+			n += s.countText(tc.Function.Name) + s.countText(tc.Function.Arguments)
+		}
+	}
+	return n
 }
 
 // History 返回当前消息栈的浅拷贝（测试 / 审计用）。
 func (s *Session) History() []Message { return append([]Message(nil), s.messages...) }
+
+// Restore 用持久化的历史替换当前消息栈（跨重启恢复用）。
+//
+// 只校验角色合法（system 不进栈，由构造时的 System/Persona 承担）；tool_calls 与
+// tool 回填的配对**不在这里重排** —— 历史怎么存的就怎么还，篡改过的历史会在下一
+// 回合被 provider 明确拒绝，而不是我们悄悄"修好"成另一种对话。
+func (s *Session) Restore(msgs []Message) error {
+	clean := make([]Message, 0, len(msgs))
+	for i, m := range msgs {
+		switch m.Role {
+		case RoleUser, RoleAssistant, RoleTool:
+			clean = append(clean, m)
+		default:
+			return fmt.Errorf("agent: 恢复历史第 %d 条角色非法 %q", i, m.Role)
+		}
+	}
+	s.messages = clean
+	return nil
+}
 
 // Len 返回消息条数。
 func (s *Session) Len() int { return len(s.messages) }
@@ -206,7 +274,7 @@ func (s *Session) compact() int {
 	// 预算判定用「估算 × 校准系数」：系数来自上一次真实 prompt_tokens / 当次估算，
 	// 让中文这类被低估的上下文也能按**真实**预算压缩。
 	scale := s.tokenScale()
-	for int(float64(estimateTokens(s.messages))*scale) > s.cfg.MaxBudgetTokens && len(s.messages) > 1 {
+	for int(float64(s.countMessages(s.messages))*scale) > s.cfg.MaxBudgetTokens && len(s.messages) > 1 {
 		dropped := false
 		for i := 0; i < len(s.messages)-1; i++ {
 			m := s.messages[i]
@@ -382,8 +450,8 @@ func (s *Session) chatWithRetry(ctx context.Context) (*ai.ChatResponse, error) {
 			callCtx, cancel = context.WithTimeout(ctx, s.cfg.ModelTimeout)
 		}
 		msgs := s.assemble()
-		// 记录调用前的估算，供 tokenScale 校准 tokenizer 偏差。
-		s.lastEstimate = estimateAIMessages(msgs)
+		// 记录调用前的计数（精确 tokenizer 或估算），供 tokenScale 校准偏差。
+		s.lastEstimate = s.countAI(msgs)
 		resp, err := s.chat(callCtx, ai.ChatRequest{
 			Model:    s.cfg.Model,
 			Messages: msgs,
