@@ -10,12 +10,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/logos-42/hushfusion-forge/internal/contracts"
 	"github.com/logos-42/hushfusion-forge/internal/config"
-	"github.com/logos-42/hushfusion-forge/internal/physics"
-	"github.com/logos-42/hushfusion-forge/internal/safety"
+	"github.com/logos-42/hushfusion-forge/internal/contracts"
 	contract_bridge "github.com/logos-42/hushfusion-forge/internal/contracts_bridge"
+	"github.com/logos-42/hushfusion-forge/internal/physics"
 	"github.com/logos-42/hushfusion-forge/internal/plant"
+	"github.com/logos-42/hushfusion-forge/internal/safety"
 )
 
 // EvaluateCandidate 在仿真装置上评估一个 DesignCandidate。
@@ -24,10 +24,10 @@ import (
 //
 // 返回值：
 //   - verdict: 通过 design_bridge 计算出的 DesignVerdict（包含 per-gate pass/fail/unknown
-//              以及 overall: accepted/rejected/inconclusive），遵循
-//              硬规则：unknown 永远不等于 pass，任何 decisive gate fail => rejected
+//     以及 overall: accepted/rejected/inconclusive），遵循
+//     硬规则：unknown 永远不等于 pass，任何 decisive gate fail => rejected
 //   - state:   plant.Device 的 State() 快照，反映在候选参数下装置的状态
-//             （始终通过 safe_stop 逃逸路径进入 ModeSafeStop，保证 fail-closed）
+//     （始终通过 safe_stop 逃逸路径进入 ModeSafeStop，保证 fail-closed）
 //   - err:     如 candidate 参数缺失或 plant 设备为 nil
 func EvaluateCandidate(
 	designID string,

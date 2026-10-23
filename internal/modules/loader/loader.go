@@ -1,12 +1,12 @@
 package loader
 
 import (
-	"fmt"
-	"strings"
-	"sync"
 	"errors"
+	"fmt"
 	"github.com/logos-42/hushfusion-forge/internal/modules/manifest"
 	"github.com/logos-42/hushfusion-forge/internal/modules/types"
+	"strings"
+	"sync"
 )
 
 // ModuleLoader 管理模块的生命周期，支持加载、卸载、状态检查和能力退化报告
@@ -18,10 +18,10 @@ type ModuleLoader struct {
 
 // moduleRef 是模块的引用计数包装
 type moduleRef struct {
-	id           string
-	manifest     manifest.Manifest
-	state      string // Module state: idle, running, paused, stopping, error, unloaded
-	version      string
+	id       string
+	manifest manifest.Manifest
+	state    string // Module state: idle, running, paused, stopping, error, unloaded
+	version  string
 }
 
 // NewModuleLoader 创建一个新的模块加载器

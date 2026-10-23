@@ -12,9 +12,9 @@ package contract_bridge
 import (
 	"strings"
 
+	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/contracts"
 	"github.com/logos-42/hushfusion-forge/internal/design"
-	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/physics"
 )
 
@@ -54,7 +54,7 @@ func ScopeToGateResults(s design.Scope) []contracts.GateResult {
 			results = append(results, gateResultFromDesignGate(g))
 		} else {
 			results = append(results, contracts.GateResult{
-				Key:  key,
+				Key:    key,
 				Status: contracts.GateUnknown,
 				Detail: "门未计算 (输入不足)",
 			})

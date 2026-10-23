@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/logos-42/hushfusion-forge/internal/modules/manifest"
-	"github.com/logos-42/hushfusion-forge/internal/modules/loader"
-	"github.com/logos-42/hushfusion-forge/internal/modules/types"
 	"github.com/logos-42/hushfusion-forge/internal/design"
+	"github.com/logos-42/hushfusion-forge/internal/modules/loader"
+	"github.com/logos-42/hushfusion-forge/internal/modules/manifest"
+	"github.com/logos-42/hushfusion-forge/internal/modules/types"
 )
 
 // DesignLoop 是自动化的设计循环，使用AI建议模块配置并通过验证门进行验证。
@@ -67,40 +67,40 @@ func (dl *DesignLoop) aiSuggestModules(input *design.Input) []*ModuleDesign {
 	var suggestions []*ModuleDesign
 
 	powerMod := &ModuleDesign{
-		ModuleType:  types.ModulePower,
+		ModuleType:   types.ModulePower,
 		Capabilities: []string{"power_supply"},
-		Score:       0.8,
-		Notes:       fmt.Sprintf("Power module needed for η=%.2f", input.Eta),
-		Valid:       true,
+		Score:        0.8,
+		Notes:        fmt.Sprintf("Power module needed for η=%.2f", input.Eta),
+		Valid:        true,
 	}
 	suggestions = append(suggestions, powerMod)
 
 	coilMod := &ModuleDesign{
-		ModuleType:  types.ModuleCoil,
+		ModuleType:   types.ModuleCoil,
 		Capabilities: []string{"coil"},
-		Score:       0.9,
-		Notes:       fmt.Sprintf("Coil module for device scale %.2f", input.DeviceScaleM),
-		Valid:       true,
+		Score:        0.9,
+		Notes:        fmt.Sprintf("Coil module for device scale %.2f", input.DeviceScaleM),
+		Valid:        true,
 	}
 	suggestions = append(suggestions, coilMod)
 
 	if input.DeviceScaleM > 0.5 {
 		diagMod := &ModuleDesign{
-			ModuleType:  types.ModuleDiagnostic,
+			ModuleType:   types.ModuleDiagnostic,
 			Capabilities: []string{"diagnostic"},
-			Score:       0.7,
-			Notes:       "Diagnostic module for large-scale design",
-			Valid:       true,
+			Score:        0.7,
+			Notes:        "Diagnostic module for large-scale design",
+			Valid:        true,
 		}
 		suggestions = append(suggestions, diagMod)
 	}
 
 	safetyMod := &ModuleDesign{
-		ModuleType:  types.ModuleSafety,
+		ModuleType:   types.ModuleSafety,
 		Capabilities: []string{"safety"},
-		Score:       1.0,
-		Notes:       "Safety module - required for all designs",
-		Valid:       true,
+		Score:        1.0,
+		Notes:        "Safety module - required for all designs",
+		Valid:        true,
 	}
 	suggestions = append(suggestions, safetyMod)
 
@@ -111,29 +111,29 @@ func (dl *DesignLoop) aiSuggestModules(input *design.Input) []*ModuleDesign {
 func (dl *DesignLoop) validateModule(m *ModuleDesign) *ModuleDesign {
 	modManifest := manifest.Manifest{
 		Identity: manifest.ModuleIdentity{
-			Type:  m.ModuleType,
-			Name:  fmt.Sprintf("auto_%s", m.ModuleType),
-			ID:    fmt.Sprintf("auto_%s_001", m.ModuleType),
-			Desc:  "Auto-generated module",
+			Type: m.ModuleType,
+			Name: fmt.Sprintf("auto_%s", m.ModuleType),
+			ID:   fmt.Sprintf("auto_%s_001", m.ModuleType),
+			Desc: "Auto-generated module",
 		},
-		Version:    "1.0.0",
+		Version: "1.0.0",
 		Capabilities: []manifest.Capability{
 			{Name: m.Capabilities[0], Level: 5},
 		},
 		ProtocolVersion: "1.0",
 		SafetyLimits: manifest.SafetyLimitsSpec{
-			MaxTemperature:  100.0,
-			MaxPressure:     50.0,
-			EmergencyStop:   true,
+			MaxTemperature: 100.0,
+			MaxPressure:    50.0,
+			EmergencyStop:  true,
 		},
 		Calibration: manifest.CalibrationData{
-			CalibratedAt:  "",
-			CalibratedBy:  "auto",
-			Parameters:    map[string]float64{},
-			Version:       "1.0",
+			CalibratedAt: "",
+			CalibratedBy: "auto",
+			Parameters:   map[string]float64{},
+			Version:      "1.0",
 		},
 		Health: manifest.HealthStatus{
-			Status: "healthy",
+			Status:  "healthy",
 			Metrics: map[string]float64{},
 		},
 		Lifecycle: manifest.ModuleLifecycle{
@@ -147,28 +147,28 @@ func (dl *DesignLoop) validateModule(m *ModuleDesign) *ModuleDesign {
 	err := dl.loader.LoadModule(modManifest.Identity.ID, modManifest)
 	if err != nil {
 		return &ModuleDesign{
-			ModuleType:  m.ModuleType,
-			Valid:       false,
-			Notes:       fmt.Sprintf("Failed to load module: %v", err),
-			Score:       0.0,
+			ModuleType: m.ModuleType,
+			Valid:      false,
+			Notes:      fmt.Sprintf("Failed to load module: %v", err),
+			Score:      0.0,
 		}
 	}
 	caps := dl.loader.ValidateModuleCapability(modManifest.Identity.ID, m.Capabilities[0])
 	level := dl.loader.GetModuleCapabilityLevel(modManifest.Identity.ID, m.Capabilities[0])
 	return &ModuleDesign{
-		ModuleType:  m.ModuleType,
-		Valid:       caps,
+		ModuleType:   m.ModuleType,
+		Valid:        caps,
 		Capabilities: m.Capabilities,
-		Score:       float64(level) / 5.0,
-		Notes:       "Module loaded successfully",
+		Score:        float64(level) / 5.0,
+		Notes:        "Module loaded successfully",
 	}
 }
 
 // evaluateGate 评估单个设计门
 func (dl *DesignLoop) evaluateGate(gate design.Gate, input *design.Input, modules []*ModuleDesign) *GateResult {
 	result := &GateResult{
-		Key:      gate.Key,
-		Label:    gate.Label,
+		Key:   gate.Key,
+		Label: gate.Label,
 	}
 	switch gate.Key {
 	case design.GateFieldMin:
@@ -207,9 +207,12 @@ func (dl *DesignLoop) evaluateGate(gate design.Gate, input *design.Input, module
 		hasCoil := false
 		for _, mod := range modules {
 			switch mod.ModuleType {
-			case types.ModulePower: hasPower = true
-			case types.ModuleSafety: hasSafety = true
-			case types.ModuleCoil: hasCoil = true
+			case types.ModulePower:
+				hasPower = true
+			case types.ModuleSafety:
+				hasSafety = true
+			case types.ModuleCoil:
+				hasCoil = true
 			}
 		}
 		result.Value = float64(len(modules))
@@ -326,29 +329,29 @@ func (dr *DesignResult) GetSummary() string {
 
 // ModuleDesign 表示一个建议的模块配置
 type ModuleDesign struct {
-	ModuleType  types.ModuleType
+	ModuleType   types.ModuleType
 	Capabilities []string
-	Score       float64
-	Notes       string
-	Valid       bool
+	Score        float64
+	Notes        string
+	Valid        bool
 }
 
 // DesignResult 设计循环结果
 type DesignResult struct {
-	Input         *design.Input
-	Modules       []*ModuleDesign
-	Gates         []*GateResult
-	Valid         bool
-	DesignPass    bool
-	Improvements  []string
-	Iterations    int
+	Input        *design.Input
+	Modules      []*ModuleDesign
+	Gates        []*GateResult
+	Valid        bool
+	DesignPass   bool
+	Improvements []string
+	Iterations   int
 }
 
 // GateResult 单个设计门的结果
 type GateResult struct {
-	Key      string
-	Label    string
-	Pass     bool
-	Value    float64
-	Ref      float64
+	Key   string
+	Label string
+	Pass  bool
+	Value float64
+	Ref   float64
 }
