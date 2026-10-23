@@ -24,6 +24,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -433,6 +434,7 @@ func (m *osModel) runSlashByName(name string) (tea.Model, tea.Cmd) {
 func newOSModel(base string, snap *osview.Snapshot) *osModel {
 	// 先加载 workspace config 并注入环境变量，后面的 envOr 才能读到。
 	applyWorkspaceConfig(base)
+	migrateRuntimeData(base) // 旧 os/、./forge 数据搬到全局 ~/.forge
 	// 型号不再写死 "default"：未显式设置时取 provider 的 DefaultModel
 	// （custom → custom-model），保证自定义端点启动即带出正确型号。
 	provName := envOr("HUSHFUSION_AI_PROVIDER", "zai")
@@ -476,7 +478,7 @@ func newOSModel(base string, snap *osview.Snapshot) *osModel {
 	// 检查工作区经验 skill：存在则加载（第二轮打开同一目录也能复用/继续迭代）。
 	if b := ensureEvolvedSkill(base); b != "" {
 		if n := strings.Count(b, "\n## "); n > 0 {
-			m.status = m.styles.hint.Render(fmt.Sprintf("📚 已加载历史经验 %d 条（os/skills/evolved）", n))
+			m.status = m.styles.hint.Render(fmt.Sprintf("📚 已加载历史经验 %d 条（%s）", n, evolvedSkillDir(base)))
 		}
 	}
 	return m
@@ -507,7 +509,7 @@ func (m *osModel) buildFrozenContext() string {
 	}
 
 	// 2) skills 索引（完整正文仍用 skill.view 按需拉取）
-	skills := agent.NewSkills([]string{filepath.Join(m.base, "skills")}, agent.NewKeywordMatcher())
+	skills := agent.NewSkills([]string{runtimeSkillsDir(m.base)}, agent.NewKeywordMatcher())
 	if all := skills.All(); len(all) > 0 {
 		b.WriteString("\n## Skills（可按名字用 skill.view 取全文）\n")
 		for _, sk := range all {
@@ -517,7 +519,7 @@ func (m *osModel) buildFrozenContext() string {
 
 	// 3) 每轮自动沉淀的经验
 	if body := ensureEvolvedSkill(m.base); strings.TrimSpace(body) != "" {
-		b.WriteString("\n## 沉淀经验（os/skills/evolved/SKILL.md）\n" + tailRunes(body, 4000) + "\n")
+		b.WriteString("\n## 沉淀经验（forge/skills/evolved/SKILL.md）\n" + tailRunes(body, 4000) + "\n")
 	}
 
 	// 4) 跨会话长期记忆（最近 20 条）
@@ -538,7 +540,7 @@ func (m *osModel) buildFrozenContext() string {
 	}
 
 	// 6) 工作流快照
-	if wf, err := os.ReadFile(filepath.Join(m.base, "memory", "workflow.md")); err == nil {
+	if wf, err := os.ReadFile(filepath.Join(runtimeMemoryDir(m.base), "workflow.md")); err == nil {
 		b.WriteString("\n## 工作流快照\n" + tailRunes(string(wf), 1200) + "\n")
 	}
 	return b.String()
@@ -650,7 +652,9 @@ func (m *osModel) dream() bool {
 		return false
 	}
 	line := fmt.Sprintf("\n## %s · 空闲梦\n%s\n", time.Now().Format("2006-01-02 15:04"), strings.Join(picks, " … "))
-	f, err := os.OpenFile(filepath.Join(m.base, "dreams.md"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	_ = os.MkdirAll(runtimeDreamsDir(m.base), 0o755)
+	path := filepath.Join(runtimeDreamsDir(m.base), time.Now().Format("2006-01-02")+".md")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return false
 	}
@@ -706,7 +710,7 @@ func (m *osModel) compactEvolvedSkill() bool {
 
 // organizeWorkflow 把当前工作流沉淀到 os/memory/workflow.md，并写进 agent 记忆供下轮回调。
 func (m *osModel) organizeWorkflow() {
-	dir := filepath.Join(m.base, "memory")
+	dir := runtimeMemoryDir(m.base)
 	_ = os.MkdirAll(dir, 0o755)
 	var b strings.Builder
 	b.WriteString("# 工作流快照\n\n")
@@ -748,7 +752,7 @@ func (m *osModel) loadWorkflowMemory() {
 	if m.mem == nil {
 		return
 	}
-	if b, err := os.ReadFile(filepath.Join(m.base, "memory", "workflow.md")); err == nil {
+	if b, err := os.ReadFile(filepath.Join(runtimeMemoryDir(m.base), "workflow.md")); err == nil {
 		m.mem.Set("workflow", clipSkillText(string(b), 1200))
 	}
 }
@@ -1233,7 +1237,7 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.status = m.styles.ok.Render("新会话 " + m.sessionID)
 	case "save":
 		m.persistSession()
-		m.status = m.styles.ok.Render("会话已落盘 os/sessions/" + m.sessionID + ".md")
+		m.status = m.styles.ok.Render("会话已落盘 " + filepath.Join(sessionsDir(m.base), m.sessionID+".md"))
 	case "summary":
 		m.appendSummary()
 		m.status = m.styles.ok.Render("摘要见展示框")
@@ -2209,8 +2213,8 @@ func (m *osModel) appendSummary() {
 
 // appendSessions 列出 os/sessions 下的历史会话（最近 10 个）。
 func (m *osModel) appendSessions() {
-	m.out = append(m.out, m.styles.label.Render("── 历史会话 (os/sessions) ──"))
-	dir := filepath.Join(m.base, "sessions")
+	m.out = append(m.out, m.styles.label.Render("── 历史会话 ("+sessionsDir(m.base)+") ──"))
+	dir := sessionsDir(m.base)
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) == 0 {
 		m.out = append(m.out, m.styles.hint.Render("  （无）"))
@@ -2412,7 +2416,7 @@ func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem stri
 			// 冻结快照已由 startThinking 构建并通过 extraSystem 传入；
 			// 这里不再动态读取经验/记忆，保证“每轮看到的是同一份快照”。
 			s := agent.NewSession(cfg, chat, agent.NewRegistry(), sys)
-			skills := agent.NewSkills([]string{filepath.Join(base, "skills")}, agent.NewKeywordMatcher())
+			skills := agent.NewSkills([]string{runtimeSkillsDir(base)}, agent.NewKeywordMatcher())
 			s.Skills = skills
 			_ = s.RegisterBuiltinTools(skills) // read / ls / shell / mem.* / tasks.* / skill.view / delegate
 			// shell 默认 fail-closed；只有显式 HUSHFUSION_ALLOW_SHELL=1 才放行。
@@ -2575,7 +2579,126 @@ func mdLines(text string) []string {
 
 const evolvedSkillName = "evolved-experience"
 
-func evolvedSkillDir(base string) string  { return filepath.Join(base, "skills", "evolved") }
+// 运行时数据统一放全局目录（默认 ~/.forge），按类型分子目录：
+//
+//	~/.forge/dreams/   ~/.forge/memory/   ~/.forge/skills/   ~/.forge/sessions/<project>/
+//
+// 可用 HUSHFUSION_HOME（或 FORGE_HOME）覆盖；无 home 时才退回 <os>/../forge。
+// 这样对话产生的文件不再落进项目目录。
+func runtimeRoot(base string) string {
+	if v := strings.TrimSpace(os.Getenv("HUSHFUSION_HOME")); v != "" {
+		return filepath.Clean(v)
+	}
+	if v := strings.TrimSpace(os.Getenv("FORGE_HOME")); v != "" {
+		return filepath.Clean(v)
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		return filepath.Join(home, ".forge")
+	}
+	return filepath.Clean(filepath.Join(base, "..", "forge"))
+}
+func runtimeDreamsDir(base string) string { return filepath.Join(runtimeRoot(base), "dreams") }
+func runtimeMemoryDir(base string) string { return filepath.Join(runtimeRoot(base), "memory") }
+func runtimeSkillsDir(base string) string { return filepath.Join(runtimeRoot(base), "skills") }
+
+// projectKey 用 os/ 绝对路径的短哈希区分不同项目（全局 sessions 不串会话）。
+func projectKey(base string) string {
+	abs, err := filepath.Abs(base)
+	if err != nil {
+		abs = base
+	}
+	sum := sha256.Sum256([]byte(abs))
+	name := filepath.Base(filepath.Dir(abs))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		name = "project"
+	}
+	name = strings.ReplaceAll(name, string(filepath.Separator), "-")
+	return fmt.Sprintf("%s-%x", name, sum[:4])
+}
+
+func sessionsDir(base string) string {
+	return filepath.Join(runtimeRoot(base), "sessions", projectKey(base))
+}
+
+// migrateRuntimeData 把旧位置（<os>/... 与 <os>/../forge/...）的数据搬到全局目录，不覆盖已有。
+func migrateRuntimeData(base string) {
+	oldRoots := []string{base, filepath.Clean(filepath.Join(base, "..", "forge"))}
+
+	// skills/evolved/SKILL.md
+	if _, err := os.Stat(evolvedSkillPath(base)); err != nil {
+		for _, root := range oldRoots {
+			if b, err := os.ReadFile(filepath.Join(root, "skills", "evolved", "SKILL.md")); err == nil {
+				_ = os.MkdirAll(evolvedSkillDir(base), 0o755)
+				_ = os.WriteFile(evolvedSkillPath(base), b, 0o644)
+				break
+			}
+		}
+	}
+
+	// memory/longterm.json + memory/workflow.md
+	for _, name := range []string{"longterm.json", "workflow.md"} {
+		dst := filepath.Join(runtimeMemoryDir(base), name)
+		if _, err := os.Stat(dst); err == nil {
+			continue
+		}
+		for _, root := range oldRoots {
+			if b, err := os.ReadFile(filepath.Join(root, "memory", name)); err == nil {
+				_ = os.MkdirAll(runtimeMemoryDir(base), 0o755)
+				_ = os.WriteFile(dst, b, 0o644)
+				break
+			}
+		}
+	}
+
+	// 旧 dreams（os/dreams.md 或 <os>/../forge/dreams/）→ 全局 dreams/
+	if entries, err := os.ReadDir(filepath.Join(filepath.Dir(base), "forge", "dreams")); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			dst := filepath.Join(runtimeDreamsDir(base), e.Name())
+			if _, err := os.Stat(dst); err != nil {
+				if b, err := os.ReadFile(filepath.Join(filepath.Dir(base), "forge", "dreams", e.Name())); err == nil {
+					_ = os.MkdirAll(runtimeDreamsDir(base), 0o755)
+					_ = os.WriteFile(dst, b, 0o644)
+				}
+			}
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(base, "dreams.md")); err == nil {
+		dst := filepath.Join(runtimeDreamsDir(base), time.Now().Format("2006-01-02")+".md")
+		if _, err := os.Stat(dst); err != nil {
+			_ = os.MkdirAll(runtimeDreamsDir(base), 0o755)
+			_ = os.WriteFile(dst, b, 0o644)
+		}
+	}
+
+	// sessions/*.json + *.md → 全局 sessions/<project>/
+	for _, dir := range []string{
+		filepath.Join(base, "sessions"),
+		filepath.Join(filepath.Dir(base), "forge", "sessions"),
+	} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			dst := filepath.Join(sessionsDir(base), e.Name())
+			if _, err := os.Stat(dst); err == nil {
+				continue
+			}
+			if b, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil {
+				_ = os.MkdirAll(sessionsDir(base), 0o755)
+				_ = os.WriteFile(dst, b, 0o644)
+			}
+		}
+	}
+}
+
+func evolvedSkillDir(base string) string  { return filepath.Join(runtimeSkillsDir(base), "evolved") }
 func evolvedSkillPath(base string) string { return filepath.Join(evolvedSkillDir(base), "SKILL.md") }
 
 // ensureEvolvedSkill 确保经验 skill 存在并返回全文（frontmatter 必须含 name）。
@@ -2838,7 +2961,7 @@ func (m *osModel) doQuit() (tea.Model, tea.Cmd) {
 }
 
 func (m *osModel) persistSession() {
-	dir := filepath.Join(m.base, "sessions")
+	dir := sessionsDir(m.base)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
@@ -2901,7 +3024,7 @@ type sessionData struct {
 
 // loadSession 读取一个会话（sel 为空/latest=最新；否则按 id）。best-effort。
 func loadSession(base, sel string) (*sessionData, error) {
-	dir := filepath.Join(base, "sessions")
+	dir := sessionsDir(base)
 	id := strings.TrimSuffix(sel, ".json")
 	if sel == "" || sel == "latest" {
 		entries, err := os.ReadDir(dir)
@@ -2916,7 +3039,7 @@ func loadSession(base, sel string) (*sessionData, error) {
 			}
 		}
 		if newest == "" {
-			return nil, fmt.Errorf("os/sessions 无会话可恢复")
+			return nil, fmt.Errorf("全局 forge/sessions 无会话可恢复")
 		}
 		id = strings.TrimSuffix(newest, ".json")
 	}
@@ -3600,8 +3723,8 @@ func cmdOSTUI(args []string) int {
 	cont := fs.String("continue", "", "恢复会话（同 --resume）")
 	contShort := fs.String("c", "", "同 --continue")
 	inDir := fs.String("in", "", "工作目录（设为 os/ 根，等同 HUSHFUSION_OS_DIR）")
-	persist := fs.Bool("persist", false, "持久化 agent 记忆到 <os>/agent-memory.json（跨会话保留）")
-	memFile := fs.String("memory-file", "", "记忆文件路径（隐含 --persist；默认 <os>/agent-memory.json）")
+	persist := fs.Bool("persist", false, "持久化 agent 记忆到全局 <forge-home>/memory/agent-memory.json（跨会话保留）")
+	memFile := fs.String("memory-file", "", "记忆文件路径（隐含 --persist；默认 <forge-home>/memory/agent-memory.json）")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
@@ -3623,7 +3746,7 @@ func cmdOSTUI(args []string) int {
 	if *persist || *memFile != "" {
 		path := *memFile
 		if path == "" {
-			path = filepath.Join(base, "agent-memory.json")
+			path = filepath.Join(runtimeMemoryDir(base), "agent-memory.json")
 		}
 		if st, merr := agent.NewMemStoreFile(path); merr == nil {
 			m.mem = st

@@ -3,7 +3,7 @@ package main
 // longterm_memory.go —— 跨会话长期记忆：本地向量库（无外部依赖）。
 //
 // 设计取舍：
-//   - 存储：<os>/memory/longterm.json（追加式记录，最多 2000 条，原子写）。
+//   - 存储：全局 ~/.forge/memory/longterm.json（追加式记录，最多 2000 条，原子写）。
 //     不引入 PostgreSQL/OrbitDB 这类需要服务端 / JS 运行时的依赖，保证
 //     `forge os tui` 开箱即用；读写集中在 loadMemRecords/saveMemRecords 两处，
 //     以后要换 Postgres/OrbitDB 只需替换这两个函数。
@@ -37,7 +37,7 @@ type memRecord struct {
 	Vector  []float32 `json:"vector"`
 }
 
-func memFilePath(base string) string { return filepath.Join(base, "memory", "longterm.json") }
+func memFilePath(base string) string { return filepath.Join(runtimeMemoryDir(base), "longterm.json") }
 
 // memTokens 切词：CJK 用 2-gram，英文/数字用 ≥2 字符的词。
 func memTokens(s string) []string {

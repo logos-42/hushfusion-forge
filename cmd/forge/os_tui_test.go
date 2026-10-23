@@ -38,6 +38,8 @@ func setupTempOS(t *testing.T) string {
 	// 真实工作区可能有本机 config（含 key），测试用副本必须剔除，避免污染环境变量。
 	_ = os.Remove(filepath.Join(dir, "forge.config.json"))
 	t.Setenv("HUSHFUSION_OS_DIR", dir)
+	// 运行时数据默认落全局 ~/.forge；测试指到临时 home，保证隔离。
+	t.Setenv("HUSHFUSION_HOME", filepath.Join(dir, "home"))
 	return dir
 }
 
@@ -476,6 +478,20 @@ func TestAIResultShowsAnswer(t *testing.T) {
 	}
 }
 
+// 运行时数据默认落全局 ~/.forge；HUSHFUSION_HOME 可覆盖。
+func TestRuntimeRootGlobal(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HUSHFUSION_HOME", filepath.Join(base, "home"))
+	if got := runtimeRoot(base); got != filepath.Join(base, "home") {
+		t.Fatalf("HUSHFUSION_HOME 未生效: %q", got)
+	}
+	t.Setenv("HUSHFUSION_HOME", "")
+	t.Setenv("HOME", filepath.Join(base, "userhome"))
+	if got := runtimeRoot(base); got != filepath.Join(base, "userhome", ".forge") {
+		t.Fatalf("默认应为 ~/.forge: %q", got)
+	}
+}
+
 // 首次构建的冻结快照应包含 skills / 经验 / 长期记忆 / 持久记忆，且后续轮次不重建。
 func TestFrozenContextSnapshot(t *testing.T) {
 	base := setupTempOS(t)
@@ -545,6 +561,7 @@ func TestPickWizardModelCustom(t *testing.T) {
 // 长期记忆：向量召回跨会话命中，且记录持久化到文件。
 func TestLongTermMemoryRecall(t *testing.T) {
 	base := t.TempDir()
+	t.Setenv("HUSHFUSION_HOME", filepath.Join(base, "home"))
 	addMemRecord(base, "s1", "核聚变 线圈 设计", "D9857 的最优线圈配置与电磁场结构")
 	addMemRecord(base, "s2", "前端 CSS 布局", "Flexbox 与 Grid 的对比")
 	recs := recallMemories(base, "核聚变 磁体 线圈", 2)
@@ -567,10 +584,11 @@ func TestIdleHeartbeatActions(t *testing.T) {
 	m.out = append(m.out, "这是一段足够长的测试结论，用来做梦与整理工作流。")
 	m.idlePulse()
 
-	if _, err := os.Stat(filepath.Join(base, "dreams.md")); err != nil {
-		t.Fatalf("dreams.md 未生成: %v", err)
+	dreamFile := filepath.Join(runtimeDreamsDir(base), time.Now().Format("2006-01-02")+".md")
+	if _, err := os.Stat(dreamFile); err != nil {
+		t.Fatalf("dreams 未生成: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(base, "memory", "workflow.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(runtimeMemoryDir(base), "workflow.md")); err != nil {
 		t.Fatalf("workflow.md 未生成: %v", err)
 	}
 	if _, ok := m.mem.Get("workflow"); !ok {
@@ -587,10 +605,10 @@ func TestIdleHeartbeatSkipsBusy(t *testing.T) {
 	m.busy = true
 	m.lastActivity = time.Now().Add(-time.Hour)
 	m.lastIdleRun = time.Time{}
-	// setupTempOS 复制真实 os/，可能自带 dreams.md；先删掉再断言。
-	_ = os.Remove(filepath.Join(base, "dreams.md"))
+	// setupTempOS 复制真实 os/，可能自带 dreams；先清掉再断言。
+	_ = os.RemoveAll(runtimeDreamsDir(base))
 	m.idlePulse()
-	if _, err := os.Stat(filepath.Join(base, "dreams.md")); err == nil {
+	if entries, err := os.ReadDir(runtimeDreamsDir(base)); err == nil && len(entries) > 0 {
 		t.Fatal("忙时不应做梦")
 	}
 }
@@ -619,7 +637,7 @@ func TestEvolvedSkillAccumulates(t *testing.T) {
 	if !strings.Contains(s, "第一条结论") || !strings.Contains(s, "第二条结论") {
 		t.Fatalf("经验内容丢失: %q", s)
 	}
-	sk := agent.NewSkills([]string{filepath.Join(base, "skills")}, agent.NewKeywordMatcher())
+	sk := agent.NewSkills([]string{runtimeSkillsDir(base)}, agent.NewKeywordMatcher())
 	if _, ok := sk.Lookup("evolved-experience"); !ok {
 		t.Fatal("经验 skill 未被 agent 索引")
 	}
