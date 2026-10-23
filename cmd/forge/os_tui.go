@@ -204,6 +204,7 @@ type uiStyles struct {
 	searchBar lipgloss.Style
 	hintBox   lipgloss.Style
 	replyBox  lipgloss.Style // 输出区的圆角「forge」框
+	dashBox   lipgloss.Style // 顶部「仪表盘 · skills/参数」框
 }
 
 type formModel struct {
@@ -458,6 +459,7 @@ func (m *osModel) initStyles() {
 		panel:       lipgloss.NewStyle(), // 仪表盘面板不再套框（纯文本网格）
 		panelActive: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("51")).Padding(0, 1),
 		replyBox:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1),
+		dashBox:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1),
 		footer:      lipgloss.NewStyle().Reverse(true).Foreground(lipgloss.Color("252")),
 		hint:        lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")),
 		spinner:     lipgloss.NewStyle().Foreground(lipgloss.Color("51")),
@@ -2439,6 +2441,8 @@ func (m *osModel) renderConsole(w int) string {
 	chrome := 21 // 含输入框上下两条分隔线
 	if m.focus {
 		chrome = 9
+	} else {
+		chrome += 2 // 仪表盘外框（上下边框）
 	}
 	if m.busy {
 		chrome++ // 内联「AI 思考中」行占一行
@@ -2627,7 +2631,14 @@ func (m *osModel) renderBar(pct, width int) string {
 }
 
 func (m *osModel) renderDashboard(w int) string {
-	return m.styles.label.Render("▌ 仪表盘") + "\n" + m.renderPanels(w)
+	// 顶部方框：仪表盘快照（skills / 参数）。面板本身仍无边框，只有外框。
+	inner := w - 6
+	if inner < 30 {
+		inner = 30
+	}
+	title := m.styles.label.Render("▌ 仪表盘") + m.styles.hint.Render(" · skills / 参数")
+	body := title + "\n" + strings.TrimRight(m.renderPanels(inner), "\n")
+	return m.styles.dashBox.Width(w-2).Render(body) + "\n"
 }
 
 func (m *osModel) renderPanels(w int) string {

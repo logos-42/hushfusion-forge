@@ -292,10 +292,10 @@ func TestUserEchoAboveForgeBox(t *testing.T) {
 	m.width, m.height = 120, 40
 	m.appendUserEcho("hi")
 	c := stripANSI(m.renderConsole(m.width))
-	boxTop := strings.Index(c, "╭")
+	forgeIdx := strings.Index(c, "forge")
 	echoIdx := strings.Index(c, "❯ hi")
-	if boxTop < 0 || echoIdx < 0 || echoIdx > boxTop {
-		t.Fatalf("发送内容应在 forge 框上方: boxTop=%d echo=%d", boxTop, echoIdx)
+	if forgeIdx < 0 || echoIdx < 0 || echoIdx > forgeIdx {
+		t.Fatalf("发送内容应在 forge 回复框上方: forge=%d echo=%d", forgeIdx, echoIdx)
 	}
 }
 
