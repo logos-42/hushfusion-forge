@@ -130,7 +130,10 @@ func execBolloon(ctx context.Context, args []string) (map[string]any, error) {
 		Stdout:  &stdout,
 		Stderr:  &stderr,
 		Timeout: policy.Timeout,
-		Fence:   func(c *exec.Cmd) error { return sandbox.Apply(c, policy) },
+		Fence: func(c *exec.Cmd) error {
+			_, ferr := sandbox.Apply(c, policy)
+			return ferr
+		},
 	})
 	if err != nil {
 		// 二进制缺失 / 围栏拒绝 / 启动失败：如实反映为失败，不假装成功。
@@ -193,6 +196,30 @@ func execPolicyFromEnv() sandbox.Policy {
 		p.EnvAllow = splitCSV(raw) // 显式设空串 ⇒ 空白名单 ⇒ 空环境（最严）
 	} else {
 		p.EnvAllow = []string{"PATH", "HOME", "BOLLOON_BIN"} // 默认最小集
+	}
+	// 资源上限（需宿主 prlimit；缺失则启动失败 —— fail-closed，不静默放开）。
+	if v := os.Getenv("BOLLOON_EXEC_CPU_SECONDS"); v != "" {
+		if s, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && s > 0 {
+			p.Limits.CPU = time.Duration(s) * time.Second
+		}
+	}
+	if v := os.Getenv("BOLLOON_EXEC_AS_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil && n > 0 {
+			p.Limits.AS = n
+		}
+	}
+	if v := os.Getenv("BOLLOON_EXEC_NOFILE"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			p.Limits.NOFILE = n
+		}
+	}
+	if v := os.Getenv("BOLLOON_EXEC_NPROC"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			p.Limits.NPROC = n
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("BOLLOON_EXEC_NET_ISOLATE")); v == "1" || strings.EqualFold(v, "true") {
+		p.NetIsolate = true
 	}
 	return p
 }

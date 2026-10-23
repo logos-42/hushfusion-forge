@@ -43,6 +43,45 @@ type Policy struct {
 	Timeout time.Duration
 	// KillGrace 是 TERM→KILL 的宽限；0 = 2s。
 	KillGrace time.Duration
+
+	// Limits 是资源上限（0 = 不限）。通过宿主 prlimit(1) 施加。
+	// **缺失 prlimit 时拒绝启动**（fail-closed）——不静默降级成"没有限制还在报告里
+	// 说限制了"，那是最危险的谎。
+	Limits Rlimits
+	// NetIsolate 要求无网络命名空间。通过宿主 unshare(1) 施加（Linux，通常需特权）。
+	// 缺失或无权时拒绝启动，不假装已隔离。
+	NetIsolate bool
+}
+
+// Rlimits 是子进程资源上限（0 字段 = 该项不限）。单位见字段注释。
+type Rlimits struct {
+	CPU    time.Duration // CPU 时间（RLIMIT_CPU，换算成整秒）
+	AS     int64         // 地址空间字节数（RLIMIT_AS）
+	NOFILE int           // 打开文件数（RLIMIT_NOFILE）
+	NPROC  int           // 进程/线程数（RLIMIT_NPROC）
+}
+
+// IsZero 报告是否一项都没设（此时不引入任何 wrapper）。
+func (r Rlimits) IsZero() bool {
+	return r.CPU <= 0 && r.AS <= 0 && r.NOFILE <= 0 && r.NPROC <= 0
+}
+
+// Flags 渲染成 prlimit 参数（不包含 `--` 与命令本身）。
+func (r Rlimits) Flags() []string {
+	var f []string
+	if r.CPU > 0 {
+		f = append(f, fmt.Sprintf("--cpu=%d", int(r.CPU.Seconds()+0.5)))
+	}
+	if r.AS > 0 {
+		f = append(f, fmt.Sprintf("--as=%d", r.AS))
+	}
+	if r.NOFILE > 0 {
+		f = append(f, fmt.Sprintf("--nofile=%d", r.NOFILE))
+	}
+	if r.NPROC > 0 {
+		f = append(f, fmt.Sprintf("--nproc=%d", r.NPROC))
+	}
+	return f
 }
 
 // Result 是一次执行的结果。
@@ -54,6 +93,9 @@ type Result struct {
 	TimedOut bool
 	// Killed 报告是否由沙箱主动杀（超时/取消）。
 	Killed bool
+	// Wrapped 列出实际套上的隔离手段（如 "net:unshare -n" / "rlimit:prlimit --cpu=5"）。
+	// 空 = 本次执行没有任何额外隔离 —— 证据里能看出真做了什么，不靠推测。
+	Wrapped []string
 }
 
 // ErrBinaryNotFound 表示可执行文件不在 PATH（fail-closed，不进 shell 猜）。
@@ -62,34 +104,81 @@ var ErrBinaryNotFound = errors.New("sandbox: 可执行文件不在 PATH")
 // ErrRootNotDir 表示 jail 根不是目录。
 var ErrRootNotDir = errors.New("sandbox: jail 根不是目录")
 
+// ErrLimitsUnsupported 表示要求了 RLIMIT 但宿主没有 prlimit(1)（fail-closed）。
+var ErrLimitsUnsupported = errors.New("sandbox: 宿主不支持施加 RLIMIT")
+
+// ErrNetIsolateUnsupported 表示要求了网络隔离但宿主没有 unshare(1)（fail-closed）。
+var ErrNetIsolateUnsupported = errors.New("sandbox: 宿主不支持网络隔离")
+
 // Apply 把围栏策略应用到一条已构造的 exec.Cmd 上（不负责启动/等待）。
 //
 // 给"自己管生命周期"的调用方复用同一套围栏语义（如 internal/proc 的进程管理器：
 // 它负责登记/并发/超时/回收，围栏语义仍由此处单一来源提供，避免两套漂移）。
 //
-// 做三件事：确认二进制可解析（fail-closed）、钉 cwd 到 jail 根、按白名单重建 env、
-// 并让子进程独立成组（调用方才能杀整组）。不设置 Stdin（交互输入卡死）。
-func Apply(cmd *exec.Cmd, p Policy) error {
+// 做的事：确认二进制可解析（fail-closed）、钉 cwd 到 jail 根、按白名单重建 env、
+// 让子进程独立成组（调用方才能杀整组），以及按需套上 prlimit/unshare wrapper。
+// 返回 wrapped（实际套上的隔离手段，供证据/日志），空 = 没套任何 wrapper。
+func Apply(cmd *exec.Cmd, p Policy) (wrapped []string, err error) {
 	if cmd == nil {
-		return errors.New("sandbox: cmd 为 nil")
+		return nil, errors.New("sandbox: cmd 为 nil")
 	}
 	if cmd.Err != nil {
 		// exec.Command 构造期就 LookPath 过；失败在此如实反映，不进 shell 猜。
-		return fmt.Errorf("%w: %v", ErrBinaryNotFound, cmd.Err)
+		return nil, fmt.Errorf("%w: %v", ErrBinaryNotFound, cmd.Err)
 	}
 	if p.Root != "" {
-		st, err := os.Stat(p.Root)
-		if err != nil {
-			return fmt.Errorf("sandbox: jail 根不可用: %w", err)
+		st, stErr := os.Stat(p.Root)
+		if stErr != nil {
+			return nil, fmt.Errorf("sandbox: jail 根不可用: %w", stErr)
 		}
 		if !st.IsDir() {
-			return ErrRootNotDir
+			return nil, ErrRootNotDir
 		}
 		cmd.Dir = p.Root
 	}
 	cmd.Env = buildEnv(p)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	return nil
+
+	if p.NetIsolate || !p.Limits.IsZero() {
+		path, argv, kinds, wErr := wrapForIsolation(cmd.Path, cmd.Args[1:], p)
+		if wErr != nil {
+			return nil, wErr
+		}
+		cmd.Path, cmd.Args = path, argv
+		wrapped = kinds
+	}
+	return wrapped, nil
+}
+
+// wrapForIsolation 按需把命令包进 unshare(1) / prlimit(1)。
+//
+// 顺序：unshare 在最外层（先建命名空间），prlimit 在其内。参数顺序即 argv 顺序。
+// 找不到工具就**拒绝**：宁可启动失败，也不要静默地跑一个"没有隔离却报告说隔离了"
+// 的进程（这类谎比没有隔离更危险）。
+func wrapForIsolation(bin string, args []string, p Policy) (path string, argv []string, kinds []string, err error) {
+	path = bin
+	argv = append([]string{bin}, args...)
+	if p.NetIsolate {
+		up, lookErr := exec.LookPath("unshare")
+		if lookErr != nil {
+			return "", nil, nil, fmt.Errorf("%w: 需要 Linux 的 unshare(1)（当前宿主没有）", ErrNetIsolateUnsupported)
+		}
+		path = up
+		argv = append([]string{up, "-n", "--"}, argv...)
+		kinds = append(kinds, "net:unshare -n")
+	}
+	if !p.Limits.IsZero() {
+		pp, lookErr := exec.LookPath("prlimit")
+		if lookErr != nil {
+			return "", nil, nil, fmt.Errorf("%w: 需要 util-linux 的 prlimit(1)（macOS 默认没有；"+
+				"不设 Limits 即可运行）", ErrLimitsUnsupported)
+		}
+		flags := p.Limits.Flags()
+		path = pp
+		argv = append(append([]string{pp}, flags...), append([]string{"--"}, argv...)...)
+		kinds = append(kinds, "rlimit:prlimit "+strings.Join(flags, " "))
+	}
+	return path, argv, kinds, nil
 }
 
 // Run 执行一条命令并等待其结束。
@@ -110,7 +199,8 @@ func Run(ctx context.Context, p Policy, name string, args ...string) (Result, er
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.Stdin = nil // 不继承父 stdin，避免子进程读交互输入卡死
-	if err := Apply(cmd, p); err != nil {
+	wrapped, err := Apply(cmd, p)
+	if err != nil {
 		return Result{}, err
 	}
 
@@ -119,7 +209,7 @@ func Run(ctx context.Context, p Policy, name string, args ...string) (Result, er
 		return Result{}, fmt.Errorf("sandbox: 启动失败: %w", err)
 	}
 
-	res := Result{}
+	res := Result{Wrapped: wrapped}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
