@@ -31,6 +31,8 @@ func cmdAgent(args []string) int {
 	if err := ai.RegisterBuiltins(); err != nil {
 		return fail("agent: 注册内置 provider: %v", err)
 	}
+	// workspace config → 环境变量（provider/model/base_url/key），与 TUI 一致。
+	applyWorkspaceConfig(osBaseDir())
 	if len(args) == 0 {
 		agentUsage(os.Stderr)
 		return 2

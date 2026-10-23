@@ -285,17 +285,17 @@ func TestUserEchoFormat(t *testing.T) {
 	}
 }
 
-// 发送内容必须在 forge 框下方（不在框内）。
-func TestUserEchoBelowForgeBox(t *testing.T) {
+// 发送内容在上、forge 回复框在下（回复出现在发送内容下面）。
+func TestUserEchoAboveForgeBox(t *testing.T) {
 	base := setupTempOS(t)
 	m := newOSModel(base, mustLoad(t, base))
 	m.width, m.height = 120, 40
 	m.appendUserEcho("hi")
 	c := stripANSI(m.renderConsole(m.width))
-	boxBottom := strings.LastIndex(c, "╰")
+	boxTop := strings.Index(c, "╭")
 	echoIdx := strings.Index(c, "❯ hi")
-	if boxBottom < 0 || echoIdx < 0 || echoIdx < boxBottom {
-		t.Fatalf("发送内容应在 forge 框下方: boxBottom=%d echo=%d", boxBottom, echoIdx)
+	if boxTop < 0 || echoIdx < 0 || echoIdx > boxTop {
+		t.Fatalf("发送内容应在 forge 框上方: boxTop=%d echo=%d", boxTop, echoIdx)
 	}
 }
 

@@ -342,6 +342,9 @@ func atoiSafe(s string) int {
 // 纪律：AI 只提议（propose/add/new/advance），内核写前守卫 + 越权拒绝，
 // 科学结论/完成判定仍归 leo 或独立反馈。
 func cmdOSAI(args []string) int {
+	// workspace config → 环境变量（provider/model/base_url/key），CLI 与 TUI 一致。
+	applyWorkspaceConfig(osBaseDir())
+	defProvider := firstNonEmptyStr(os.Getenv("HUSHFUSION_AI_PROVIDER"), "zai")
 	fs := newFlagSet("os ai",
 		"forge os ai (--goal <文本> | -z <文本>) [--provider zai] [--model m] [--base-url u] [--dry-run] [--max 8] [--usage-file p]",
 		"phase-3 AI 粘合：AI 读 OS 状态并经内核受控系统调用提议动作（只提议，不判完成）。"+
@@ -349,9 +352,9 @@ func cmdOSAI(args []string) int {
 	goal := fs.String("goal", "", "要推进的目标")
 	zShort := fs.String("z", "", "oneshot：单次提示，只打印最终文本（脚本/管道用）")
 	zLong := fs.String("oneshot", "", "同 -z")
-	provider := fs.String("provider", "zai", "AI provider（见 forge ai list）")
-	model := fs.String("model", "", "模型（空=provider 默认）")
-	baseURL := fs.String("base-url", "", "覆盖端点（custom 代理/网关）")
+	provider := fs.String("provider", defProvider, "AI provider（见 forge ai list；缺省读 workspace config/env）")
+	model := fs.String("model", os.Getenv("HUSHFUSION_AI_MODEL"), "模型（缺省读 workspace config/env）")
+	baseURL := fs.String("base-url", os.Getenv("HUSHFUSION_AI_BASE_URL"), "覆盖端点（缺省读 workspace config/env）")
 	dryRun := fs.Bool("dry-run", false, "只校验计划，不执行")
 	max := fs.Int("max", 8, "单次计划最大写系统调用数")
 	usageFile := fs.String("usage-file", "", "运行后写 JSON 用量报告到 PATH（失败也写）")
@@ -369,8 +372,6 @@ func cmdOSAI(args []string) int {
 		return fail("os ai: --goal 或 -z/--oneshot 必填")
 	}
 	start := time.Now()
-	// workspace config → 环境变量（provider/model/base_url/key），CLI 与 TUI 一致。
-	applyWorkspaceConfig(osBaseDir())
 	agent := aios.NewAgent(oskernel.New(osBaseDir()), *provider, *model, *baseURL)
 	agent.Loop.MaxCalls = *max
 	rep, runErr := agent.Run(context.Background(), prompt, *dryRun)

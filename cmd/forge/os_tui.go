@@ -586,6 +586,7 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	m.aiCancel = nil
 	m.state = statePanels // 内联：结果直接落展示框，不切「AI 粘合报告」弹窗
+	m.outScroll = 0       // 新回复吸底，避免用户上翻后看不到回复
 	m.report = msg.rep
 	m.reportErr = msg.err
 	if msg.rep != nil {
@@ -2449,10 +2450,11 @@ func (m *osModel) renderConsole(w int) string {
 	if outH < 4 {
 		outH = 4
 	}
-	b.WriteString(m.renderOutputBox(w, outH))
+	// 顺序：发送内容（❯ hi）→ forge 回复框（回复在发送内容下面）→ 输入框。
 	if len(m.lastEcho) > 0 {
 		b.WriteString(strings.Join(m.lastEcho, "\n") + "\n")
 	}
+	b.WriteString(m.renderOutputBox(w, outH))
 	if m.loading {
 		b.WriteString(m.renderProgress(w))
 	}
