@@ -78,6 +78,7 @@ const (
 	stateForm
 	stateThinking
 	stateReport
+	stateModelWizard
 )
 
 type panel struct {
@@ -101,6 +102,7 @@ type osModel struct {
 	state  appState
 
 	form     *formModel
+	wiz      *modelWizard
 	spinner  spinner.Model
 	cmdInput textinput.Model
 
@@ -193,6 +195,29 @@ type formModel struct {
 	focus  int
 }
 
+// modelWizard 是 /model 的多步设置向导：选 provider → 填 model → 填 key → 填 URL → 确认。
+//
+// 为什么不能一步做完：真实场景里 key 往往还没配、BaseURL 要指向内网网关，
+// 「一条命令一刀切」只会逼人退出 TUI 去 shell 里 export。分步让每一步都可核对、
+// 可回退（Esc 上一步），且 key 只在内存里，不落盘、不进会话、不进日志。
+type modelWizard struct {
+	step      int // 见 wizStep* 常量
+	providers []*ai.Profile
+	cursor    int
+	provider  *ai.Profile
+	model     textinput.Model
+	key       textinput.Model
+	url       textinput.Model
+}
+
+const (
+	wizStepProvider = iota // 上下选 provider
+	wizStepModel           // 填模型
+	wizStepKey             // 填 API key（掩码输入）
+	wizStepURL             // 填 Base URL
+	wizStepConfirm         // 汇总确认
+)
+
 type aiResultMsg struct {
 	rep *aios.Report
 	err error
@@ -264,7 +289,7 @@ type slashCmd struct {
 
 // slashCommands 是全部 / 命令（命令面板 + /help 共用）。
 var slashCommands = []slashCmd{
-	{"model", "切换/查看 AI 模型", "<provider> [model]"},
+	{"model", "模型设置向导（provider/model/key/URL 分步填；/model list 看列表）", ""},
 	{"task", "新任务表单", ""},
 	{"opp", "新机会表单", ""},
 	{"decide", "新决策表单", ""},
@@ -537,6 +562,12 @@ func (m *osModel) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.doQuit()
 		}
 		return m.updateForm(msg)
+	case stateModelWizard:
+		if m.wiz == nil { // 防御：状态与数据不一致时直接回控制台，不卡死
+			m.state = statePanels
+			return m, nil
+		}
+		return m.updateWizard(msg)
 	case stateReport:
 		if key.Matches(msg, km.quit) && msg.String() == "q" {
 			return m.doQuit()
@@ -930,14 +961,24 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 
 // slashModel 处理 /model：无参=展示当前+可选列表；带参=/model <provider> [model] 切换。
 func (m *osModel) slashModel(cmd, head string) (tea.Model, tea.Cmd) {
+	// TUI 启动路径不经 cmdAI，内置 provider 从未注册时 ai.Builtins() 为空 ——
+	// 那样列表是空的、向导也没得选。这里幂等注册（后注册覆盖同名，内置只是兜底）。
+	_ = ai.RegisterBuiltins()
 	rest := strings.TrimSpace(strings.TrimPrefix(cmd, head))
 	if rest == "" {
+		// 无参：打开分步向导（provider → model → key → URL → 确认）。
+		return m.openModelWizard()
+	}
+	if rest == "list" {
 		m.out = append(m.out, m.styles.label.Render(fmt.Sprintf("当前模型: %s / %s", m.provider, m.model)))
-		m.out = append(m.out, m.styles.hint.Render("用法: /model <provider> [model]  ·  可用 provider:"))
+		m.out = append(m.out, m.styles.hint.Render("用法: /model 打开分步向导 · /model <provider> [model] 快捷切换 · 可用 provider:"))
 		for _, p := range ai.Builtins() {
 			line := fmt.Sprintf("  %-12s 默认 %s", p.Name, p.DefaultModel)
 			if p.APIMode == ai.ModeAnthropicMessages {
 				line += "  (未实现, fail-closed)"
+			}
+			if modelKeySet(p) {
+				line += "  key ✓"
 			}
 			m.out = append(m.out, m.styles.hint.Render(line))
 		}
@@ -962,6 +1003,259 @@ func (m *osModel) slashModel(cmd, head string) (tea.Model, tea.Cmd) {
 	}
 	m.status = m.styles.ok.Render(fmt.Sprintf("model → %s/%s", m.provider, m.model))
 	return m, nil
+}
+
+// openModelWizard 打开分步设置向导（只列已实现 chat_completions 的 provider）。
+func (m *osModel) openModelWizard() (tea.Model, tea.Cmd) {
+	_ = ai.RegisterBuiltins() // 幂等兜底（直接调用本方法也不至于拿到空列表）
+	w := &modelWizard{}
+	for _, p := range ai.Builtins() {
+		// Builtins() 是原始字面量，空 APIMode 由 Validate() 补成 chat_completions ——
+		// 这里必须先归一化再判断，否则会把「没写 APIMode」的 provider 全筛掉。
+		mode := p.APIMode
+		if mode == "" {
+			mode = ai.ModeChatCompletions
+		}
+		if mode != ai.ModeChatCompletions {
+			continue // 未实现的模式不上选项：选了也只会 fail-closed
+		}
+		w.providers = append(w.providers, p)
+	}
+	for i, p := range w.providers {
+		if p.Name == m.provider {
+			w.cursor = i
+		}
+	}
+	w.model = newWizInput("model（空 = provider 默认）")
+	w.key = newWizInput("API key（空 = 沿用环境变量）")
+	w.key.EchoMode = textinput.EchoPassword // 输入不显形
+	w.url = newWizInput("Base URL")
+	m.wiz = w
+	m.state = stateModelWizard
+	m.status = m.styles.hint.Render("模型向导：↑↓ 选 provider · Enter 下一步 · Esc 上一步/取消")
+	return m, nil
+}
+
+func newWizInput(placeholder string) textinput.Model {
+	ti := textinput.New()
+	ti.Placeholder = placeholder
+	ti.SetWidth(64)
+	return ti
+}
+
+// currentInput / focusStepInput 把「当前步骤 ↔ 输入框」的映射收在一处。
+func (w *modelWizard) currentInput() *textinput.Model {
+	switch w.step {
+	case wizStepModel:
+		return &w.model
+	case wizStepKey:
+		return &w.key
+	default:
+		return &w.url
+	}
+}
+
+func (w *modelWizard) focusStepInput() {
+	switch w.step {
+	case wizStepModel:
+		w.model.Focus()
+	case wizStepKey:
+		w.key.Focus()
+	case wizStepURL:
+		w.url.Focus()
+	}
+}
+
+// updateWizard 处理向导按键：provider 步用 ↑↓，其余步骤是文本输入 + Enter。
+func (m *osModel) updateWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	w := m.wiz
+	switch w.step {
+	case wizStepProvider:
+		switch msg.String() {
+		case "esc":
+			m.wiz, m.state = nil, statePanels
+			m.status = m.styles.err.Render("已取消模型设置")
+		case "up", "k":
+			if len(w.providers) > 0 {
+				w.cursor = (w.cursor - 1 + len(w.providers)) % len(w.providers)
+			}
+		case "down", "j":
+			if len(w.providers) > 0 {
+				w.cursor = (w.cursor + 1) % len(w.providers)
+			}
+		case "enter":
+			if len(w.providers) == 0 {
+				m.status = m.styles.err.Render("没有可用的 provider")
+				return m, nil
+			}
+			w.provider = w.providers[w.cursor]
+			w.model.SetValue(w.provider.DefaultModel)
+			w.url.SetValue(w.provider.BaseURL) // 预填 profile 默认，可改成内网网关
+			w.step = wizStepModel
+			w.focusStepInput()
+		}
+		return m, nil
+
+	case wizStepModel, wizStepKey, wizStepURL:
+		if msg.String() == "esc" { // 上一步（可回退修改）
+			w.currentInput().Blur()
+			w.step--
+			w.focusStepInput()
+			return m, nil
+		}
+		if msg.String() == "enter" {
+			w.currentInput().Blur()
+			if w.step == wizStepURL {
+				w.step = wizStepConfirm
+				return m, nil
+			}
+			w.step++
+			w.focusStepInput()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		switch w.step {
+		case wizStepModel:
+			w.model, cmd = w.model.Update(msg)
+		case wizStepKey:
+			w.key, cmd = w.key.Update(msg)
+		case wizStepURL:
+			w.url, cmd = w.url.Update(msg)
+		}
+		return m, cmd
+
+	case wizStepConfirm:
+		switch msg.String() {
+		case "esc":
+			w.step = wizStepURL
+			w.focusStepInput()
+		case "enter":
+			return m.applyWizard()
+		}
+	}
+	return m, nil
+}
+
+// applyWizard 应用向导结果：切模型 + 把 key/URL 写进**本进程**环境。
+//
+// 为什么写 env 而不是配置文件：本仓纪律是密钥只经环境变量/受控注入，不落盘、
+// 不进日志、不进会话文件。代价是只对本进程有效 —— 这一点在输出里明说。
+func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
+	w := m.wiz
+	prof := w.provider
+	if prof == nil {
+		m.wiz, m.state = nil, statePanels
+		m.status = m.styles.err.Render("未选择 provider")
+		return m, nil
+	}
+	model := orDefault(strings.TrimSpace(w.model.Value()), prof.DefaultModel)
+	key := strings.TrimSpace(w.key.Value())
+	url := strings.TrimSpace(w.url.Value())
+
+	m.provider, m.model = prof.Name, model
+	if key != "" && len(prof.EnvVars) > 0 {
+		_ = os.Setenv(prof.EnvVars[0], key)
+	}
+	// Base URL 总是显式设定（空则清掉），避免沿用上一个 provider 的残留覆盖。
+	if url != "" {
+		_ = os.Setenv("HUSHFUSION_AI_BASE_URL", url)
+	} else {
+		_ = os.Unsetenv("HUSHFUSION_AI_BASE_URL")
+	}
+
+	m.out = append(m.out, m.styles.ok.Render(fmt.Sprintf("✓ 模型 → %s / %s", m.provider, m.model)))
+	if url != "" {
+		m.out = append(m.out, m.styles.hint.Render("  base-url: "+url))
+	}
+	if key != "" {
+		m.out = append(m.out, m.styles.hint.Render("  key 已写入本进程环境（"+
+			strings.Join(prof.EnvVars, "/")+"），不落盘、不进日志"))
+	}
+	if !modelKeySet(prof) {
+		m.out = append(m.out, m.styles.err.Render(fmt.Sprintf("⚠ 该 provider 仍未配 key（env: %s）",
+			strings.Join(prof.EnvVars, "/"))))
+	}
+	m.status = m.styles.ok.Render(fmt.Sprintf("model → %s/%s", m.provider, m.model))
+	m.wiz, m.state = nil, statePanels
+	return m, nil
+}
+
+// wizardBody 渲染向导当前步骤（已完成的步骤打 ✓，当前步骤打 ▶）。
+func (m *osModel) wizardBody() string {
+	w := m.wiz
+	if w == nil {
+		return ""
+	}
+	var b strings.Builder
+	mark := func(step int) string {
+		switch {
+		case w.step == step:
+			return "▶ "
+		case w.step > step:
+			return "✓ "
+		default:
+			return "  "
+		}
+	}
+	stepName := []string{"provider", "model", "api key", "base url", "确认"}
+	b.WriteString(m.styles.label.Render(fmt.Sprintf("步骤 %d/5 · %s", w.step+1, stepName[w.step])) + "\n\n")
+
+	if w.step == wizStepProvider {
+		for i, p := range w.providers {
+			cursor := "  "
+			if i == w.cursor {
+				cursor = "❯ "
+			}
+			keyState := "无 key"
+			if modelKeySet(p) {
+				keyState = "key ✓"
+			}
+			line := fmt.Sprintf("%s%-12s %-30s 默认 %-24s %s", cursor, p.Name, p.DisplayName, p.DefaultModel, keyState)
+			if i == w.cursor {
+				b.WriteString(m.styles.ok.Render(line) + "\n")
+			} else {
+				b.WriteString(m.styles.hint.Render(line) + "\n")
+			}
+		}
+	} else {
+		b.WriteString(m.styles.hint.Render(fmt.Sprintf("  provider: %s（%s）", w.provider.Name, w.provider.DisplayName)) + "\n\n")
+	}
+	if w.step >= wizStepModel {
+		b.WriteString(mark(wizStepModel) + "model    : " + w.model.View() + "\n")
+	}
+	if w.step >= wizStepKey {
+		b.WriteString(mark(wizStepKey) + "api key  : " + w.key.View() + "\n")
+	}
+	if w.step >= wizStepURL {
+		b.WriteString(mark(wizStepURL) + "base url : " + w.url.View() + "\n")
+	}
+	if w.step == wizStepConfirm {
+		b.WriteString("\n" + m.styles.ok.Render("确认后立即生效：") + "\n")
+		b.WriteString(fmt.Sprintf("  provider : %s\n", w.provider.Name))
+		b.WriteString(fmt.Sprintf("  model    : %s\n", orDefault(strings.TrimSpace(w.model.Value()), w.provider.DefaultModel)))
+		b.WriteString(fmt.Sprintf("  api key  : %s\n", keyPreview(strings.TrimSpace(w.key.Value()), w.provider)))
+		b.WriteString(fmt.Sprintf("  base url : %s\n", orDefault(strings.TrimSpace(w.url.Value()), "（空 = provider 默认）")))
+		b.WriteString("\n" + m.styles.hint.Render("Enter 应用 · Esc 返回修改"))
+	} else {
+		b.WriteString("\n" + m.styles.hint.Render("Enter 下一步 · Esc 上一步 · Ctrl+C 中断"))
+	}
+	return b.String()
+}
+
+// keyPreview 把 key 变成可展示的摘要：永远不打印明文。
+func keyPreview(key string, p *ai.Profile) string {
+	envs := strings.Join(p.EnvVars, "/")
+	if key == "" {
+		if modelKeySet(p) {
+			return "沿用环境变量（" + envs + "）"
+		}
+		return "未配置 —— 调用会失败（env: " + envs + "）"
+	}
+	tail := ""
+	if len(key) > 4 {
+		tail = key[len(key)-4:]
+	}
+	return strings.Repeat("•", 6) + tail + "（仅本进程环境，不落盘）"
 }
 
 // findBuiltin 按名字或别名找内置 provider。
@@ -1443,6 +1737,8 @@ func (m *osModel) View() tea.View {
 		b.WriteString(m.renderDialog(m.panels[m.detail].name+" · 详情", m.detailBody()))
 	case stateForm:
 		b.WriteString(m.renderDialog("录入："+m.form.title, m.formBody()))
+	case stateModelWizard:
+		b.WriteString(m.renderDialog("模型设置（分步）", m.wizardBody()))
 	case stateThinking:
 		b.WriteString(m.renderDialog("AI 思考中", m.thinkingBody()))
 	case stateReport:
@@ -1746,6 +2042,8 @@ func modeLabel(s appState) string {
 		return "详情"
 	case stateForm:
 		return "录入"
+	case stateModelWizard:
+		return "模型"
 	case stateThinking:
 		return "AI…"
 	case stateReport:
