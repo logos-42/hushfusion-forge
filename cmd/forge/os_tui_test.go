@@ -697,6 +697,8 @@ func TestProjectToolsRegistered(t *testing.T) {
 		"mcp.servers", "mcp.tools", "mcp.call",
 		"lsp.status", "lsp.definition", "lsp.hover", "lsp.references", "lsp.caps",
 		"wallet.create", "wallet.info", "wallet.balance", "x402.requirements", "x402.fetch",
+		"bolloon.status", "bolloon.join", "bolloon.discover", "bolloon.board", "bolloon.publish",
+		"bolloon.claim", "bolloon.send", "bolloon.engine", "bolloon.p2p", "bolloon.register",
 		"acp.status", "acp.prompt", "diap.identity", "diap.issue", "diap.authorize",
 	} {
 		if !have[want] {

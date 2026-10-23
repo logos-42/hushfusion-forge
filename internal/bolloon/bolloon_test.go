@@ -2,6 +2,7 @@ package bolloon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,10 @@ case "$1 $2" in
     exit 0;;
   "task board")
     echo '{"ok":true,"code":"OK","message":"板上 1 条","data":{"count":1,"local":1,"remote":0,"registryReady":true,"entries":[{"announcementId":"ann-1","capability":"fusion-conversion-consistency","buyer":"did:key:z","status":"open"}]}}'
+    exit 0;;
+  "p2p --json")
+    # p2p 的字段在顶层而不是 data，验证 Envelope.Raw 保留原文。
+    echo '{"ok":true,"code":"OK","peerId":"12D3KooTest","multiaddrs":["/ip4/127.0.0.1/tcp/1"]}'
     exit 0;;
   "fail now")
     echo '{"ok":false,"code":"SOME_ERR","message":"boom","next_action":"fix it"}'
@@ -67,6 +72,24 @@ func TestNetworkStatusDecode(t *testing.T) {
 	}
 	if d.GatewayJoin == nil || d.GatewayJoin.PeerID != "p1" {
 		t.Fatalf("GatewayJoin.peerId 期望 p1, 实际 %+v", d.GatewayJoin)
+	}
+}
+
+func TestEnvelopeKeepsRawTopLevel(t *testing.T) {
+	fake := writeFakeBolloon(t)
+	c := NewWithBin(fake)
+	env, err := c.Run(context.Background(), "p2p")
+	if err != nil {
+		t.Fatalf("p2p: %v", err)
+	}
+	if len(env.Raw) == 0 {
+		t.Fatal("p2p 顶层 JSON 应保留在 Raw")
+	}
+	var got struct {
+		PeerID string `json:"peerId"`
+	}
+	if err := json.Unmarshal(env.Raw, &got); err != nil || got.PeerID != "12D3KooTest" {
+		t.Fatalf("Raw 解码: %v %+v", err, got)
 	}
 }
 

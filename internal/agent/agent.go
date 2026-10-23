@@ -153,6 +153,21 @@ func (s *Session) RegisterTool(t Tool) error { return s.registry.Register(t) }
 // ToolSpecs 返回当前注册的全部工具 schema（宿主自检 / 测试用）。
 func (s *Session) ToolSpecs() []ai.ToolSpec { return s.registry.Specs() }
 
+// ExecuteTool 让宿主/测试直接调用一个已注册工具，走与模型工具调用相同的
+// fail-closed 权限门（AllowWrites），便于 CLI 调试与集成测试。
+func (s *Session) ExecuteTool(ctx context.Context, name string, args map[string]any) (string, error) {
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return "", err
+	}
+	var call ai.ToolCall
+	call.ID = "host"
+	call.Type = "function"
+	call.Function.Name = name
+	call.Function.Arguments = string(raw)
+	return s.registry.Execute(ctx, call, s.AllowWrites)
+}
+
 // Specs 返回模型可见的工具 schema 列表（model() 注入点）。
 func (r *ToolRegistry) Specs() []ai.ToolSpec {
 	out := make([]ai.ToolSpec, 0, len(r.tools))

@@ -34,6 +34,9 @@ type Envelope struct {
 	Message    string          `json:"message"`
 	Data       json.RawMessage `json:"data"`
 	NextAction string          `json:"next_action"`
+	// Raw 是完整 stdout JSON（部分子命令如 `p2p --json` 把字段放在顶层而不是 data，
+	// 调用方需要保留原文才能读到 peerId/multiaddrs）。
+	Raw json.RawMessage `json:"-"`
 }
 
 // Error 是 ok:false 时返回的失败（携带 code 与 next_action，便于调用方决策）。
@@ -109,6 +112,7 @@ func (c *Client) Run(ctx context.Context, args ...string) (*Envelope, error) {
 	env := &Envelope{}
 	raw := bytesTrimSpace(stdout.Bytes())
 	if len(raw) > 0 {
+		env.Raw = append(json.RawMessage(nil), raw...)
 		if err := json.Unmarshal(raw, env); err != nil || env.Code == "" {
 			// 非信封输出（极少数无 --json 支持的子命令）：按失败处理，原样保留。
 			env = &Envelope{
