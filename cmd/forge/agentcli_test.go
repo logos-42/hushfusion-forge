@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -199,6 +200,116 @@ func TestSessionSkillsInjectPerTurnNotStacked(t *testing.T) {
 	}
 	if !strings.Contains(systems[1], "BASE") {
 		t.Fatalf("system 应回到基线: %q", systems[1])
+	}
+}
+
+// newCountMessagesProvider 返回"消息条数"作为回复：用来证明历史被恢复/累加。
+func newCountMessagesProvider(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req struct {
+			Messages []json.RawMessage `json:"messages"`
+		}
+		_ = json.Unmarshal(raw, &req)
+		content, _ := json.Marshal(strconv.Itoa(len(req.Messages)))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"1","model":"m","choices":[{"message":{"role":"assistant","content":` +
+			string(content) + `},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// --state-dir：第二次 chat 必须接着上一次的消息栈（跨进程恢复），文件 0600。
+func TestAgentChatStateDirResumesHistory(t *testing.T) {
+	ai.RegisterBuiltins()
+	t.Setenv("AI_CUSTOM_API_KEY", "test-key")
+	srv := newCountMessagesProvider(t)
+	dir := t.TempDir()
+	o := agentOpts{provider: "custom", baseURL: srv.URL, stateDir: dir}
+
+	var out1, err1 bytes.Buffer
+	if code := runAgentChat(context.Background(), o, "第一句", &out1, &err1); code != 0 {
+		t.Fatalf("首轮失败: code=%d stderr=%s", code, err1.String())
+	}
+	// 首轮请求体 = system + user = 2
+	if got := strings.TrimSpace(out1.String()); got != "2" {
+		t.Fatalf("首轮应 2 条消息, got %q", got)
+	}
+
+	var out2, err2 bytes.Buffer
+	if code := runAgentChat(context.Background(), o, "第二句", &out2, &err2); code != 0 {
+		t.Fatalf("第二轮失败: code=%d stderr=%s", code, err2.String())
+	}
+	// 恢复后 = system + u1 + a1 + u2 = 4
+	if got := strings.TrimSpace(out2.String()); got != "4" {
+		t.Fatalf("恢复后应 4 条消息, got %q（历史没接上？）", got)
+	}
+	if !strings.Contains(err2.String(), "恢复 2 条历史") {
+		t.Fatalf("应在 stderr 报告恢复条数: %q", err2.String())
+	}
+
+	// 历史含用户输入 ⇒ 0600，不能是 0644。
+	st, err := os.Stat(filepath.Join(dir, "default.history.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := st.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("历史文件权限应 0600, got %04o", perm)
+	}
+}
+
+// 历史文件损坏：明说并从空开始，不崩、不静默。
+func TestAgentChatStateDirCorruptStartsEmpty(t *testing.T) {
+	ai.RegisterBuiltins()
+	t.Setenv("AI_CUSTOM_API_KEY", "test-key")
+	srv := newCountMessagesProvider(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "default.history.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errW bytes.Buffer
+	o := agentOpts{provider: "custom", baseURL: srv.URL, stateDir: dir}
+	if code := runAgentChat(context.Background(), o, "hi", &out, &errW); code != 0 {
+		t.Fatalf("损坏历史不应让运行失败: code=%d stderr=%s", code, errW.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "2" {
+		t.Fatalf("应从头开始（2 条）, got %q", got)
+	}
+	if !strings.Contains(errW.String(), "历史读取失败") {
+		t.Fatalf("应明说历史读取失败: %q", errW.String())
+	}
+}
+
+// serve + --state-dir：起两次 serve 进程，第二次必须看到第一次的消息栈。
+func TestAgentServeStateDirResumesHistory(t *testing.T) {
+	ai.RegisterBuiltins()
+	t.Setenv("AI_CUSTOM_API_KEY", "test-key")
+	srv := newCountMessagesProvider(t)
+	dir := t.TempDir()
+	o := agentOpts{provider: "custom", baseURL: srv.URL, stateDir: dir}
+
+	runOnce := func(msg string) string {
+		h := agent.NewServeHandler(func(id string) *agent.Session { return newAgentSession(id, o) })
+		h.AfterTurn = func(id string, s *agent.Session) {
+			if err := saveAgentHistory(agentStatePath(o.stateDir, id), s); err != nil {
+				t.Fatalf("落盘失败: %v", err)
+			}
+		}
+		in := strings.NewReader(`{"msg":"` + msg + `"}` + "\n" + `{"quit":true}` + "\n")
+		var out bytes.Buffer
+		if err := h.Serve(context.Background(), in, &out); err != nil {
+			t.Fatalf("Serve: %v", err)
+		}
+		return out.String()
+	}
+
+	if first := runOnce("第一"); !strings.Contains(first, `"content":"2"`) {
+		t.Fatalf("首轮应 2 条消息（system+user）, got %s", first)
+	}
+	if second := runOnce("第二"); !strings.Contains(second, `"content":"4"`) {
+		t.Fatalf("重启后应 4 条消息（system+u1+a1+u2）, got %s", second)
 	}
 }
 

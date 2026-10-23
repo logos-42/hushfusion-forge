@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -63,6 +64,7 @@ Agent Runtime (internal/agent) 的 CLI 接线:
   --model <id>         模型（空 = provider 默认）
   --base-url <url>     覆盖 provider BaseURL（custom/本地网关）
   --memory-dir <DIR>   按会话落盘记忆到 DIR/<session>.json（空 = 进程内）
+  --state-dir <DIR>    按会话落盘**消息栈**到 DIR/<session>.history.json（跨重启恢复）
   --skills <DIR[,DIR]> 技能目录（命中技能按回合注入 system；skill.view 看全文）
   --persona-root <DIR> persona 文档根（SOUL.md/AGENTS.md/...；空 = 不载入）
   --allow-writes <LIST> 写工具白名单（逗号分隔；空 = 全只读，fail-closed）
@@ -77,18 +79,29 @@ type agentOpts struct {
 	model       string
 	baseURL     string
 	memoryDir   string
+	stateDir    string // 非空 ⇒ 消息栈跨重启恢复（serve/chat 都可用）
 	skillsDirs  []string
 	personaRoot string
 	allowWrites []string
 	maxSessions int
 	usageW      io.Writer // 非 nil 时每次模型调用后向这里写一行用量（stderr）
+	diagW       io.Writer // 非 nil 时诊断/降级信息写这里（缺省 os.Stderr；测试可捕获）
+}
+
+// diag 返回诊断输出目标（默认 stderr，绝不污染 stdout 的协议行）。
+func (o agentOpts) diag() io.Writer {
+	if o.diagW != nil {
+		return o.diagW
+	}
+	return os.Stderr
 }
 
 // agentFlagSet 收集公共 flags（parse 之前拿指针，之后 opts() 解引用）。
 type agentFlagSet struct {
 	fs                          *flag.FlagSet
 	provider, model, base       *string
-	mem, skills, persona, write *string
+	mem, state, skills, persona *string
+	write                       *string
 }
 
 func newAgentFlags(fs *flag.FlagSet) agentFlagSet {
@@ -98,6 +111,7 @@ func newAgentFlags(fs *flag.FlagSet) agentFlagSet {
 		model:    fs.String("model", "", "模型 id（空 = provider 默认）"),
 		base:     fs.String("base-url", os.Getenv("HUSHFUSION_AI_BASE_URL"), "覆盖 provider BaseURL（custom/本地网关）"),
 		mem:      fs.String("memory-dir", "", "按会话落盘记忆到 DIR/<session>.json（空 = 进程内）"),
+		state:    fs.String("state-dir", "", "按会话落盘消息栈到 DIR/<session>.history.json（空 = 不持久化）"),
 		skills:   fs.String("skills", "", "技能目录（逗号分隔；命中技能按回合注入 system）"),
 		persona:  fs.String("persona-root", "", "persona 文档根目录（SOUL.md/AGENTS.md/...；空 = 不载入）"),
 		write:    fs.String("allow-writes", "", "写工具白名单（逗号分隔；空 = 全只读，fail-closed）"),
@@ -110,6 +124,7 @@ func (a agentFlagSet) opts() agentOpts {
 		model:       strings.TrimSpace(*a.model),
 		baseURL:     strings.TrimSpace(*a.base),
 		memoryDir:   strings.TrimSpace(*a.mem),
+		stateDir:    strings.TrimSpace(*a.state),
 		skillsDirs:  splitCSVAgent(*a.skills),
 		personaRoot: strings.TrimSpace(*a.persona),
 		allowWrites: splitCSVAgent(*a.write),
@@ -143,13 +158,25 @@ func runAgentChat(ctx context.Context, o agentOpts, prompt string, out, errW io.
 			return fail("agent: 创建记忆目录 %s: %v", o.memoryDir, err)
 		}
 	}
+	if o.stateDir != "" {
+		if err := os.MkdirAll(o.stateDir, 0o700); err != nil {
+			return fail("agent: 创建状态目录 %s: %v", o.stateDir, err)
+		}
+	}
 	o.usageW = errW
+	o.diagW = errW
 	s := newAgentSession("default", o)
 	reply, err := s.Turn(ctx, prompt)
 	if err != nil {
 		return fail("agent: %v", err)
 	}
 	fmt.Fprintln(out, reply)
+	// 跨重启恢复：chat 也落盘消息栈，下一次 --state-dir 同一目录就能接着聊。
+	if o.stateDir != "" {
+		if serr := saveAgentHistory(agentStatePath(o.stateDir, "default"), s); serr != nil {
+			fmt.Fprintf(errW, "forge agent: 历史落盘失败: %v\n", serr)
+		}
+	}
 	writeUsageLine(errW, s.Usage(), o.model)
 	return 0
 }
@@ -174,10 +201,23 @@ func cmdAgentServe(args []string) int {
 			return fail("agent: 创建记忆目录 %s: %v", o.memoryDir, err)
 		}
 	}
+	if o.stateDir != "" {
+		if err := os.MkdirAll(o.stateDir, 0o700); err != nil {
+			return fail("agent: 创建状态目录 %s: %v", o.stateDir, err)
+		}
+	}
 	o.maxSessions = *maxS
 	o.usageW = os.Stderr
 	h := agent.NewServeHandler(func(id string) *agent.Session { return newAgentSession(id, o) })
 	h.MaxSessions = o.maxSessions
+	// 消息栈跨重启恢复：每回合/重置后原子落盘；失败写 stderr，不影响协议行。
+	if o.stateDir != "" {
+		h.AfterTurn = func(id string, s *agent.Session) {
+			if err := saveAgentHistory(agentStatePath(o.stateDir, id), s); err != nil {
+				fmt.Fprintf(o.diag(), "forge agent: 会话 %q 历史落盘失败: %v\n", id, err)
+			}
+		}
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := h.Serve(ctx, os.Stdin, os.Stdout); err != nil {
@@ -191,6 +231,8 @@ func cmdAgentServe(args []string) int {
 func newAgentSession(sessionID string, o agentOpts) *agent.Session {
 	cfg := agent.DefaultConfig()
 	cfg.Provider, cfg.Model, cfg.BaseURL = o.provider, o.model, o.baseURL
+	// 精确 tokenizer（可选）：HUSHFUSION_TOKENIZER_CMD；未设则 len/4 估算。
+	cfg.Tokenizer = agent.TokenizerFromEnv()
 	chat := func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
 		return ai.Chat(ctx, o.provider, req, ai.ClientOptions{BaseURL: o.baseURL})
 	}
@@ -199,7 +241,7 @@ func newAgentSession(sessionID string, o agentOpts) *agent.Session {
 	// persona（可选，opt-in）：人格/协作文档注入，失败降级并明说。
 	if o.personaRoot != "" {
 		if err := s.WithPersona(o.personaRoot, 6000); err != nil {
-			fmt.Fprintf(os.Stderr, "forge agent: persona 载入失败（跳过）: %v\n", err)
+			fmt.Fprintf(o.diag(), "forge agent: persona 载入失败（跳过）: %v\n", err)
 		}
 	}
 
@@ -218,7 +260,23 @@ func newAgentSession(sessionID string, o agentOpts) *agent.Session {
 				s.AppendSystem(ms.Summary())
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "forge agent: 会话 %q 记忆文件不可用（退回内存模式）: %v\n", sessionID, err)
+			fmt.Fprintf(o.diag(), "forge agent: 会话 %q 记忆文件不可用（退回内存模式）: %v\n", sessionID, err)
+		}
+	}
+
+	// 消息栈跨重启恢复：--state-dir 时从 <dir>/<session>.history.json 读回。
+	// 文件损坏 ⇒ 明说并从空开始（不能因为一个会话的历史坏了就拒绝整个 serve）。
+	if o.stateDir != "" {
+		path := agentStatePath(o.stateDir, sessionID)
+		switch msgs, err := loadAgentHistory(path); {
+		case err == nil:
+			if rerr := s.Restore(msgs); rerr != nil {
+				fmt.Fprintf(o.diag(), "forge agent: 会话 %q 历史文件损坏（从空开始）: %v\n", sessionID, rerr)
+			} else if len(msgs) > 0 {
+				fmt.Fprintf(o.diag(), "# state: 会话 %q 恢复 %d 条历史\n", sessionID, len(msgs))
+			}
+		case !os.IsNotExist(err):
+			fmt.Fprintf(o.diag(), "forge agent: 会话 %q 历史读取失败（从空开始）: %v\n", sessionID, err)
 		}
 	}
 
@@ -232,7 +290,7 @@ func newAgentSession(sessionID string, o agentOpts) *agent.Session {
 	}
 
 	if err := s.RegisterBuiltinTools(skills); err != nil {
-		fmt.Fprintf(os.Stderr, "forge agent: 内置工具注册失败: %v\n", err)
+		fmt.Fprintf(o.diag(), "forge agent: 内置工具注册失败: %v\n", err)
 	}
 	if o.usageW != nil {
 		s.OnUsage = func(u ai.Usage) {
@@ -267,6 +325,38 @@ func agentSafeName(s string) string {
 		return "default"
 	}
 	return b.String()
+}
+
+// agentStatePath 是某会话的消息栈文件路径（session id 已清洗成安全文件名）。
+func agentStatePath(dir, sessionID string) string {
+	return filepath.Join(dir, agentSafeName(sessionID)+".history.json")
+}
+
+// loadAgentHistory 读回某会话的消息栈（文件不存在返回 os.IsNotExist 错误）。
+func loadAgentHistory(path string) ([]agent.Message, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var msgs []agent.Message
+	if err := json.Unmarshal(b, &msgs); err != nil {
+		return nil, err
+	}
+	return msgs, nil
+}
+
+// saveAgentHistory 原子落盘消息栈（tmp + rename，0600）。
+// 历史可能含用户输入，按 0600 存，不放 0644。
+func saveAgentHistory(path string, s *agent.Session) error {
+	b, err := json.Marshal(s.History())
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // splitCSV 拆逗号分隔列表（去空白去空项）。

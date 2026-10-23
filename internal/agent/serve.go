@@ -58,6 +58,9 @@ type ServeHandler struct {
 	sessions map[string]*Session
 	// MaxSessions 是会话数上限（防泄漏；0 = 不限）。
 	MaxSessions int
+	// AfterTurn 可选：每回合/重置后回调（持久化消息栈用，见 cmd 层 --state-dir）。
+	// 回调里的错误由调用方自己报（本包只负责"在该调的时候调"，不吞不猜）。
+	AfterTurn func(sessionID string, s *Session)
 }
 
 // NewServeHandler 构造服务器（NewSession 为 nil 时用 defaultNewSession，不可用）。
@@ -100,6 +103,7 @@ func (h *ServeHandler) Handle(ctx context.Context, line []byte) (ServeResponse, 
 	if req.Reset {
 		if s, ok := h.sessions[id]; ok {
 			s.Reset()
+			h.afterTurn(id, s) // 重置也要落盘：否则重启后"已清空"的历史又回来了
 		}
 		return ServeResponse{Session: id, Reset: true}, nil
 	}
@@ -114,6 +118,7 @@ func (h *ServeHandler) Handle(ctx context.Context, line []byte) (ServeResponse, 
 	if err != nil {
 		return ServeResponse{Session: id, Error: err.Error()}, nil
 	}
+	h.afterTurn(id, s)
 	resp := ServeResponse{Session: id, Role: "assistant", Content: content}
 	// 工具调用摘要：把最后一次 assistant 消息里的工具名带出来（TUI 展示已执行了什么）。
 	if hist := s.History(); len(hist) > 0 {
@@ -126,6 +131,13 @@ func (h *ServeHandler) Handle(ctx context.Context, line []byte) (ServeResponse, 
 		}
 	}
 	return resp, nil
+}
+
+// afterTurn 是 AfterTurn 钩子的空安全包装。
+func (h *ServeHandler) afterTurn(id string, s *Session) {
+	if h.AfterTurn != nil && s != nil {
+		h.AfterTurn(id, s)
+	}
 }
 
 // Serve 是 stdio 主循环：读 stdin 每行 → Handle → 写 stdout 每行（JSON）。
