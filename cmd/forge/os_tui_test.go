@@ -144,13 +144,13 @@ func TestTUIHelpOverlay(t *testing.T) {
 	}
 }
 
-// keyMap 声明式绑定：km.ai 匹配 a、km.expand 匹配 enter、km.help 匹配 ?。
+// keyMap 声明式绑定：km.ai 匹配 a、km.open 匹配 enter、km.help 匹配 ?。
 func TestKeyMapBindings(t *testing.T) {
 	if !key.Matches(keyRune('a'), km.ai) {
 		t.Fatal("km.ai 应匹配 a")
 	}
-	if !key.Matches(keyCode(rune(tea.KeyEnter)), km.expand) {
-		t.Fatal("km.expand 应匹配 enter")
+	if !key.Matches(keyCode(rune(tea.KeyEnter)), km.open) {
+		t.Fatal("km.open 应匹配 enter")
 	}
 	if !key.Matches(keyRune('?'), km.help) {
 		t.Fatal("km.help 应匹配 ?")

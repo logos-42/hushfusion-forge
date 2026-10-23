@@ -103,7 +103,35 @@ var allMethods = []string{"random", "lhs", "evolution", "evolution_warm", "evolu
 
 func main() { os.Exit(run(os.Args[1:])) }
 
+// 全局 flag（可出现在任意位置，先于子命令分派剥离）——学 Hermes 的 --ignore-user-config / --safe-mode。
+var (
+	optIgnoreUserConfig bool
+	optSafeMode         bool
+)
+
+// extractGlobalFlags 从 args 中剥离全局 flag 并置位，返回剩余参数。
+func extractGlobalFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, a := range args {
+		switch a {
+		case "--ignore-user-config":
+			optIgnoreUserConfig = true
+		case "--safe-mode":
+			optSafeMode = true
+			optIgnoreUserConfig = true
+		default:
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 func run(args []string) int {
+	if len(args) == 0 {
+		usage(os.Stderr)
+		return 2
+	}
+	args = extractGlobalFlags(args)
 	if len(args) == 0 {
 		usage(os.Stderr)
 		return 2
@@ -197,6 +225,7 @@ commands:
   version     print version, spec shape and frozen schema facts
 
 exit codes: 0 ok, 1 a gate/command failed, 2 usage error.
+global flags: --ignore-user-config (只用内置 provider，忽略用户配置) · --safe-mode (同左，排错用)，可放任意位置。
 'forge <command> --help' prints the flags of one command.
 environment: FORGE_GIT_COMMIT overrides the commit reported by 'forge version'.
 `, Version)
@@ -2593,7 +2622,7 @@ func cmdOS(args []string) int {
 	case "ai":
 		return cmdOSAI(rest)
 	case "tui":
-		return cmdOSTUI()
+		return cmdOSTUI(rest)
 	case "help", "-h", "--help":
 		osUsage(os.Stdout)
 		return 0
@@ -3071,6 +3100,9 @@ internal/kernel 的 BolloonExec 走内核 ChannelActor 编排。
 func setupAI() {
 	if err := ai.RegisterBuiltins(); err != nil {
 		fmt.Fprintln(os.Stderr, "warn: 注册内置 provider 失败:", err)
+	}
+	if optIgnoreUserConfig {
+		return // --ignore-user-config / --safe-mode：只用内置，不加载用户配置（可复现/排错）
 	}
 	ws, _ := os.Getwd()
 	if env := os.Getenv("HUSHFUSION_AI_WORKSPACE"); env != "" {
