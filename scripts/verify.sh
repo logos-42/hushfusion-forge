@@ -315,19 +315,21 @@ _opt "G23 可造性门（基线可行 + 退化解被咬住 + 几何两条独立�
   '[ -f scripts/check_buildability.py ] && [ -f runs/phase0/results.json ]' \
   python3 scripts/check_buildability.py
 
-# G24: Bolloon kernel 跨语言 bridge 门 —— 真 Node 进程 + 真 @bolloon/bolloon-kernel。
+# G24: Bolloon kernel 原生门 —— 机制原语的 Go 移植 (internal/kernel), 无 Node / 无跨语言桥。
 #   抓的失败模式:
 #     (a) channel 串行性被破坏 —— 同 channel 两个任务 (先 sleep 后 0) 必须按提交顺序完成,
-#         后提交的任务不能先返回 (ChannelActor mailbox 的机制本体, 不是 bridge 自造排队);
-#     (b) 跨 channel 阻塞 —— 一个 channel 的慢任务不得拖住另一个 channel (mailbox 按 channel 隔离);
+#         后提交的任务不能先返回 (ChannelActor 执行锁的机制本体);
+#     (b) 跨 channel 阻塞 —— 一个 channel 的慢任务不得拖住另一个 channel (按 channel 隔离);
 #     (c) 端口未注入 ⇒ fail-closed —— lifecycle/transport 不给端口必须 ok:false, 不许假装成功;
 #     (d) 命名端口注入 ⇒ 真走端口 —— recordStep.echo / send.echo 必须让内核返回 ok:true;
 #     (e) 未知名端口必须拒 —— 诚实边界: 端口必须显式命名, 不许静默回落;
-#     (f) model.acquire 缺 openConnection ⇒ 内核抛错。
-#   前置: node 在 PATH && bridge/node_modules 已装 (cd bridge && npm install)。
-_opt "G24 Bolloon kernel bridge（串行/隔离/fail-closed/命名端口，七条真跑）" \
-  '[ -f bridge/server.mjs ] && [ -d bridge/node_modules/@bolloon ] && command -v node >/dev/null' \
-  go test ./internal/kernelbridge/ -count=1
+#     (f) model.acquire 缺 openConnection ⇒ 内核抛错;
+#     (h) bolloon.exec 经内核 ChannelActor 编排 (exec 端口捕获 stdout);
+#     (i) bolloon.exec 端口缺失 ⇒ fail-closed;
+#     (j-m) ha 纯函数仲裁 + DualKernel 主备切换。
+#   前置: 无 (原生内核, 进程内即跑)。
+_run "G24 Bolloon kernel 原生门（串行/隔离/fail-closed/命名端口 + 双核，全真跑）" \
+  go test ./internal/kernel/... -count=1
 
 # G25: OS↔kernel 双向门 —— CLI 端到端 (forge os sync), 不是单元测试。
 #   抓的失败模式:
@@ -338,9 +340,8 @@ _opt "G24 Bolloon kernel bridge（串行/隔离/fail-closed/命名端口，七�
 #     (c) 独立会话假装读回 —— 新会话 peek 一个不存在的 channel 必须非零退出
 #         (actor 状态进程内, 跨进程读回不存在; 不许假装成功, 与 G24c 同一 fail-closed 哲学,
 #         但这一条走 CLI 层, G24 是包测试层)。
-#   前置同 G24: node && bridge/node_modules。
-_opt "G25 OS↔kernel 双向门（forge os sync CLI 端到端 + 证据落盘 + 独立会话 fail-closed）" \
-  '[ -f cmd/forge/main.go ] && [ -d bridge/node_modules/@bolloon ] && command -v node >/dev/null' \
+#   前置: 无 (原生内核, 不再需要 node/bridge)。
+_run "G25 OS↔kernel 双向门（forge os sync CLI 端到端 + 证据落盘 + 独立会话 fail-closed）" \
   bash -c 'set -e; out=$(mktemp -d); trap "rm -rf $out" EXIT; export PATH="$HOME/.local/bin:$PATH" GOTOOLCHAIN=local; \
     go run ./cmd/forge os sync --channel "g25-$$" --task T-G25 --marker "G25-双向" --sleep-ms 3 --evidence "$out" >/dev/null; \
     f=$(ls "$out"/sync-*.json | head -1); \

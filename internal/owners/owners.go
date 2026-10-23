@@ -43,16 +43,15 @@ var Stages = []Stage{
 			"internal/app/",
 			"internal/config/",
 			"internal/owners/",
-			"internal/kernelbridge/",
+			"internal/kernel/", // 2026-10-23 原生化：Bolloon kernel 机制原语的 Go 移植（原 internal/kernelbridge + Node bridge/ 已删），归 parent
 			"internal/ai/",
 			"internal/bolloon/",  // 2026-10-20 新增：BOLLOON CLI 强类型客户端 + forge bolloon 透传（归 parent）
 			"internal/osview/",   // 2026-10-20 新增：OS 决策层只读视图层（供 forge os 与 TUI 共用，归 parent）
 			"internal/oskernel/", // 2026-10-20 新增：OS 宏内核（syscall 分发 + 子系统驱动 + 写前守卫，归 parent）
 			"internal/aios/",     // 2026-10-20 新增：phase-3 AI 粘合层（AI 经内核受控 syscall 提议，归 parent）
 			"internal/modules/",
-			"internal/mcp/",      // 2026-10-21 新增：MCP stdio 客户端 + init 门 + 权限门（学 Crush，归 parent）
-			"internal/lsp/",      // 2026-10-21 新增：LSP server 客户端 + manager + init 门 + 权限门（学 Hermes/Crush，归 parent）
-			"bridge/",
+			"internal/mcp/", // 2026-10-21 新增：MCP stdio 客户端 + init 门 + 权限门（学 Crush，归 parent）
+			"internal/lsp/", // 2026-10-21 新增：LSP server 客户端 + manager + init 门 + 权限门（学 Hermes/Crush，归 parent）
 			"testdata/",
 			"scripts/",
 			"knowledge/",

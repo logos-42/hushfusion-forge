@@ -1,9 +1,9 @@
-package kernelbridge
+package kernel
 
 import (
 	"testing"
 
-	"github.com/logos-42/hushfusion-forge/internal/kernelbridge/ha"
+	"github.com/logos-42/hushfusion-forge/internal/kernel/ha"
 )
 
 // fakeKernel 是 Kernel 接口的测试替身：记录被调用的角色与次数。
@@ -12,19 +12,19 @@ type fakeKernel struct {
 	calls int
 }
 
-func (f *fakeKernel) ChannelSubmit(args map[string]any) (map[string]any, error) {
+func (f *fakeKernel) ChannelSubmit(_, _, _ string, _ int) (map[string]any, error) {
 	f.calls++
 	return map[string]any{"via": f.role}, nil
 }
-func (f *fakeKernel) ChannelPeek(args map[string]any) (map[string]any, error) {
+func (f *fakeKernel) ChannelPeek(_ string) (map[string]any, error) {
 	f.calls++
 	return map[string]any{"via": f.role}, nil
 }
-func (f *fakeKernel) LifecycleSubmit(args map[string]any) (map[string]any, error) {
+func (f *fakeKernel) LifecycleSubmit(_, _ map[string]any) (map[string]any, error) {
 	f.calls++
 	return map[string]any{"via": f.role}, nil
 }
-func (f *fakeKernel) TransportSubmit(args map[string]any) (map[string]any, error) {
+func (f *fakeKernel) TransportSubmit(_, _ map[string]any) (map[string]any, error) {
 	f.calls++
 	return map[string]any{"via": f.role}, nil
 }
@@ -32,7 +32,7 @@ func (f *fakeKernel) ModelAcquire(_, _ map[string]any) (map[string]any, error) {
 	f.calls++
 	return map[string]any{"via": f.role}, nil
 }
-func (f *fakeKernel) BolloonExec(args ...string) (map[string]any, error) {
+func (f *fakeKernel) BolloonExec(_ ...string) (map[string]any, error) {
 	f.calls++
 	return map[string]any{"via": f.role}, nil
 }
@@ -48,10 +48,10 @@ func TestDualKernelRoutesToPrimary(t *testing.T) {
 		t.Fatalf("默认应 primary active, got %s", dk.Role())
 	}
 	for _, fn := range []func(){
-		func() { _, _ = dk.ChannelSubmit(nil) },
-		func() { _, _ = dk.ChannelPeek(nil) },
-		func() { _, _ = dk.LifecycleSubmit(nil) },
-		func() { _, _ = dk.TransportSubmit(nil) },
+		func() { _, _ = dk.ChannelSubmit("ch", "t", "m", 0) },
+		func() { _, _ = dk.ChannelPeek("ch") },
+		func() { _, _ = dk.LifecycleSubmit(nil, nil) },
+		func() { _, _ = dk.TransportSubmit(nil, nil) },
 		func() { _, _ = dk.ModelAcquire(nil, nil) },
 		func() { _, _ = dk.BolloonExec("network", "status") },
 	} {
@@ -77,8 +77,7 @@ func TestDualKernelSwitchesOnStalePrimary(t *testing.T) {
 	if dk.Role() != ha.RoleSecondary {
 		t.Fatalf("切换后角色应为 secondary, got %s", dk.Role())
 	}
-	// 后续调用应路由到 secondary
-	_, _ = dk.ChannelSubmit(nil)
+	_, _ = dk.ChannelSubmit("ch", "t", "m", 0)
 	if sec.calls != 1 || pri.calls != 0 {
 		t.Fatalf("切换后应由 secondary 处理, got pri=%d sec=%d", pri.calls, sec.calls)
 	}

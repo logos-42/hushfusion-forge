@@ -45,7 +45,7 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/design"
 	"github.com/logos-42/hushfusion-forge/internal/experiment"
 	"github.com/logos-42/hushfusion-forge/internal/harness"
-	"github.com/logos-42/hushfusion-forge/internal/kernelbridge"
+	"github.com/logos-42/hushfusion-forge/internal/kernel"
 	"github.com/logos-42/hushfusion-forge/internal/knowledge"
 	"github.com/logos-42/hushfusion-forge/internal/objective"
 	"github.com/logos-42/hushfusion-forge/internal/physics"
@@ -2541,7 +2541,7 @@ func cmdWorldServe(args []string) int {
 // HUSHFUSION OS ↔ Agent Kernel 双向打通 (forge os)
 // ---------------------------------------------------------------------------
 //
-// 双向闭环的机制形状 (协议 = kernelbridge 的 stdio JSON-RPC):
+// 双向闭环的机制形状 (机制 = 原生内核 internal/kernel, 进程内, 无 stdio 桥):
 //
 //	submit   OS→kernel: 把 OS 的一个任务投递给 kernel channel, ChannelActor 串行执行
 //	         (严格 FIFO / 跨 channel 隔离 / 端口未注入 fail-closed —— 机制本体在 kernel,
@@ -2670,10 +2670,7 @@ func cmdOSSubmit(args []string) int {
 		fs.Usage()
 		return 2
 	}
-	c, err := kernelbridge.Create()
-	if err != nil {
-		return fail("os submit: 起 bridge 失败 (node 在 PATH? cd bridge && npm install?): %v", err)
-	}
+	c := kernel.New()
 	defer c.Close()
 	out, err := c.ChannelSubmit(*channel, *task, *marker, *sleepMs)
 	if err != nil {
@@ -2709,10 +2706,7 @@ func cmdOSPeek(args []string) int {
 		fs.Usage()
 		return 2
 	}
-	c, err := kernelbridge.Create()
-	if err != nil {
-		return fail("os peek: 起 bridge 失败 (node 在 PATH? cd bridge && npm install?): %v", err)
-	}
+	c := kernel.New()
 	defer c.Close()
 	state, err := c.ChannelPeek(*channel)
 	if err != nil {
@@ -2756,10 +2750,7 @@ func cmdOSSync(args []string) int {
 		fs.Usage()
 		return 2
 	}
-	c, err := kernelbridge.Create()
-	if err != nil {
-		return fail("os sync: 起 bridge 失败 (node 在 PATH? cd bridge && npm install?): %v", err)
-	}
+	c := kernel.New()
 	defer c.Close()
 	out, err := c.ChannelSubmit(*channel, *task, *marker, *sleepMs)
 	if err != nil {
@@ -3029,7 +3020,7 @@ func cmdHarnessReport(args []string) int {
 // 把参数原样转发给本机 bolloon 二进制（@bolloon/bolloon-agent）。这是核聚变系统
 // 接入 BOLLOON 去中心化内核的统一入口：外部多智能体交互 (network join / task send /
 // engine run) 与"调用 BOLLOON 的 cli"都经此。等价地，Go 侧可用 internal/bolloon
-// 强类型客户端，或经 internal/kernelbridge 的 BolloonExec 走内核 ChannelActor 编排。
+// 强类型客户端，或经 internal/kernel 的 BolloonExec 走内核 ChannelActor 编排。
 func cmdBolloon(args []string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		bolloonUsage(os.Stdout)
@@ -3060,7 +3051,7 @@ func bolloonUsage(w *os.File) {
 薄 CLI 透传: 把参数原样转发给本机 bolloon 二进制（去中心化智能体 CLI）。
 核聚变系统借此接入 BOLLOON 的去中心化内核 —— 外部多智能体交互与调用 BOLLOON
 cli 的统一入口。等价地, Go 侧可用 internal/bolloon 强类型客户端, 或经
-internal/kernelbridge 的 BolloonExec 走内核 ChannelActor 编排。
+internal/kernel 的 BolloonExec 走内核 ChannelActor 编排。
 
 示例:
   forge bolloon network status              # 本机入网态 (DID / 网关 peerId)

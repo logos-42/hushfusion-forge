@@ -24,10 +24,8 @@ flowchart TB
         DRV["drivers<br/>tasks · experiments · opportunities<br/>decisions · receipts"]
     end
 
-    subgraph L3["执行引擎 — Bolloon Native Macro-Kernel"]
-        KB["internal/kernelbridge<br/>Go 客户端"]
-        BR["bridge/server.mjs<br/>stdio JSON-RPC"]
-        BK["@bolloon/bolloon-kernel<br/>channel · lifecycle · transport · model.acquire"]
+    subgraph L3["执行引擎 — Bolloon kernel (Go 原生)"]
+        KB["internal/kernel<br/>channel · lifecycle · transport · model.acquire (Go 移植)"]
     end
 
     subgraph L4["引擎层 — Go 主栈"]
@@ -117,7 +115,7 @@ flowchart TB
 |---|---|---|---|
 | 决策层 | `os/` | 定义「做什么、凭什么算完成」：任务池 / 五态实验 / 机会池 / 决策日志 / 周复盘 | 与 `runs/`、`wiki` 冲突时以更具体者为准 |
 | 内核层 | `internal/oskernel/` | syscall 分发 + 子系统驱动 + 写前守卫 | 进程内审计，不替代 `oscheck` 日门 |
-| 执行引擎 | `internal/kernelbridge/` `bridge/` | 串行 FIFO 执行、生命周期记录、模型租约 | 只暴露机制，不判「该不该继续」 |
+| 执行引擎 | `internal/kernel/` | 串行 FIFO 执行、生命周期记录、模型租约（Bolloon kernel 的 Go 原生移植） | 只暴露机制，不判「该不该继续」 |
 | 引擎层 | `internal/physics` `objective` `search` `runner` `registry` `knowledge` `design` `mu` `rlenv` `harness` `world` | 设计 → 评分 → 记录 → 学习闭环 | 分数可位级回算（`internal/objective`） |
 | 辅助层 | `python/aux/` | 独立 scipy oracle、schema 校验、规则对账、出图、世界客户端 | **不 import 任何 Go 代码**（G8/G10 的前提） |
 | 证据层 | `runs/<tag>/` `scripts/verify.sh` `docs/wiki/` | 唯一权威：原始记录 + 门禁 + 当前共识 | SKIP ≠ 通过；红门就是红 |

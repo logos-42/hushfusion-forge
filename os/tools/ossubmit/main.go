@@ -13,7 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/logos-42/hushfusion-forge/internal/kernelbridge"
+	"github.com/logos-42/hushfusion-forge/internal/kernel"
 )
 
 // findRoot 从当前目录向上找仓库根（go.mod + os/TASKS.md 同时存在为锚）。
@@ -42,7 +42,8 @@ func main() {
 		fmt.Println("OSSUBMIT: FAIL（" + err.Error() + "）")
 		os.Exit(1)
 	}
-	// kernelbridge.Create() 起 node bridge/server.mjs（相对路径）—— 对齐 cwd
+	// 原生内核 (internal/kernel) 进程内即用, 不再需要 node / 相对路径 bridge;
+	// 仍 chdir 到仓库根, 保持工作目录一致 (回执/证据用 root 拼绝对路径)。
 	if err := os.Chdir(root); err != nil {
 		fmt.Println("OSSUBMIT: FAIL（chdir: " + err.Error() + "）")
 		os.Exit(1)
@@ -54,11 +55,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	c, err := kernelbridge.Create()
-	if err != nil {
-		fmt.Println("OSSUBMIT: FAIL（bridge 起不来: " + err.Error() + "）")
-		os.Exit(1)
-	}
+	c := kernel.New()
 	defer c.Close()
 
 	// --settle T-01 --evidence runs/xxx [--evidence runs/yyy]
@@ -83,7 +80,7 @@ func main() {
 }
 
 // runSettle 解析 --settle 参数并执行验收勾验回写。
-func runSettle(c *kernelbridge.Client, root string, args []string) {
+func runSettle(c *kernel.Client, root string, args []string) {
 	var taskID string
 	var evidence []string
 	for i := 0; i < len(args); i++ {

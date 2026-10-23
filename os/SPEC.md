@@ -50,7 +50,7 @@ os/
 | 门禁 | `scripts/verify.sh`（22 门，唯一权威） | OS 自动化**只调用**，不改门、不绕门 |
 | 合同/裁决 | `CONTRACT.md` §9-10 + `docs/version-*.md` | OS 的 DECISIONS.md 与之一脉相承，冲突时以合同为准 |
 | 上游物理 | `~/Downloads/lean/ProjectionPhysics`（活源） | OS 不搬运上游结论；锚点仍由 `emit_*_anchors.py` 重放读出 |
-| Kernel / bridge | `internal/kernelbridge/` `bridge/` | **执行引擎（主导）**：Bolloon kernel 机制原语（channel.submit / lifecycle / transport / model.acquire），G24 已真跑 7 条。os/ 决策不替代 kernel 执行 |
+| Kernel | `internal/kernel/` | **执行引擎（主导）**：Bolloon kernel 机制原语的 Go 原生移植（channel.submit / lifecycle / transport / model.acquire），G24 已真跑。os/ 决策不替代 kernel 执行 |
 
 ## 3. 统一数据结构
 
@@ -129,10 +129,10 @@ os/
 
 ### 8.1 与 Bolloon（已接入，G24 七条真跑）
 
-- 执行引擎 = **Bolloon Native Macro-Kernel**（`@bolloon/bolloon-kernel`，Node 包），经 `bridge/server.mjs`（stdio JSON-RPC）接入 Go 侧 `internal/kernelbridge`。
+- 执行引擎 = **Bolloon Native Macro-Kernel** 的 **Go 原生移植**（`internal/kernel`，进程内即用；2026-10-23 起不再经 Node `bridge/`）。
 - 已暴露机制原语：`channel.submit`（串行 FIFO）/ `channel.peek` / `lifecycle.submit` / `transport.submit` / `model.acquire`（只读租约）。
 - 设计纪律（来自 kernel SDK）：**只暴露机制，不判「该不该继续」；端口未注入 ⇒ fail-closed**——与 OS「Agent 说完成 ≠ 完成」同一哲学。
-- 门：G24（串行 / 隔离 / fail-closed / 命名端口，七条）。前置：`cd bridge && npm install`。
+- 门：G24（串行 / 隔离 / fail-closed / 命名端口 + 双核）。前置：无（原生内核，进程内即跑）。
 
 ### 8.2 与 headless（预留接口，预备，不实现）
 
@@ -154,12 +154,12 @@ os/
 
 **语义（与 kernel SDK 纪律一致）**：OS 只给「做什么」（task/marker），kernel 只执行机制（串行、隔离、fail-closed），**不判「该不该继续」**——判据仍是门禁与 leo。
 
-**与 `os/tools/ossubmit` 的分工（2026-10-18，同一底层 kernelbridge）**：
+**与 `os/tools/ossubmit` 的分工（同一底层 internal/kernel）**：
 - `ossubmit`（os/tools/）是**编排闭环**：读 TASKS.md 找唯一 active 任务 → 提交 → 回执落盘 `os/kernel_receipts/<id>.json` → `--settle` 验收勾验 + 翻态回写；oscheck 门（T1–T8/E1/A1/K1–K2）随 G5 强制它。
 - `forge os`（cmd/forge）是**机制核对原语**：不绑定 TASKS.md，任意 channel 可 submit/peek/sync；sync 做「提交→读回 actor 状态→核对 task/marker」的显式双向证据（ossubmit 没有读回 actor 状态这一步）。
-- 共用 `internal/kernelbridge` 同一客户端，无重复代码；日常流程走 ossubmit，机制核对/调试走 forge os。
+- 共用 `internal/kernel` 同一客户端，无重复代码；日常流程走 ossubmit，机制核对/调试走 forge os。
 
 **诚实边界（实测确认）**：
-1. 每个 `forge os` 调用是**独立 bridge 会话**——ChannelActor 状态只在进程内存在，进程退出后 actor 即消失。所以 `sync` 是同一进程内完成双向核对；跨进程「读回上次提交」不存在，要核对历史去读 `os/evidence/` 落盘文件（peek 在 actor 不存在时会给出这条提示，不假装成功）。
+1. 每个 `forge os` 调用是**独立内核会话**——ChannelActor 状态只在进程内存在，进程退出后 actor 即消失。所以 `sync` 是同一进程内完成双向核对；跨进程「读回上次提交」不存在，要核对历史去读 `os/evidence/` 落盘文件（peek 在 actor 不存在时会给出这条提示，不假装成功）。
 2. `--sleep-ms` 目前是**机制演示**：kernel 侧执行的是「串行等待 + 记 marker」，不是真实物理计算。真实任务执行（把 verify/run 挂进 channel）是下一步——先证明机制双向通，再挂负载。
 3. `os/evidence/` 已 gitignore（scratch 性质）。**决策落盘走结构化文档**（DECISIONS / EXPERIMENTS / TASKS 状态机），evidence 只作核对用。

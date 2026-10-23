@@ -1,18 +1,16 @@
-package kernelbridge
+package kernel
 
 import (
 	"sync"
 
-	"github.com/logos-42/hushfusion-forge/internal/kernelbridge/ha"
+	"github.com/logos-42/hushfusion-forge/internal/kernel/ha"
 )
 
-// DualKernel 是双核冗余协调器（对齐 bolloon 的 dual-kernel redundancy）：
-// 持 primary / secondary 两个 Kernel 实例，用 ha 心跳仲裁哪个 active。所有调用路由
-// 到当前 active；active 失联（心跳缺失/过期）时自动切到另一个。HA 状态经端口注入，
-// 未注入即单核降级运行（fail-closed，与 kernel 纪律一致）。
+// DualKernel 是双核冗余协调器 (对齐 bolloon 的 dual-kernel redundancy):
+// 持 primary / secondary 两个 Kernel 实例, 用 ha 心跳仲裁哪个 active。所有调用路由
+// 到当前 active; active 失联 (心跳缺失/过期) 时自动切到另一个。
 //
-// 模块化：arbiter/guard 的纯逻辑在 ha 子包，本协调器只做“路由 + 切换”，不混任何
-// 心跳 I/O 细节。两个 Kernel 可由两套独立的 bridge 进程 / 两套 Client 提供。
+// 模块化: 仲裁纯逻辑在 ha 子包, 本协调器只做「路由 + 切换」。
 type DualKernel struct {
 	primary   Kernel
 	secondary Kernel
@@ -23,7 +21,7 @@ type DualKernel struct {
 	peer   *ha.HeartbeatRecord
 }
 
-// NewDualKernel 构造双核协调器。默认 primary active。version 写入心跳便于对端核对。
+// NewDualKernel 构造双核协调器。默认 primary active。
 func NewDualKernel(primary, secondary Kernel, version string) *DualKernel {
 	return &DualKernel{
 		primary:   primary,
@@ -40,9 +38,8 @@ func (d *DualKernel) Role() string {
 	return d.active
 }
 
-// ObservePeer 由看门循环喂入对端心跳；据此切换 active（纯逻辑，可单测）。
+// ObservePeer 由看门循环喂入对端心跳; 据此切换 active (纯逻辑, 可单测)。
 // 仅当当前 active 是 primary 时才可能因 primary 失联切到 secondary。
-// 返回是否发生切换及原因。
 func (d *DualKernel) ObservePeer(peer *ha.HeartbeatRecord, now int64) (switched bool, reason string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -57,7 +54,7 @@ func (d *DualKernel) ObservePeer(peer *ha.HeartbeatRecord, now int64) (switched 
 	return false, ""
 }
 
-// Peer 返回最近一次观察到的对端心跳（调试/观测用）。
+// Peer 返回最近一次观察到的对端心跳 (调试/观测用)。
 func (d *DualKernel) Peer() *ha.HeartbeatRecord {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -75,31 +72,26 @@ func (d *DualKernel) activeKernel() Kernel {
 
 // 以下方法把 Kernel 接口全部路由到当前 active 内核。
 
-func (d *DualKernel) ChannelSubmit(args map[string]any) (map[string]any, error) {
-	return d.activeKernel().ChannelSubmit(args)
+func (d *DualKernel) ChannelSubmit(channelID, taskID, marker string, sleepMs int) (map[string]any, error) {
+	return d.activeKernel().ChannelSubmit(channelID, taskID, marker, sleepMs)
 }
-
-func (d *DualKernel) ChannelPeek(args map[string]any) (map[string]any, error) {
-	return d.activeKernel().ChannelPeek(args)
+func (d *DualKernel) ChannelPeek(channelID string) (map[string]any, error) {
+	return d.activeKernel().ChannelPeek(channelID)
 }
-
-func (d *DualKernel) LifecycleSubmit(args map[string]any) (map[string]any, error) {
-	return d.activeKernel().LifecycleSubmit(args)
+func (d *DualKernel) LifecycleSubmit(request, ports map[string]any) (map[string]any, error) {
+	return d.activeKernel().LifecycleSubmit(request, ports)
 }
-
-func (d *DualKernel) TransportSubmit(args map[string]any) (map[string]any, error) {
-	return d.activeKernel().TransportSubmit(args)
+func (d *DualKernel) TransportSubmit(request, ports map[string]any) (map[string]any, error) {
+	return d.activeKernel().TransportSubmit(request, ports)
 }
-
 func (d *DualKernel) ModelAcquire(snapshot, ports map[string]any) (map[string]any, error) {
 	return d.activeKernel().ModelAcquire(snapshot, ports)
 }
-
 func (d *DualKernel) BolloonExec(args ...string) (map[string]any, error) {
 	return d.activeKernel().BolloonExec(args...)
 }
 
-// Close 关闭两个内核实例（幂等）。
+// Close 关闭两个内核实例 (幂等)。
 func (d *DualKernel) Close() error {
 	if d.primary != nil {
 		_ = d.primary.Close()

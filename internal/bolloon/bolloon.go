@@ -9,9 +9,9 @@
 //   - 所有调用都带 `--json`，解析 BOLLOON 的 §2 冻结信封 {ok, code, message, data}；
 //     ok:false 一律 fail-closed（绝不假装成功）。
 //   - 二进制缺失 / 找不到时 Detect 直接报错，不静默降级。
-//   - 这是 CLI 的强类型壳；更"内核"的执行路径走 internal/kernelbridge 的
-//     BolloonExec（把同一次 CLI 调用放进 @bolloon/bolloon-kernel 的 ChannelActor
-//     里串行/审计执行），两者共用同一个 bolloon 二进制。
+//   - 这是 CLI 的强类型壳；更"内核"的执行路径走 internal/kernel 的
+//     BolloonExec（把同一次 CLI 调用放进原生内核的 ChannelActor 里串行/审计执行），
+//     两者共用同一个 bolloon 二进制。
 package bolloon
 
 import (

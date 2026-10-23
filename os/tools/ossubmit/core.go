@@ -1,5 +1,5 @@
 // submit / settle 核心逻辑。kernel 经接口注入 —— 单测用假 kernel，
-// 集成测试用真 bridge（node + @bolloon/bolloon-kernel）。
+// 生产用原生内核 (internal/kernel, 进程内即用, 无 node / 无跨语言桥)。
 package main
 
 import (
@@ -14,7 +14,7 @@ import (
 	"github.com/logos-42/hushfusion-forge/os/tools/oscore"
 )
 
-// kernelClient 是 internal/kernelbridge.Client 的最小接口面。
+// kernelClient 是 internal/kernel.Client 的最小接口面。
 type kernelClient interface {
 	ChannelSubmit(channelID, taskID, marker string, sleepMs int) (map[string]any, error)
 	LifecycleSubmit(request, ports map[string]any) (map[string]any, error)
@@ -72,7 +72,7 @@ func submitTask(c kernelClient, root, taskID, tasksText string) (*oscore.Receipt
 	}
 	kernelJSON, _ := json.Marshal(kernelResp)
 
-	// lifecycle 记录：op=record-step 经命名端口 recordStep.echo（bridge 侧解析）
+	// lifecycle 记录：op=record-step 经命名端口 recordStep.echo（kernel 侧解析）
 	lcResp, lcErr := c.LifecycleSubmit(
 		map[string]any{"op": "record-step", "origin": "os/ossubmit",
 			"runId": taskID},
