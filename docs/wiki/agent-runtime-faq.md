@@ -132,6 +132,14 @@ A：`internal/identity` 用标准库 Ed25519 派生 `did:key:z...`，签发和�
 
 A：provider 由 `internal/ai` 的声明式 Profile 和注册表选择；模型由 Agent Config 的 Provider/Model/BaseURL 指定，空 model 使用 provider 默认值。查询入口：`forge ai models`（某 provider 模型列表）、`forge ai list`（已注册 provider）。密钥只能通过环境变量或受控注入进入，不能写进 CLI 参数、日志或 memory。
 
+### Q：TUI 里怎么改 provider / 模型 / key / BaseURL？
+
+A：`/model`（无参）打开**分步向导**：① ↑↓ 选 provider（只列已实现 `chat_completions` 的，并标出是否已有 key）→ ② 填 model（预填 provider 默认，可改）→ ③ 填 API key（掩码输入，留空=沿用环境变量）→ ④ 填 Base URL（预填 profile 值，可改成内网网关）→ ⑤ 汇总确认（key 只露末 4 位）。Esc 在输入步是「上一步」、在 provider 步是「取消」，可回退逐项修改。
+
+确认后：model 立即生效；key 写入**本进程**的环境变量（取该 profile 的 `EnvVars[0]`，如 `GLM_API_KEY`），BaseURL 写入 `HUSHFUSION_AI_BASE_URL`（填空则清除覆盖）——**都不落盘、不进会话文件、不进日志**，进程退出即失效；要长期保留请自行写 shell 配置。快捷路径仍可用：`/model <provider> [model]`；`/model list` 看列表与 key 状态。
+
+注意：TUI 启动路径不经 `cmdAI`，内置 provider 需在用到时幂等注册（`ai.RegisterBuiltins()`），否则 `ai.Builtins()` 为空、列表和向导都是空的。
+
 ### Q：bootstrap 是否等于加载所有上下文？
 
 A：不是。bootstrap、skills、memory、goal/task summary 都是有预算的输入来源；必须记录截断或未注入情况。加载失败应跳过可选文档并保留诊断，不能静默伪造“已加载”。
