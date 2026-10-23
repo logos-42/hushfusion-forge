@@ -271,6 +271,23 @@ type aiResultMsg struct {
 	err    error
 }
 
+// toolEventMsg 是一条实时工具调用事件（agent 执行完一个工具就投递一条）。
+type toolEventMsg struct {
+	ev agent.ToolEvent
+	ch chan tea.Msg
+}
+
+// waitForMsg 继续等待同一个通道的下一条消息（Bubble Tea 实时投递的标准写法）。
+func waitForMsg(ch chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
+	}
+}
+
 type thinkTickMsg struct{}
 
 func thinkTick() tea.Cmd {
@@ -529,6 +546,10 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, thinkTick()
 		}
 		return m, nil
+	case toolEventMsg:
+		// 工具执行完立刻追加一行，并继续等下一条（回复随后到达）。
+		m.appendToolEvents([]agent.ToolEvent{msg.ev})
+		return m, waitForMsg(msg.ch)
 	case aiResultMsg:
 		return m.onAIResult(msg)
 	case wizModelsMsg:
@@ -2102,29 +2123,35 @@ func (m *osModel) submitForm() (tea.Model, tea.Cmd) {
 
 func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem string) tea.Cmd {
 	return func() tea.Msg {
-		baseURL := os.Getenv("HUSHFUSION_AI_BASE_URL")
-		cfg := agent.DefaultConfig()
-		cfg.Provider, cfg.Model, cfg.BaseURL = provider, model, baseURL
-		cfg.Root = repoRoot()
-		chat := func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
-			return ai.Chat(ctx, provider, req, ai.ClientOptions{BaseURL: baseURL})
-		}
-		sys := agentSystemPrompt()
-		if strings.TrimSpace(extraSystem) != "" {
-			sys += "\n\n" + extraSystem
-		}
-		s := agent.NewSession(cfg, chat, agent.NewRegistry(), sys)
-		skills := agent.NewSkills(nil, agent.NewKeywordMatcher())
-		s.Skills = skills
-		_ = s.RegisterBuiltinTools(skills) // read / ls / shell / mem.* / tasks.* / skill.view / delegate
-		// shell 默认 fail-closed；只有显式 HUSHFUSION_ALLOW_SHELL=1 才放行。
-		if os.Getenv("HUSHFUSION_ALLOW_SHELL") == "1" {
-			s.AllowWrites["shell"] = true
-		}
-		var tools []agent.ToolEvent
-		s.OnTool = func(ev agent.ToolEvent) { tools = append(tools, ev) }
-		reply, err := s.Turn(ctx, goal)
-		return aiResultMsg{answer: reply, tools: tools, err: err}
+		ch := make(chan tea.Msg, 256)
+		go func() {
+			baseURL := os.Getenv("HUSHFUSION_AI_BASE_URL")
+			cfg := agent.DefaultConfig()
+			cfg.Provider, cfg.Model, cfg.BaseURL = provider, model, baseURL
+			cfg.Root = repoRoot()
+			chat := func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+				return ai.Chat(ctx, provider, req, ai.ClientOptions{BaseURL: baseURL})
+			}
+			sys := agentSystemPrompt()
+			if strings.TrimSpace(extraSystem) != "" {
+				sys += "\n\n" + extraSystem
+			}
+			s := agent.NewSession(cfg, chat, agent.NewRegistry(), sys)
+			skills := agent.NewSkills(nil, agent.NewKeywordMatcher())
+			s.Skills = skills
+			_ = s.RegisterBuiltinTools(skills) // read / ls / shell / mem.* / tasks.* / skill.view / delegate
+			// shell 默认 fail-closed；只有显式 HUSHFUSION_ALLOW_SHELL=1 才放行。
+			if os.Getenv("HUSHFUSION_ALLOW_SHELL") == "1" {
+				s.AllowWrites["shell"] = true
+			}
+			// 工具执行完立刻投递一行；最终回复最后到达。
+			s.OnTool = func(ev agent.ToolEvent) {
+				ch <- toolEventMsg{ev: ev, ch: ch}
+			}
+			reply, err := s.Turn(ctx, goal)
+			ch <- aiResultMsg{answer: reply, err: err}
+		}()
+		return <-ch
 	}
 }
 
@@ -2419,14 +2446,11 @@ func toolIconDesc(syscall string, args map[string]any) (string, string) {
 }
 
 func fmtToolDur(d time.Duration) string {
-	switch {
-	case d <= 0:
+	if d <= 0 {
 		return ""
-	case d >= time.Second:
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	default:
-		return fmt.Sprintf("%dms", d.Milliseconds())
 	}
+	// 统一按秒展示（工具调用时间按秒来算）。
+	return fmt.Sprintf("%.2fs", d.Seconds())
 }
 
 // appendGitDiff 把 os/ 的 git 改动概要追加进展示框（只读）。

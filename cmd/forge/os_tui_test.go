@@ -15,6 +15,7 @@ import (
 	key "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/logos-42/hushfusion-forge/internal/agent"
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/aios"
 	"github.com/logos-42/hushfusion-forge/internal/osview"
@@ -321,8 +322,27 @@ func TestToolLineShellFormat(t *testing.T) {
 		Syscall: "shell", Args: map[string]any{"cmd": "python3 scripts/version_check.py"},
 		OK: true, Duration: 5300 * time.Millisecond,
 	}))
-	if !strings.Contains(line, "💻 $ python3 scripts/version_check.py") || !strings.Contains(line, "5.3s") {
+	if !strings.Contains(line, "💻 $ python3 scripts/version_check.py") || !strings.Contains(line, "5.30s") {
 		t.Fatalf("shell 行格式不对: %q", line)
+	}
+}
+
+// 实时工具事件应立刻追加一行，并继续等待下一条消息。
+func TestToolEventMsgAppends(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.width, m.height = 120, 40
+	ch := make(chan tea.Msg, 1)
+	nm, cmd := m.Update(toolEventMsg{
+		ev: agent.ToolEvent{Name: "read", Args: map[string]any{"path": "index.md"}, OK: true, Duration: 2700 * time.Millisecond},
+		ch: ch,
+	})
+	m = nm.(*osModel)
+	if len(m.toolLog) != 1 || !strings.Contains(stripANSI(m.toolLog[0]), "📖 Read index.md") {
+		t.Fatalf("工具事件未实时追加: %#v", m.toolLog)
+	}
+	if cmd == nil {
+		t.Fatal("应继续等待下一条消息")
 	}
 }
 
