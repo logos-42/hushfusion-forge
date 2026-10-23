@@ -234,6 +234,9 @@ func TestConsoleLayout(t *testing.T) {
 	if pan := m.renderPanels(m.width); strings.ContainsAny(pan, "╭╮╰╯") {
 		t.Fatalf("仪表盘面板不应再套框: %q", pan)
 	}
+	if dash := m.renderDashboard(m.width); !strings.ContainsAny(dash, "╭╮╰╯") {
+		t.Fatalf("仪表盘整体应套圆角框: %q", dash)
+	}
 	out := m.renderOutputBox(m.width, 10)
 	if !strings.Contains(out, "forge") || !strings.ContainsAny(out, "╭╮╰╯") {
 		t.Fatalf("输出区应是带 forge 的圆角框: %q", out)
