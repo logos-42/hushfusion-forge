@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -2155,11 +2156,112 @@ func (m *osModel) appendAnswerText(ans string) {
 	if ans == "" {
 		return
 	}
+	w := m.width
+	if w < 40 {
+		w = 80
+	}
+	inner := w - 8 // 框内宽 = 总宽 - 边框 - 内边距 - 两格缩进
+	if inner < 20 {
+		inner = 20
+	}
 	// 框内只放回复正文；标题已嵌在框的上边框，不再重复。
-	for _, line := range strings.Split(ans, "\n") {
-		m.out = append(m.out, "  "+line)
+	// Markdown 在此渲染成 ANSI，并按框内宽度换行（不靠 renderOutputBox 的截断）。
+	for _, line := range mdLines(ans) {
+		for _, wrapped := range strings.Split(ansi.Wordwrap(line, inner, " "), "\n") {
+			m.out = append(m.out, "  "+wrapped)
+		}
 	}
 	m.trimOut()
+}
+
+// 轻量 Markdown 渲染：标题 / 加粗 / 斜体 / 删除线 / 行内代码 / 列表 / 引用 / 分隔线。
+// 不做完整 CommonMark，只覆盖模型回复里常见的语法；代码块内不做行内解析。
+var (
+	mdHeading = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
+	mdUL      = regexp.MustCompile(`^(\s*)[-*+]\s+(.*)$`)
+	mdOL      = regexp.MustCompile(`^(\s*)(\d+)\.\s+(.*)$`)
+	mdHR      = regexp.MustCompile(`^-{3,}$`)
+	mdCode    = regexp.MustCompile("`([^`]+)`")
+	mdBold    = regexp.MustCompile(`\*\*([^*]+)\*\*`)
+	mdItalic  = regexp.MustCompile(`\*([^*]+)\*`)
+	mdStrike  = regexp.MustCompile(`~~([^~]+)~~`)
+	mdLink    = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+
+	mdBoldStyle   = lipgloss.NewStyle().Bold(true)
+	mdItalicStyle = lipgloss.NewStyle().Italic(true)
+	mdCodeStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Background(lipgloss.Color("236"))
+	mdStrikeStyle = lipgloss.NewStyle().Strikethrough(true)
+	mdH1Style     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("51"))
+	mdH2Style     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
+	mdH3Style     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
+	mdDimStyle    = lipgloss.NewStyle().Faint(true)
+)
+
+func mdInline(s string) string {
+	s = mdLink.ReplaceAllString(s, "$1")
+	s = mdCode.ReplaceAllStringFunc(s, func(m string) string {
+		return mdCodeStyle.Render(strings.Trim(m, "`"))
+	})
+	s = mdBold.ReplaceAllStringFunc(s, func(m string) string {
+		return mdBoldStyle.Render(strings.Trim(m, "*"))
+	})
+	s = mdItalic.ReplaceAllStringFunc(s, func(m string) string {
+		return mdItalicStyle.Render(strings.Trim(m, "*"))
+	})
+	s = mdStrike.ReplaceAllStringFunc(s, func(m string) string {
+		return mdStrikeStyle.Render(strings.Trim(m, "~"))
+	})
+	return s
+}
+
+func mdLines(text string) []string {
+	var out []string
+	inFence := false
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.TrimRight(raw, " \t")
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			out = append(out, mdCodeStyle.Render(line))
+			continue
+		}
+		if trimmed == "" {
+			out = append(out, "")
+			continue
+		}
+		if m := mdHeading.FindStringSubmatch(trimmed); m != nil {
+			style := mdH1Style
+			switch len(m[1]) {
+			case 2:
+				style = mdH2Style
+			case 3, 4, 5, 6:
+				style = mdH3Style
+			}
+			out = append(out, style.Render(mdInline(m[2])))
+			continue
+		}
+		if mdHR.MatchString(trimmed) {
+			out = append(out, mdDimStyle.Render(strings.Repeat("─", 24)))
+			continue
+		}
+		if m := mdUL.FindStringSubmatch(line); m != nil {
+			out = append(out, m[1]+"• "+mdInline(m[2]))
+			continue
+		}
+		if m := mdOL.FindStringSubmatch(line); m != nil {
+			out = append(out, m[1]+m[2]+". "+mdInline(m[3]))
+			continue
+		}
+		if strings.HasPrefix(trimmed, "> ") {
+			out = append(out, mdDimStyle.Render("▎ ")+mdInline(strings.TrimPrefix(trimmed, "> ")))
+			continue
+		}
+		out = append(out, mdInline(line))
+	}
+	return out
 }
 
 // borderTitle 把标题嵌进圆角框的上边框（避免标题作为内容第一行再出现一次）。

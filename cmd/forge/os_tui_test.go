@@ -457,6 +457,23 @@ func TestAIResultShowsAnswer(t *testing.T) {
 	}
 }
 
+// 回复里的 Markdown 应渲染成样式文本，不再残留 ## / ** / ` / --- 等标记。
+func TestMarkdownRendered(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.width = 120
+	m.appendAnswerText("## 标题\n**加粗**\n- 列表项\n`code`\n---")
+	joined := stripANSI(strings.Join(m.out, "\n"))
+	for _, raw := range []string{"##", "**", "`", "---"} {
+		if strings.Contains(joined, raw) {
+			t.Fatalf("不应残留 Markdown 标记 %q: %q", raw, joined)
+		}
+	}
+	if !strings.Contains(joined, "标题") || !strings.Contains(joined, "加粗") || !strings.Contains(joined, "• 列表项") {
+		t.Fatalf("Markdown 内容丢失: %q", joined)
+	}
+}
+
 // 回显横线按框内宽生成，不能再被字节截断成 �…（`─` 是 3 字节）。
 func TestUserEchoNoGarbledRule(t *testing.T) {
 	base := setupTempOS(t)

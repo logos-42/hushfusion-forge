@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-23 | HUSHFUSION OS (TUI) | **回复支持 Markdown 渲染（标题/加粗/代码/列表/引用/分隔线）** | `appendAnswerText` 新增 `mdLines` / `mdInline`：按行识别标题（`#`…`######`）、无序/有序列表、引用（`>`）、分隔线（`---`）、代码块（```），行内渲染加粗、斜体、删除线、行内代码与链接；用 `ansi.Wordwrap` 按框内宽（`w-8`）自动换行，长段落不再被框截断。 | `go build/vet/gofmt/test ./...` 全绿；新增 `TestMarkdownRendered`（`##`/`**`/`` ` ``/`---` 不残留，标题/加粗/列表内容保留）。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **调整对话次序：先工具调用（框外）再 forge 回复框** | `renderConsole` 顺序改为 仪表盘 → 发送内容（`❯ hi`）→ 工具调用列表 → forge 回复框 → 输入框，符合「先调用工具、后出回复框」；`toolIconDesc` 补上 `tasks.list/add/set_state`（📋）、`mem.*`（🧠）、`ls`（📂）、`delegate`（🤝）的图标。 | `go build/vet/gofmt/test ./...` 全绿；`TestToolLogOutsideForgeBox` 改为断言工具行在回复框 `╭` 之前。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **精简头部：去掉 tok/cache/成本占位与会话标题** | `renderHeader` 只保留 `◉ FORGE  model:<m> · ⏱ <el>`；不再显示 `tok:–`、`cache:–`、空成本 `—`，也不再拼 `m.title`（「宏内核 TUI — 设计 → 物理 → 评分 → 搜索 → 注册 → 规则」）。 | `go build/vet/gofmt/test ./...` 全绿。 |
 | 2026-10-23 | HUSHFUSION OS (TUI) | **去掉框内重复标题；身份改为可控核聚变智能体** | `appendAnswerText` 不再往框内写 `forge · 回复` 标题（只留回复正文）；`renderOutputBox` 的上边框标题改为仅 `forge`（不再带「回复」二字），标题只出现一次且位于框上；`agentSystemPrompt` 首句改为「你是 HUSHFUSION Forge 的智能体，负责操纵与控制一个可控核聚变系统」，并保留「不要自称底层模型」的身份纪律。 | `go build/vet/gofmt/test ./...` 全绿；`TestAIResultShowsAnswer` 断言边框含 `forge`、框内不再出现 `forge · 回复`。 |
