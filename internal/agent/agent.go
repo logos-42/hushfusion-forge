@@ -100,6 +100,10 @@ func (c Config) withDefaults() Config {
 // 返回模型回复文本；tool_calls 由 ai.Chat 的响应解析（扩展后）。
 type ChatFunc func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error)
 
+// ChatStreamFunc 是流式模型调用的端口（增量事件通过 on 回调；on 可为 nil）。
+// 返回值与 ChatFunc 同构（完整装配响应），便于流/非流两套后处理共享。
+type ChatStreamFunc func(ctx context.Context, req ai.ChatRequest, on func(ai.StreamEvent)) (*ai.ChatResponse, error)
+
 // ToolExecutor 执行一次工具调用（参数已校验为 JSON 对象）。返回结果文本回填给模型。
 type ToolExecutor func(ctx context.Context, name string, args map[string]any) (string, error)
 

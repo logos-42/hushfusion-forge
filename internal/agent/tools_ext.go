@@ -11,6 +11,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -147,6 +148,95 @@ func registerTaskTools(r *ToolRegistry, s *Session) error {
 	return nil
 }
 
+// registerDelegateTool 注册 delegate（把子任务派给独立子智能体）。
+//
+// 关键纪律：子会话的嵌套深度 = 父 +1，>0 时 RegisterBuiltinTools 不再注册 delegate，
+// 从结构上杜绝「委派里再委派 → 自递归」的失控（这正是用户担心的后台自递归来源之一）。
+// 子会话独立预算（≤ 父一半，可请求更小）、独立上下文窗口、继承父的 provider/model 与
+// 写白名单；返回最终文本 + 已并入父账本的用量。失败回灌父会话自愈，绝不假装完成。
+func (s *Session) registerDelegateTool() error {
+	spec := mkSpec("delegate",
+		"把子任务派给一个独立的子智能体（独立预算、独立上下文窗口、可指定 provider/model）。"+
+			"适合可独立验证的子目标；不要委派需要你亲自协调的连环任务。返回子智能体最终文本。",
+		map[string]string{
+			"task":          "派给子智能体的子任务（必填，自包含、可验证）",
+			"provider":      "可选：子智能体用的 provider（默认继承父）",
+			"model":         "可选：子智能体用的模型（默认继承父）",
+			"budget_tokens": "可选：子智能体预算上限（默认父的一半，且不超过此值）",
+		},
+		[]string{"task"})
+	spec.Function.Parameters = map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"task":          map[string]any{"type": "string", "description": "派给子智能体的子任务（必填）"},
+			"provider":      map[string]any{"type": "string", "description": "可选 provider"},
+			"model":         map[string]any{"type": "string", "description": "可选模型"},
+			"budget_tokens": map[string]any{"type": "integer", "description": "可选预算（token）"},
+		},
+		"required": []string{"task"},
+	}
+	return s.registry.Register(Tool{
+		Spec:     spec,
+		Executor: s.delegateExecute,
+	})
+}
+
+// delegateExecute 实现一个子智能体：独立 Session + 独立预算，跑完返回文本。
+func (s *Session) delegateExecute(ctx context.Context, _ string, args map[string]any) (string, error) {
+	if s.nesting >= 1 {
+		return "", errors.New("delegate: 已达委派嵌套上限（禁止自递归）")
+	}
+	task, _ := args["task"].(string)
+	task = strings.TrimSpace(task)
+	if task == "" {
+		return "", errors.New("delegate: task 为空")
+	}
+	provider := s.cfg.Provider
+	if p, ok := args["provider"].(string); ok && p != "" {
+		provider = p
+	}
+	model := s.cfg.Model
+	if m, ok := args["model"].(string); ok && m != "" {
+		model = m
+	}
+	// 子预算：默认父的一半；请求更小则取请求值；绝不超父一半。
+	childBudget := s.cfg.MaxBudgetTokens / 2
+	if b, ok := args["budget_tokens"].(float64); ok && b > 0 {
+		ib := int(b)
+		if ib < childBudget {
+			childBudget = ib
+		}
+	}
+	childCfg := DefaultConfig()
+	childCfg.Provider = provider
+	childCfg.Model = model
+	childCfg.MaxBudgetTokens = childBudget
+	child := NewSession(childCfg, s.chat, NewRegistry(), s.systemText())
+	child.SetNesting(s.nesting + 1)
+	if s.chatStream != nil {
+		child.SetStreamChat(s.chatStream)
+	}
+	if err := registerMemoryTools(child.registry, child); err != nil {
+		return "", fmt.Errorf("delegate: 子会话工具注册失败: %w", err)
+	}
+	if err := registerTaskTools(child.registry, child); err != nil {
+		return "", fmt.Errorf("delegate: 子会话工具注册失败: %w", err)
+	}
+	child.AllowWrites = s.AllowWrites // 继承父权限（通常仍全只读）
+	modelOr := model
+	if modelOr == "" {
+		modelOr = "(默认)"
+	}
+	out, err := child.Turn(ctx, task)
+	if err != nil {
+		return "", fmt.Errorf("delegate: 子智能体失败: %w", err)
+	}
+	// 子会话用量并入父账本（审计/成本守恒，避免「看不见的二次调用」）。
+	s.recordUsage(child.LastUsage)
+	return fmt.Sprintf("[delegate %s/%s · 子预算 %d token · 实耗 %d token]\n%s",
+		provider, modelOr, childBudget, child.LastUsage.TotalTokens, out), nil
+}
+
 // registerSkillView 注册技能查看工具（skill.view —— 只读：按名字取技能正文）。
 func registerSkillView(r *ToolRegistry, skills *SkillsDir) error {
 	if skills == nil {
@@ -177,6 +267,12 @@ func registerSkillView(r *ToolRegistry, skills *SkillsDir) error {
 // 模型调用它们需要会话白名单，否则 fail-closed 拒绝 —— 这正是「AI 只能提议」
 // 纪律的工具级落地。
 func (s *Session) RegisterBuiltinTools(skills *SkillsDir) error {
+	// delegate 仅在根会话（nesting==0）注册；子会话不带它 → 结构上禁止无限委派。
+	if s.nesting == 0 {
+		if err := s.registerDelegateTool(); err != nil {
+			return err
+		}
+	}
 	if err := registerMemoryTools(s.registry, s); err != nil {
 		return err
 	}

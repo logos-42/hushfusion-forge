@@ -124,7 +124,7 @@ A：不能。计划是提议和执行序列，结果必须落证据；任务状�
 
 ### Q：什么是派发/delegation？
 
-A：这里将原清单中的“自粘贴派发”按任务或子智能体 delegation 理解：父 agent 生成有边界的子任务，子进程/子 agent 返回可审计结果。当前 runtime 有 kernel channel 和 process 管理原语，但通用子智能体派发协议、预算继承和结果合并尚未冻结，不能假装已经具备。
+A：这里将原清单中的“自粘贴派发”按任务或子智能体 delegation 理解：父 agent 生成有边界的子任务，子进程/子 agent 返回可审计结果。现已经 `delegate` 工具落地：进程内子会话、预算继承（子预算 = 父 `MaxBudgetTokens/2`）、结果合并回父账本，并用 `nesting` 从结构上禁止无限委派自递归（详见第 6 节）。
 
 ## 5. Bootstrap、文档、身份与模型
 
@@ -158,15 +158,13 @@ A：不是。bootstrap、skills、memory、goal/task summary 都是有预算的�
 
 ## 6. 当前边界与验收
 
-已覆盖并有单测的核心机制包括 loop/tool roundtrip、未知工具和写权限拒绝、上下文裁剪+真实用量校准、session reset/quit、persona 发现与系统提示注入、**按回合技能注入**、DID 签验、sandbox 进程组超时、proc 回收/超时杀组/并发闸/forget、review 规则与任务完成门、token usage 透出（cost/cache）、TUI `--persist` 记忆落盘与 `/remember /forget /memory`、sandbox+proc 已接 `exec.bolloon`、**`forge agent chat/serve` 顶层 CLI 已接线**（`--memory-dir` 按会话落盘 / `--skills` 按回合注入 / `--persona-root` 载入人格 / `--allow-writes` 写白名单，缺省全只读 fail-closed；stdout 只放协议行/最终回复，用量与警告走 stderr）。
+已覆盖并有单测的核心机制包括 loop/tool roundtrip、未知工具和写权限拒绝、上下文裁剪+真实用量校准、session reset/quit、persona 发现与系统提示注入、**按回合技能注入**、DID 签验、sandbox 进程组超时、proc 回收/超时杀组/并发闸/forget、review 规则与任务完成门、token usage 透出（cost/cache）、TUI `--persist` 记忆落盘与 `/remember /forget /memory`、sandbox+proc 已接 `exec.bolloon`、**`forge agent chat/serve` 顶层 CLI 已接线**（`--memory-dir` 按会话落盘 / `--skills` 按回合注入 / `--persona-root` 载入人格 / `--allow-writes` 写白名单，缺省全只读 fail-closed；stdout 只放协议行/最终回复，用量与警告走 stderr）、**流式输出（SSE, opt-in `stream:true`）**、**通用 delegation（`delegate` 工具 + `nesting` 防护自递归）**。
 
-仍以代码落地和独立门禁为准、未冻结的部分：
-- **流式输出**（SSE）：`ai` 仍只支持非流式 chat/completions，`stream:true` 明确报错。
-- **通用子智能体 delegation**：派发协议/预算继承/结果合并尚未冻结（现有 kernel channel 与 proc 原语，但没有 `delegate` 工具）。
-
-已经落地的（曾经列在这一节，现已兑现）：
+已经落地的（含本期兑现的流式与 delegation）：
 - **serve 消息栈跨重启恢复**：`--state-dir DIR` 按会话原子落盘 `<session>.history.json`（0600），重启后自动恢复；`reset` 会把空历史落盘，避免旧对话复活；文件损坏会明说并从空开始。
 - **精确 tokenizer 可注入**：`Tokenizer` 接口 + `HUSHFUSION_TOKENIZER_CMD`（读 stdin 文本、输出整数），默认仍是 `len/4` **估算**（`Name()` 自报非精确）并用 provider 真实 `prompt_tokens` 校准；不内置 BPE 词表（零依赖不塞二进制资源，编一个"精确"就是造假）。
 - **RLIMIT 与网络隔离**：`sandbox.Policy.Limits`（CPU/AS/NOFILE/NPROC）与 `NetIsolate`，经宿主 `prlimit(1)`/`unshare(1)` 施加；**工具缺失即拒绝启动**（fail-closed），结果里用 `Wrapped` 如实报告实际套了什么（空 = 没套）。
+- **流式输出（SSE）**：`ai` 新增 `ChatStream`/`StreamEvent`（`content`/`tool_call`/`done` 增量），serve 协议 opt-in `{"stream":true}` 逐增量多行 JSON（`delta`/`tool_delta`/`done`）；CLI `forge agent chat --stream` 直接打印增量；非流式契约零破坏。
+- **通用 delegation**：`delegate` 工具（仅 `nesting==0` 注册）+ 进程内子会话，`nesting` 从结构上禁止无限委派自递归；子会话继承父 chat/预算（子预算 = 父 `MaxBudgetTokens/2`），结果标记 `[delegate provider/model · 子预算 N · 实耗 M]` 并入父账本。
 
-本页设计状态与已提交代码一致（截至 2026-10-23：sandbox+proc 接 exec、persona 接系统提示、review 门接任务完成判定、记忆持久化 v0.2、token usage 透出、`--persist` 接 TUI、`forge agent chat/serve` 接 CLI、serve 消息栈跨重启恢复、tokenizer 可注入、RLIMIT/网络隔离）。新增能力以代码和单测为准。
+本页设计状态与已提交代码一致（截至 2026-10-23：sandbox+proc 接 exec、persona 接系统提示、review 门接任务完成判定、记忆持久化 v0.2、token usage 透出、`--persist` 接 TUI、`forge agent chat/serve` 接 CLI、serve 消息栈跨重启恢复、tokenizer 可注入、RLIMIT/网络隔离、流式输出 SSE、通用 delegation `delegate`）。新增能力以代码和单测为准。

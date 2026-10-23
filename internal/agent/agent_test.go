@@ -242,6 +242,83 @@ func TestToolTurnLimitFailClosed(t *testing.T) {
 	}
 }
 
+// 失败回滚：回合中途 fail 后，消息栈回滚到 user 结束位置（不带不完整轮次的
+// assistant/tool 配对）；下一回合从干净状态重试，不把过期工具结果喂给模型。
+func TestTurnFailRollsBackMessages(t *testing.T) {
+	reg := NewRegistry()
+	if err := reg.Register(echoTool("echo")); err != nil {
+		t.Fatal(err)
+	}
+	// 第一回合：模型永远请求工具（导致工具往返上限 fail）；第二回合起正常回复。
+	firstRound := true
+	chat := func(_ context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+		if firstRound { // MaxToolTurns=2 → 第 1、2 次都请求工具，循环耗尽
+			return &ai.ChatResponse{ToolCalls: []ai.ToolCall{{
+				ID: "c", Type: "function",
+				Function: struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				}{Name: "echo", Arguments: `{}`},
+			}}}, nil
+		}
+		return &ai.ChatResponse{Content: "正常回复"}, nil
+	}
+	cfg := DefaultConfig()
+	cfg.MaxToolTurns = 2
+	s := NewSession(cfg, chat, reg, "s")
+
+	// 第一回合失败：消息栈应回滚到只有 user（无 assistant/tool 残留）。
+	if _, err := s.Turn(context.Background(), "第一轮"); err == nil {
+		t.Fatal("第一轮应 fail-closed")
+	}
+	firstRound = false
+	if s.Stage != StageError {
+		t.Fatalf("Stage = %v, want error", s.Stage)
+	}
+	hist := s.History()
+	if len(hist) != 1 || hist[0].Role != RoleUser {
+		t.Fatalf("失败后消息栈应只剩 user, got %+v", hist)
+	}
+
+	// 第二回合：干净重试，成功，消息栈 = user1 + user2 + assistant。
+	out, err := s.Turn(context.Background(), "第二轮")
+	if err != nil {
+		t.Fatalf("第二轮应成功, err=%v", err)
+	}
+	if out != "正常回复" {
+		t.Fatalf("回复 = %q", out)
+	}
+	hist = s.History()
+	if len(hist) != 3 {
+		t.Fatalf("消息数 = %d, want 3（user1+user2+assistant）", len(hist))
+	}
+	if hist[2].Role != RoleAssistant {
+		t.Fatalf("末条应为 assistant, got %+v", hist[2])
+	}
+}
+
+// 模型调用失败（非超时）→ fail-closed 且回滚；重试预算消耗后不再重试。
+func TestTurnModelErrorRollsBack(t *testing.T) {
+	chatErr := errors.New("provider 挂了")
+	s := NewSession(DefaultConfig(), func(_ context.Context, _ ai.ChatRequest) (*ai.ChatResponse, error) {
+		return nil, chatErr
+	}, NewRegistry(), "s")
+	if _, err := s.Turn(context.Background(), "hi"); err == nil {
+		t.Fatal("应 fail-closed")
+	}
+	if s.Stage != StageError {
+		t.Fatalf("Stage = %v, want error", s.Stage)
+	}
+	// 消息栈回滚到 user（失败轮次没有 assistant 残留）。
+	hist := s.History()
+	if len(hist) != 1 || hist[0].Role != RoleUser {
+		t.Fatalf("失败后应只剩 user, got %+v", hist)
+	}
+	if !strings.Contains(s.LastError, "provider 挂了") {
+		t.Fatalf("LastError 应记录原因, got %q", s.LastError)
+	}
+}
+
 // 上下文压缩：小预算下触发，Compacted 标记，且 model 看到的消息不超预算。
 func TestContextCompaction(t *testing.T) {
 	reg := NewRegistry()

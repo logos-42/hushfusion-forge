@@ -84,11 +84,17 @@ type Profile struct {
 
 // Builtins 返回内置 provider 目录（注册表种子）。
 //
-// 选取原则：leo 实际在用的（zai/GLM）、仓库凭据池里有的（deepseek、
-// openrouter）、最通用的（openai）、协议对照样板（anthropic，仅声明）、
-// 任意端点逃生口（custom）与本地开源模型（local，ollama / llama.cpp 兼容口）。
+// 主体来自 providers_catalog.go 的 catalogProviders() —— hermes 移植的大目录
+// （plugins/model-providers 解析所得真实 base_url / 密钥 env）+ 确知真实
+// OpenAI 兼容端点 + 聚合器（OpenRouter / Nous / Vercel ai-gateway 等，各自经
+// /models 暴露几百模型），共 200+。
+//
+// 这里再叠加本仓手选的 7 个覆盖层（含逃生口 custom、本地 local、协议对照样板
+// anthropic），同名后者胜（用户运行时 Register 同样可覆盖）。
 func Builtins() []*Profile {
-	return []*Profile{
+	base := catalogProviders()
+	// 手选覆盖层：保留 leo 实际在用的默认模型、逃生口 custom、本地 local 语义。
+	override := []*Profile{
 		{
 			Name: "zai", Aliases: []string{"glm", "zhipu", "z-ai"},
 			DisplayName: "Z.AI (GLM)", EnvVars: []string{"GLM_API_KEY", "ZAI_API_KEY"},
@@ -134,6 +140,7 @@ func Builtins() []*Profile {
 			BaseURL: "http://127.0.0.1:11434/v1", DefaultModel: "qwen3:8b",
 		},
 	}
+	return append(base, override...)
 }
 
 // Validate 检查 Profile 是否可用（注册前与 Lookup 命中后各查一次）。

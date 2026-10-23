@@ -66,17 +66,21 @@ func TestModelWizardFullFlowAppliesKeyAndURL(t *testing.T) {
 	}
 	restoreEnv("HUSHFUSION_AI_BASE_URL")
 
-	// 上下键能移动光标（先下再上回到原位）
-	nm, _ := m.Update(keyCode(rune(tea.KeyDown)))
-	m = nm.(*osModel)
+	// 上下键能移动光标（先下再上回到原位）。
+	// 注意：光标初始停在「当前激活 provider」的索引，列表按名字排序、数量随
+	// 内置目录增长而变，因此这里用相对位移断言，不硬编码绝对索引。
+	before := m.wiz.cursor
 	if len(m.wiz.providers) > 1 {
-		if m.wiz.cursor != 1 {
-			t.Fatalf("↓ 应移到 1, got %d", m.wiz.cursor)
+		nm, _ := m.Update(keyCode(rune(tea.KeyDown)))
+		m = nm.(*osModel)
+		want := (before + 1) % len(m.wiz.providers)
+		if m.wiz.cursor != want {
+			t.Fatalf("↓ 应从 %d 移到 %d, got %d", before, want, m.wiz.cursor)
 		}
 		nm, _ = m.Update(keyCode(rune(tea.KeyUp)))
 		m = nm.(*osModel)
-		if m.wiz.cursor != 0 {
-			t.Fatalf("↑ 应回到 0, got %d", m.wiz.cursor)
+		if m.wiz.cursor != before {
+			t.Fatalf("↑ 应回到 %d, got %d", before, m.wiz.cursor)
 		}
 	}
 

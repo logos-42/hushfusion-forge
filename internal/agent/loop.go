@@ -60,10 +60,12 @@ func (st Stage) String() string {
 // 端口注入：Chat 与 Tools 在构造时注入（测试用假实现 / 假工具，零网络），
 // AllowWrites 是本次会话允许 AI 自主发起的写工具白名单（缺省空 = 全部只读）。
 type Session struct {
-	cfg      Config
-	chat     ChatFunc
-	registry *ToolRegistry
-	messages []Message
+	cfg        Config
+	chat       ChatFunc
+	chatStream ChatStreamFunc // 流式端口；nil 时 TurnStream 退化为一次性调用
+	registry   *ToolRegistry
+	nesting    int // 委派嵌套深度（0 = 根会话；>0 的子会话不再含 delegate 工具）
+	messages   []Message
 
 	// AllowWrites 是本次会话的写工具白名单（工具注册时的 Write=true 才受它约束）。
 	AllowWrites map[string]bool
@@ -153,6 +155,14 @@ func NewSession(cfg Config, chat ChatFunc, reg *ToolRegistry, system string) *Se
 		tok:         orLenDiv4(cfg.Tokenizer),
 	}
 }
+
+// SetStreamChat 注入流式模型端口。不调用时 TurnStream 退化为一次性调用
+// （仍给最终一条 StreamContent，调用方无需区分实现）。
+func (s *Session) SetStreamChat(f ChatStreamFunc) { s.chatStream = f }
+
+// SetNesting 设置委派嵌套深度（子会话 = 父 +1）。>0 的会话不注册 delegate 工具，
+// 从结构上杜绝「委派里再委派 → 自递归」的失控。
+func (s *Session) SetNesting(n int) { s.nesting = n }
 
 // orLenDiv4 缺省计数器（nil 接口用一个空实现的估算器兜底）。
 func orLenDiv4(t Tokenizer) Tokenizer {
@@ -392,18 +402,27 @@ func (s *Session) Turn(ctx context.Context, userMsg string) (string, error) {
 			s.messages = append(s.messages, Message{Role: RoleUser, Content: compactNotice()})
 		}
 	}
+	// 失败回滚点（base = 当前 user 消息之后）：回合中途 fail-closed（模型调用失败 /
+	// 工具往返上限 / ctx 中断）时，已 append 的 assistant/tool 配对是**不完整的失败轮次**，
+	// 留在消息栈会让下一回合把过期工具结果喂给模型（配对存储反而放大污染）。
+	// 回滚 = 截断回 base，只保留 user（+压缩通知），下一回合从干净状态重试。
+	base := len(s.messages)
+	failTurn := func(err error) (string, error) {
+		s.messages = s.messages[:base]
+		return "", s.fail(err)
+	}
 
 	for turn := 0; turn < s.cfg.MaxToolTurns; turn++ {
 		if err := ctx.Err(); err != nil {
-			return "", s.fail(errors.New("回合被 context 中断: " + err.Error()))
+			return failTurn(errors.New("回合被 context 中断: " + err.Error()))
 		}
 		// 模型调用：超时 + 失败重试（瞬时错误恢复；超时不等重试，直接失败）。
 		resp, err := s.chatWithRetry(ctx)
 		if err != nil {
-			return "", s.fail(errors.New("模型调用失败: " + err.Error()))
+			return failTurn(errors.New("模型调用失败: " + err.Error()))
 		}
 		if resp == nil {
-			return "", s.fail(errors.New("模型返回 nil 响应"))
+			return failTurn(errors.New("模型返回 nil 响应"))
 		}
 		assistantMsg := Message{Role: RoleAssistant, Content: resp.Content}
 		// tool_calls 直接读响应字段（ai.Chat 扩展后，OpenAI 协议）。
@@ -435,7 +454,106 @@ func (s *Session) Turn(ctx context.Context, userMsg string) (string, error) {
 		}
 		// 循环继续 → 模型看到工具结果，决定下一步（继续调工具或最终回复）。
 	}
-	return "", s.fail(errors.New(fmt.Sprintf("工具往返达到上限 %d 轮仍未产出最终回复（fail-closed，不编造完成）", s.cfg.MaxToolTurns)))
+	return failTurn(errors.New(fmt.Sprintf("工具往返达到上限 %d 轮仍未产出最终回复（fail-closed，不编造完成）", s.cfg.MaxToolTurns)))
+}
+
+// TurnStream 是 Turn 的流式版：模型回复与工具调用的增量通过 onDelta 实时回调。
+// 后处理（工具执行、预算、压缩、回滚）与 Turn 完全一致，只是模型调用换成流式。
+// onDelta 可为 nil（等价 Turn）。流式端口由 SetStreamChat 注入；未注入时
+// 退化为一次性调用，仍发最终一条 StreamContent。
+func (s *Session) TurnStream(ctx context.Context, userMsg string, onDelta func(ai.StreamEvent)) (string, error) {
+	if strings.TrimSpace(userMsg) == "" {
+		return "", errors.New("agent: user 消息为空")
+	}
+	s.Stage = StageThinking
+	s.LastError = ""
+	defer func() {
+		if s.Stage == StageThinking {
+			s.Stage = StageIdle
+		}
+	}()
+	s.messages = append(s.messages, Message{Role: RoleUser, Content: userMsg})
+	if s.Skills != nil {
+		s.System = s.Skills.Inject(userMsg, s.baseSystem)
+	}
+	if s.compact() > 0 {
+		if !s.hasNotice() {
+			s.messages = append(s.messages, Message{Role: RoleUser, Content: compactNotice()})
+		}
+	}
+	base := len(s.messages)
+	failTurn := func(err error) (string, error) {
+		s.messages = s.messages[:base]
+		return "", s.fail(err)
+	}
+
+	for turn := 0; turn < s.cfg.MaxToolTurns; turn++ {
+		if err := ctx.Err(); err != nil {
+			return failTurn(errors.New("回合被 context 中断: " + err.Error()))
+		}
+		resp, err := s.streamOnce(ctx, onDelta)
+		if err != nil {
+			return failTurn(errors.New("模型调用失败: " + err.Error()))
+		}
+		if resp == nil {
+			return failTurn(errors.New("模型返回 nil 响应"))
+		}
+		assistantMsg := Message{Role: RoleAssistant, Content: resp.Content}
+		toolCalls := resp.ToolCalls
+		if len(toolCalls) == 0 {
+			s.messages = append(s.messages, assistantMsg)
+			s.Stage = StageDone
+			s.Turns++
+			return resp.Content, nil
+		}
+		assistantMsg.ToolCalls = toolCalls
+		s.messages = append(s.messages, assistantMsg)
+		if len(toolCalls) > s.cfg.MaxToolResults {
+			toolCalls = toolCalls[:s.cfg.MaxToolResults]
+		}
+		for _, call := range toolCalls {
+			result, e := s.registry.Execute(ctx, call, s.AllowWrites)
+			content := result
+			if e != nil {
+				content = "工具失败（回灌给模型自愈）: " + e.Error()
+			}
+			s.messages = append(s.messages, Message{
+				Role:       RoleTool,
+				Content:    content,
+				ToolCallID: call.ID,
+			})
+		}
+	}
+	return failTurn(errors.New(fmt.Sprintf("工具往返达到上限 %d 轮仍未产出最终回复（fail-closed，不编造完成）", s.cfg.MaxToolTurns)))
+}
+
+// streamOnce 是 chatWithRetry 的流式版：转发增量事件给 onDelta，并记录真实用量。
+func (s *Session) streamOnce(ctx context.Context, onDelta func(ai.StreamEvent)) (*ai.ChatResponse, error) {
+	msgs := s.assemble()
+	s.lastEstimate = s.countAI(msgs)
+	// 没注入流式端口 ⇒ 退化：一次性调用，把最终内容作为一条增量发出来。
+	f := s.chatStream
+	if f == nil {
+		f = func(c context.Context, req ai.ChatRequest, on func(ai.StreamEvent)) (*ai.ChatResponse, error) {
+			resp, err := s.chat(c, req)
+			if err != nil {
+				return nil, err
+			}
+			if on != nil {
+				on(ai.StreamEvent{Type: ai.StreamContent, Text: resp.Content})
+			}
+			return resp, nil
+		}
+	}
+	resp, err := f(ctx, ai.ChatRequest{
+		Model:    s.cfg.Model,
+		Messages: msgs,
+		Tools:    s.registry.Specs(),
+	}, onDelta)
+	if err == nil && resp != nil {
+		s.recordUsage(resp.Usage)
+	}
+	return resp, err
 }
 
 // chatWithRetry 带超时与瞬时重试的模型调用。

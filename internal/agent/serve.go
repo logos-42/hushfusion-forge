@@ -8,16 +8,23 @@ package agent
 // 请求：
 //
 //	{"msg": "你好", "session": "id"?}        发起/继续对话
+//	{"msg": "...", "stream": true}           同上，但逐增量多行输出（见下）
 //	{"reset": true, "session": "id"?}       清空某会话
 //	{"quit": true}                           优雅退出
 //
-// 响应：
+// 响应（非流式，向后兼容）：
 //
 //	{"session", "role", "content", "tool_calls"}
 //	{"session", "error": "..."}               fail-closed 错误（会话保留，可继续）
 //
-// 收敛约定：单用户消息一轮；工具往返由 Session.Turn 内部循环。每一行请求至多
-// 产生一行最终响应（工具中间过程不单独发流 —— 非流式诚实边界，见设计文档 §8）。
+// 流式（仅当请求带 "stream":true）：一行请求产出**多行**：
+//
+//	{"session", "type":"delta", "text":"..."}     文本增量（可多条）
+//	{"session", "type":"tool_delta", "index":N, "name":.., "args":..}  工具调用增量
+//	{"session", "type":"done", "content":"...", "finish":.., "usage":..}  最终一行
+//	{"session", "type":"error", "error":"..."}   失败
+//
+// 非流式契约一行一响应完全保留；流式是 opt-in 超集，不破坏旧客户端。
 
 import (
 	"bufio"
@@ -27,6 +34,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/logos-42/hushfusion-forge/internal/ai"
 )
 
 // ServeRequest 是一行 stdio 请求。
@@ -35,6 +44,7 @@ type ServeRequest struct {
 	Session string `json:"session,omitempty"`
 	Reset   bool   `json:"reset,omitempty"`
 	Quit    bool   `json:"quit,omitempty"`
+	Stream  bool   `json:"stream,omitempty"` // 仅对 msg 请求生效：逐增量多行输出
 }
 
 // ServeResponse 是一行 stdio 响应。
@@ -114,6 +124,10 @@ func (h *ServeHandler) Handle(ctx context.Context, line []byte) (ServeResponse, 
 	if strings.TrimSpace(req.Msg) == "" {
 		return ServeResponse{Session: id, Error: "msg 为空"}, nil
 	}
+	if req.Stream {
+		// 流式：调用方提供一个 writer（见 Handle 调用处），逐增量多行输出。
+		return ServeResponse{}, errStreamUnsupported
+	}
 	content, err := s.Turn(ctx, req.Msg)
 	if err != nil {
 		return ServeResponse{Session: id, Error: err.Error()}, nil
@@ -133,6 +147,46 @@ func (h *ServeHandler) Handle(ctx context.Context, line []byte) (ServeResponse, 
 	return resp, nil
 }
 
+// errStreamUnsupported 是占位：流式走 HandleStream 而非 Handle，不应以单行返回。
+var errStreamUnsupported = fmt.Errorf("agent serve: 流式请求需走 HandleStream")
+
+// HandleStream 处理流式 msg 请求：把增量直接写成多行 JSON 到 w（每行一个事件）。
+// 调用方负责在之后 w.Flush()。非流式请求仍走 Handle。
+func (h *ServeHandler) HandleStream(ctx context.Context, req ServeRequest, w io.Writer) error {
+	id := req.Session
+	if id == "" {
+		id = "default"
+	}
+	enc := json.NewEncoder(w)
+	onDelta := func(ev ai.StreamEvent) {
+		switch ev.Type {
+		case ai.StreamContent:
+			_ = enc.Encode(map[string]any{"session": id, "type": "delta", "text": ev.Text})
+		case ai.StreamToolCall:
+			_ = enc.Encode(map[string]any{
+				"session": id, "type": "tool_delta",
+				"index": ev.ToolIndex, "name": ev.ToolName, "args": ev.ToolArgs,
+			})
+		case ai.StreamDone:
+			_ = enc.Encode(map[string]any{
+				"session": id, "type": "done", "finish": ev.Finish, "usage": ev.Usage,
+			})
+		}
+	}
+	s, ok := h.get(id)
+	if !ok {
+		return fmt.Errorf("agent serve: 会话数已达上限 %d", h.MaxSessions)
+	}
+	content, err := s.TurnStream(ctx, req.Msg, onDelta)
+	if err != nil {
+		_ = enc.Encode(map[string]any{"session": id, "type": "error", "error": err.Error()})
+		return nil
+	}
+	h.afterTurn(id, s)
+	_ = enc.Encode(map[string]any{"session": id, "type": "done", "content": content})
+	return nil
+}
+
 // afterTurn 是 AfterTurn 钩子的空安全包装。
 func (h *ServeHandler) afterTurn(id string, s *Session) {
 	if h.AfterTurn != nil && s != nil {
@@ -150,6 +204,16 @@ func (h *ServeHandler) Serve(ctx context.Context, in io.Reader, out io.Writer) e
 	enc := json.NewEncoder(w)
 	for sc.Scan() {
 		line := sc.Bytes()
+		var head ServeRequest
+		streaming := json.Unmarshal(line, &head) == nil && head.Stream && !head.Reset && !head.Quit
+		if streaming {
+			// 流式：逐增量多行输出，flush 后继续。
+			if err := h.HandleStream(ctx, head, w); err != nil {
+				_ = enc.Encode(ServeResponse{Error: err.Error()})
+			}
+			w.Flush()
+			continue
+		}
 		resp, err := h.Handle(ctx, line)
 		if err != nil {
 			// 协议级失败（非法 JSON / 会话上限）— 写错误响应，继续读下一行。

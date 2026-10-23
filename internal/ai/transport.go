@@ -8,6 +8,7 @@
 package ai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -182,6 +183,218 @@ type HTTPStatusError struct {
 
 func (e *HTTPStatusError) Error() string {
 	return fmt.Sprintf("ai: %s HTTP %d: %s", e.Provider, e.Code, truncate(e.Body, 400))
+}
+
+// StreamEventType 区分流式事件的种类。
+type StreamEventType int
+
+const (
+	// StreamContent 是增量文本内容（delta.content）。
+	StreamContent StreamEventType = iota
+	// StreamToolCall 是工具调用的增量片段（delta.tool_calls，按 index 累积）。
+	StreamToolCall
+	// StreamDone 是流结束（flush 最终 usage / finish_reason）。
+	StreamDone
+)
+
+// StreamEvent 是 ChatStream 回调吐出的最小事件（agent 层按它增量渲染）。
+// 工具调用是「按 index 累积」的：Name 只在首次给，Arguments 每次追加片段。
+type StreamEvent struct {
+	Type      StreamEventType
+	Text      string // StreamContent 用：本次增量文本
+	ToolIndex int    // StreamToolCall 用：调用序号
+	ToolID    string // StreamToolCall 用：已确定的调用 id（首次之后才非空前）
+	ToolName  string // StreamToolCall 用：工具名（首次片段）
+	ToolArgs  string // StreamToolCall 用：本次追加的参数片段
+	Finish    string // StreamDone 用：finish_reason
+	Usage     Usage  // StreamDone 用：最终用量（provider 仅在最后一片给）
+}
+
+// ChatStream 发一次流式 chat/completions（SSE），逐事件回调 on。
+//
+// on 在每次增量时同步调用（调用方据此增量渲染）；返回值是流结束后的完整
+// 装配响应（content + 完整 tool_calls + usage），与 Chat 的返回值同构，
+// 方便上层在流与一次性两种模式间共享后处理。on 为 nil 时仅装配不回调。
+// 错误语义同 Chat，但**一旦已下发任何事件，就不再跨 key/provider 重试**
+// （否则调用方会收到重复 delta）——半路失败如实返回错误。
+func (c *Client) ChatStream(ctx context.Context, req ChatRequest, on func(StreamEvent)) (*ChatResponse, error) {
+	if req.Model == "" {
+		req.Model = c.profile.DefaultModel
+	}
+	if c.profile.TransformRequest != nil {
+		if err := c.profile.TransformRequest(&req); err != nil {
+			return nil, fmt.Errorf("ai: %s TransformRequest: %w", c.profile.Name, err)
+		}
+	}
+	req.Stream = true
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("ai: marshal request: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("ai: new request: %w", err)
+	}
+	c.auth(httpReq)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("ai: %s chat/completions (stream): %w", c.profile.Name, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		return nil, &HTTPStatusError{Provider: c.profile.Name, Code: resp.StatusCode, Body: string(raw)}
+	}
+
+	out := &ChatResponse{Model: req.Model}
+	var toolCalls []ToolCall
+	emit := func(ev StreamEvent) {
+		if on != nil {
+			on(ev)
+		}
+	}
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 1<<16), 8<<20) // 单行可到 8 MiB（大参数片段）
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			ID      string `json:"id"`
+			Model   string `json:"model"`
+			Choices []struct {
+				Delta struct {
+					Role      string `json:"role"`
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id"`
+						Type     string `json:"type"`
+						Function struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+			Usage Usage `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return nil, fmt.Errorf("ai: %s 解析 SSE 分片失败: %w (data: %s)", c.profile.Name, err, truncate(data, 200))
+		}
+		if chunk.ID != "" {
+			out.ID = chunk.ID
+		}
+		if chunk.Model != "" {
+			out.Model = chunk.Model
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		ch := chunk.Choices[0]
+		if ch.Delta.Content != "" {
+			out.Content += ch.Delta.Content
+			emit(StreamEvent{Type: StreamContent, Text: ch.Delta.Content})
+		}
+		for _, tc := range ch.Delta.ToolCalls {
+			for len(toolCalls) <= tc.Index {
+				toolCalls = append(toolCalls, ToolCall{})
+			}
+			cur := &toolCalls[tc.Index]
+			if tc.ID != "" {
+				cur.ID = tc.ID
+			}
+			if tc.Type != "" {
+				cur.Type = tc.Type
+			}
+			if tc.Function.Name != "" {
+				cur.Function.Name = tc.Function.Name
+			}
+			if tc.Function.Arguments != "" {
+				cur.Function.Arguments += tc.Function.Arguments
+			}
+			emit(StreamEvent{Type: StreamToolCall, ToolIndex: tc.Index, ToolID: cur.ID,
+				ToolName: cur.Function.Name, ToolArgs: tc.Function.Arguments})
+		}
+		if ch.FinishReason != "" {
+			out.FinishReason = ch.FinishReason
+		}
+		if chunk.Usage.TotalTokens > 0 { // 仅最后一片携带完整用量
+			out.Usage = chunk.Usage
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("ai: %s 读取 SSE 失败: %w", c.profile.Name, err)
+	}
+	out.ToolCalls = toolCalls
+	return out, nil
+}
+
+// ChatStream 是对外主入口（流式版）：多 key 轮换 + 回退 provider，契约同 Chat。
+//
+// 与 Chat 的差别：一旦某次尝试已向下发任何事件就**不再重试**（避免重复 delta），
+// 半路失败直接返回错误；未下发事件前仍按 Chat 的韧性逻辑换 key/换 provider。
+func ChatStream(ctx context.Context, providerName string, req ChatRequest,
+	on func(StreamEvent), opts ClientOptions) (*ChatResponse, error) {
+	attempts, err := buildAttempts(providerName, opts)
+	if err != nil {
+		return nil, err
+	}
+	if len(attempts) == 0 {
+		return nil, fmt.Errorf("ai: provider %q 无可用 API key（显式 key / Keys / EnvVars 均为空）", providerName)
+	}
+	anyAlive := false
+	for _, a := range attempts {
+		if kh.alive(a.provider, a.key) {
+			anyAlive = true
+			break
+		}
+	}
+	var lastErr error
+	for _, a := range attempts {
+		if !kh.alive(a.provider, a.key) && anyAlive {
+			continue
+		}
+		c, e := NewClient(a.profile, ClientOptions{BaseURL: a.baseURL, APIKey: a.key, Timeout: opts.Timeout})
+		if e != nil {
+			lastErr = e
+			continue
+		}
+		delivered := false
+		cb := func(ev StreamEvent) {
+			delivered = true
+			if on != nil {
+				on(ev)
+			}
+		}
+		resp, e := c.ChatStream(ctx, req, cb)
+		if e == nil {
+			kh.revive(a.provider, a.key)
+			return resp, nil
+		}
+		lastErr = e
+		if delivered {
+			return nil, fmt.Errorf("ai: %s 流式在已下发事件后失败: %w", a.provider, e)
+		}
+		if !isRetryable(e) {
+			return nil, fmt.Errorf("ai: %s 不可重试错误: %w", a.provider, e)
+		}
+		kh.mark(a.provider, a.key, cooldownFor(e))
+		if !sleepCtx(ctx, 300*time.Millisecond) {
+			return nil, fmt.Errorf("ai: 重试被 context 中断: %w", ctx.Err())
+		}
+	}
+	return nil, fmt.Errorf("ai: provider %q 全部 key/回退均失败: %w", providerName, lastErr)
 }
 
 // Chat 发一次 chat/completions 请求（非流式）。Stream=true 明确报错：

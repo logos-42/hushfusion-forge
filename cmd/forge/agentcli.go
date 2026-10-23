@@ -137,6 +137,7 @@ func cmdAgentChat(args []string) int {
 		"一次对话：构造会话 → 回合循环 → 打印最终回复（stdout 可管道；用量/警告走 stderr）。")
 	af := newAgentFlags(fs)
 	prompt := fs.String("prompt", "", "用户消息文本（必填）")
+	stream := fs.Bool("stream", false, "流式输出：逐增量打印（stdout 仍可管道）")
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
@@ -148,11 +149,11 @@ func cmdAgentChat(args []string) int {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-	return runAgentChat(ctx, o, *prompt, os.Stdout, os.Stderr)
+	return runAgentChat(ctx, o, *prompt, *stream, os.Stdout, os.Stderr)
 }
 
-// runAgentChat 是 chat 的可测内核（stdout 只放最终回复）。
-func runAgentChat(ctx context.Context, o agentOpts, prompt string, out, errW io.Writer) int {
+// runAgentChat 是 chat 的可测内核。stream=true 时逐增量打印（仍走 out，可管道）。
+func runAgentChat(ctx context.Context, o agentOpts, prompt string, stream bool, out, errW io.Writer) int {
 	if o.memoryDir != "" {
 		if err := os.MkdirAll(o.memoryDir, 0o700); err != nil {
 			return fail("agent: 创建记忆目录 %s: %v", o.memoryDir, err)
@@ -166,7 +167,20 @@ func runAgentChat(ctx context.Context, o agentOpts, prompt string, out, errW io.
 	o.usageW = errW
 	o.diagW = errW
 	s := newAgentSession("default", o)
-	reply, err := s.Turn(ctx, prompt)
+	var reply string
+	var err error
+	if stream {
+		// 流式：增量直接写到 out（仍可被管道）；最终再补一次整段便于下游消费。
+		onDelta := func(ev ai.StreamEvent) {
+			if ev.Type == ai.StreamContent {
+				fmt.Fprint(out, ev.Text)
+			}
+		}
+		reply, err = s.TurnStream(ctx, prompt, onDelta)
+		fmt.Fprintln(out) // 增量输出后补换行，保证 stdout 行尾干净
+	} else {
+		reply, err = s.Turn(ctx, prompt)
+	}
 	if err != nil {
 		return fail("agent: %v", err)
 	}
@@ -237,6 +251,11 @@ func newAgentSession(sessionID string, o agentOpts) *agent.Session {
 		return ai.Chat(ctx, o.provider, req, ai.ClientOptions{BaseURL: o.baseURL})
 	}
 	s := agent.NewSession(cfg, chat, agent.NewRegistry(), agentSystemPrompt())
+	// 流式端口：TurnStream 用；未注入则退化为一次性。
+	streamChat := func(ctx context.Context, req ai.ChatRequest, on func(ai.StreamEvent)) (*ai.ChatResponse, error) {
+		return ai.ChatStream(ctx, o.provider, req, on, ai.ClientOptions{BaseURL: o.baseURL})
+	}
+	s.SetStreamChat(streamChat)
 
 	// persona（可选，opt-in）：人格/协作文档注入，失败降级并明说。
 	if o.personaRoot != "" {
