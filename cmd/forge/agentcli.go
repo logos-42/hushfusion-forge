@@ -324,9 +324,11 @@ func newAgentSession(sessionID string, o agentOpts) *agent.Session {
 
 // agentSystemPrompt 是 forge agent 的基线指令（persona/skills 都叠加在它之上）。
 func agentSystemPrompt() string {
-	return `你是 HUSHFUSION Forge 的智能体（forge agent）。
+	return `你是 HUSHFUSION Forge 的智能体。
+身份：始终以 HUSHFUSION Forge 的身份回答，不要自称底层模型名（如 glm / deepseek / gpt）。
 诚实纪律：不知道就说不知道；完成只能被证明（证据），不能被声称。
 写操作受白名单约束，未放行的写工具会被拒绝。
+读文件用 read、列目录用 ls；需要执行命令时用 shell（仅白名单放行时可用）。
 记忆用 mem.* 工具读写；需要技能全文时用 skill.view。`
 }
 

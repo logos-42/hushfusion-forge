@@ -356,28 +356,19 @@ func TestUserEchoAboveForgeBox(t *testing.T) {
 }
 
 // 规划器返回空计划 [] 时，runAICmd 应补问一次普通 chat，把文字回复带回来。
-func TestRunAICmdChatFallback(t *testing.T) {
+// agent 运行时：一次模型调用直接得到最终回复（不再走 aios 规划器 + 兜底）。
+func TestRunAICmdAgentReply(t *testing.T) {
 	base := setupTempOS(t)
 	ai.RegisterBuiltins()
 
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		var body struct {
-			Messages []struct {
-				Content string `json:"content"`
-			} `json:"messages"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		content := "[]" // 规划器：空计划
-		if len(body.Messages) > 0 && strings.Contains(body.Messages[0].Content, "简洁自然语言") {
-			content = "你好！我是 forge。" // 对话兜底
-		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"model": "m",
 			"choices": []map[string]any{
-				{"message": map[string]any{"role": "assistant", "content": content}},
+				{"message": map[string]any{"role": "assistant", "content": "你好！我是 HUSHFUSION Forge。"}},
 			},
 		})
 	}))
@@ -391,13 +382,13 @@ func TestRunAICmdChatFallback(t *testing.T) {
 		t.Fatalf("消息类型 = %T", msg)
 	}
 	if res.err != nil {
-		t.Fatalf("空计划后应走 chat 兜底, err=%v", res.err)
+		t.Fatalf("agent 回合失败: %v", res.err)
 	}
-	if res.rep == nil || res.rep.Answer != "你好！我是 forge。" {
-		t.Fatalf("应带回自然语言回复, got %+v", res.rep)
+	if res.answer != "你好！我是 HUSHFUSION Forge。" {
+		t.Fatalf("应带回最终回复, got %q", res.answer)
 	}
-	if calls != 2 {
-		t.Fatalf("应调用 2 次（规划 + 对话兜底），got %d", calls)
+	if calls != 1 {
+		t.Fatalf("无工具调用时应只请求 1 次，got %d", calls)
 	}
 }
 
@@ -454,8 +445,9 @@ func TestAIResultShowsAnswer(t *testing.T) {
 	if !strings.Contains(joined, "你好！我是 forge。") {
 		t.Fatalf("AI 回复应出现在输出: %q", joined)
 	}
-	if !strings.Contains(joined, "forge · 回复") {
-		t.Fatalf("应有 forge · 回复 标题: %q", joined)
+	m.width = 120
+	if out := stripANSI(m.renderOutputBox(m.width, 10)); !strings.Contains(out, "forge · 回复") {
+		t.Fatalf("标题应在框上: %q", out)
 	}
 	if strings.Contains(joined, "AI 回合") {
 		t.Fatalf("纯对话不应再追加空 AI 回合: %q", joined)

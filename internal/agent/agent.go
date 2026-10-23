@@ -60,6 +60,8 @@ type Config struct {
 	Provider string
 	Model    string
 	BaseURL  string
+	// Root 是 read/ls/shell 工具的工作区根（空 = 当前目录；越界路径一律拒绝）。
+	Root string
 	// Tokenizer 是可注入的 token 计数器（nil = 默认 len/4 估算，见 tokenizer.go）。
 	// 注入精确实现后，预算判断与压缩触发都按真实 token 数走。
 	Tokenizer Tokenizer
@@ -73,6 +75,7 @@ func DefaultConfig() Config {
 		MaxToolResults:  12,
 		ModelTimeout:    120 * time.Second,
 		ModelRetries:    1,
+		Root:            ".",
 	}
 }
 
@@ -92,6 +95,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ModelRetries < 0 {
 		c.ModelRetries = 0
+	}
+	if strings.TrimSpace(c.Root) == "" {
+		c.Root = "."
 	}
 	return c
 }

@@ -19,13 +19,24 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/persona"
 )
+
+// ToolEvent 是一次工具调用的观测记录（TUI 在框外逐行展示；不含结果正文）。
+type ToolEvent struct {
+	Name     string
+	Args     map[string]any
+	Duration time.Duration
+	OK       bool
+	Err      string
+}
 
 // Stage 是会话生命周期状态（供 TUI / serve 展示；任何时刻只在一个状态）。
 type Stage int
@@ -96,6 +107,8 @@ type Session struct {
 	LastUsage ai.Usage
 	// OnUsage 可选回调：每次调用成功后收到真实用量（TUI/serve 实时显示）。
 	OnUsage func(ai.Usage)
+	// OnTool 可选回调：每次工具调用完成后收到一条观测记录（TUI 框外逐行展示）。
+	OnTool func(ToolEvent)
 
 	// ledger 是会话累计用量；lastEstimate 是上次调用前的估算（校准 tokenizer 偏差）。
 	ledger       ai.UsageLedger
@@ -112,6 +125,24 @@ type Session struct {
 
 // Usage 返回会话累计的真实用量（provider 未上报则为空账本）。
 func (s *Session) Usage() ai.UsageLedger { return s.ledger }
+
+// observeTool 把一次工具调用通知给 OnTool（TUI 在框外逐行展示）。
+func (s *Session) observeTool(call ai.ToolCall, dur time.Duration, err error) {
+	if s.OnTool == nil {
+		return
+	}
+	ev := ToolEvent{Name: call.Function.Name, Duration: dur, OK: err == nil}
+	if strings.TrimSpace(call.Function.Arguments) != "" {
+		_ = json.Unmarshal([]byte(call.Function.Arguments), &ev.Args)
+	}
+	if ev.Args == nil {
+		ev.Args = map[string]any{}
+	}
+	if err != nil {
+		ev.Err = err.Error()
+	}
+	s.OnTool(ev)
+}
 
 // recordUsage 记录一次调用的真实用量（唯一入口，避免多处漏记）。
 func (s *Session) recordUsage(u ai.Usage) {
@@ -441,7 +472,9 @@ func (s *Session) Turn(ctx context.Context, userMsg string) (string, error) {
 			toolCalls = toolCalls[:s.cfg.MaxToolResults]
 		}
 		for _, call := range toolCalls {
+			start := time.Now()
 			result, err := s.registry.Execute(ctx, call, s.AllowWrites)
+			s.observeTool(call, time.Since(start), err)
 			content := result
 			if err != nil {
 				content = "工具失败（回灌给模型自愈）: " + err.Error()
@@ -512,7 +545,9 @@ func (s *Session) TurnStream(ctx context.Context, userMsg string, onDelta func(a
 			toolCalls = toolCalls[:s.cfg.MaxToolResults]
 		}
 		for _, call := range toolCalls {
+			start := time.Now()
 			result, e := s.registry.Execute(ctx, call, s.AllowWrites)
+			s.observeTool(call, time.Since(start), e)
 			content := result
 			if e != nil {
 				content = "工具失败（回灌给模型自愈）: " + e.Error()

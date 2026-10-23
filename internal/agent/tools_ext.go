@@ -279,5 +279,8 @@ func (s *Session) RegisterBuiltinTools(skills *SkillsDir) error {
 	if err := registerTaskTools(s.registry, s); err != nil {
 		return err
 	}
+	if err := registerFSTools(s.registry, s); err != nil {
+		return err
+	}
 	return registerSkillView(s.registry, skills)
 }

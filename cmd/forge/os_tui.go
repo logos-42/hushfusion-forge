@@ -44,7 +44,6 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/agent"
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/aios"
-	"github.com/logos-42/hushfusion-forge/internal/oskernel"
 	"github.com/logos-42/hushfusion-forge/internal/osview"
 )
 
@@ -265,8 +264,10 @@ type wizModelsMsg struct {
 }
 
 type aiResultMsg struct {
-	rep *aios.Report
-	err error
+	rep    *aios.Report
+	answer string            // agent 运行时的最终文字回复
+	tools  []agent.ToolEvent // 本轮工具调用（框外逐行展示）
+	err    error
 }
 
 type thinkTickMsg struct{}
@@ -594,6 +595,12 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	m.reportErr = msg.err
 	if msg.rep != nil {
 		m.appendAnswer(msg.rep) // 没有动作时的自然语言回复
+	}
+	if strings.TrimSpace(msg.answer) != "" {
+		m.appendAnswerText(msg.answer) // agent 运行时的最终回复
+	}
+	if len(msg.tools) > 0 {
+		m.appendToolEvents(msg.tools) // 工具调用：框外逐行
 	}
 	if msg.err != nil {
 		m.out = append(m.out, m.styles.err.Render("✗ "+msg.err.Error()))
@@ -2095,31 +2102,28 @@ func (m *osModel) submitForm() (tea.Model, tea.Cmd) {
 func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem string) tea.Cmd {
 	return func() tea.Msg {
 		baseURL := os.Getenv("HUSHFUSION_AI_BASE_URL")
-		ag := aios.NewAgent(oskernel.New(base), provider, model, baseURL)
-		ag.ExtraSystem = extraSystem // 持久记忆块（--persist 时非空）
-		rep, err := ag.Run(ctx, goal, false)
-		// 规划器只产出 JSON 动作数组；「你好」这类对话会被模型正确回成 []，
-		// 于是终端只剩「AI 返回空计划」。没有动作时补问一次普通 chat，
-		// 把自然语言回复带回来（动作类目标仍走规划路径，不受影响）。
-		if rep != nil && len(rep.Plan) == 0 && len(rep.Results) == 0 && strings.TrimSpace(rep.Answer) == "" {
-			if resp, cerr := ai.Chat(ctx, provider, ai.ChatRequest{
-				Model: model,
-				Messages: []ai.Message{
-					{Role: "system", Content: "你是 HUSHFUSION OS 的助手。用简洁自然语言回答用户；不要输出 JSON、不要输出步骤数组。"},
-					{Role: "user", Content: goal},
-				},
-			}, ai.ClientOptions{BaseURL: baseURL}); cerr == nil {
-				if ans := strings.TrimSpace(resp.Content); ans != "" {
-					rep.Answer = ans
-					rep.Usage.Add(resp.Usage)
-					if resp.Model != "" {
-						rep.Model = resp.Model
-					}
-					err = nil // 对话已拿到回复，不再把「非 JSON」当失败弹给用户
-				}
-			}
+		cfg := agent.DefaultConfig()
+		cfg.Provider, cfg.Model, cfg.BaseURL = provider, model, baseURL
+		cfg.Root = repoRoot()
+		chat := func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+			return ai.Chat(ctx, provider, req, ai.ClientOptions{BaseURL: baseURL})
 		}
-		return aiResultMsg{rep: rep, err: err}
+		sys := agentSystemPrompt()
+		if strings.TrimSpace(extraSystem) != "" {
+			sys += "\n\n" + extraSystem
+		}
+		s := agent.NewSession(cfg, chat, agent.NewRegistry(), sys)
+		skills := agent.NewSkills(nil, agent.NewKeywordMatcher())
+		s.Skills = skills
+		_ = s.RegisterBuiltinTools(skills) // read / ls / shell / mem.* / tasks.* / skill.view / delegate
+		// shell 默认 fail-closed；只有显式 HUSHFUSION_ALLOW_SHELL=1 才放行。
+		if os.Getenv("HUSHFUSION_ALLOW_SHELL") == "1" {
+			s.AllowWrites["shell"] = true
+		}
+		var tools []agent.ToolEvent
+		s.OnTool = func(ev agent.ToolEvent) { tools = append(tools, ev) }
+		reply, err := s.Turn(ctx, goal)
+		return aiResultMsg{answer: reply, tools: tools, err: err}
 	}
 }
 
@@ -2139,7 +2143,15 @@ func (m *osModel) reload() {
 // appendToolCalls 把一次 AI 回合的计划/执行/备注作为“工具调用”落进展示框。
 // appendAnswer 渲染「没有可执行动作」时的自然语言回复（聊天式回显）。
 func (m *osModel) appendAnswer(rep *aios.Report) {
-	ans := strings.TrimSpace(rep.Answer)
+	if rep == nil {
+		return
+	}
+	m.appendAnswerText(rep.Answer)
+}
+
+// appendAnswerText 把最终文字回复放进 forge 框。
+func (m *osModel) appendAnswerText(ans string) {
+	ans = strings.TrimSpace(ans)
 	if ans == "" {
 		return
 	}
@@ -2148,6 +2160,63 @@ func (m *osModel) appendAnswer(rep *aios.Report) {
 		m.out = append(m.out, "  "+line)
 	}
 	m.trimOut()
+}
+
+// borderTitle 把标题嵌进圆角框的上边框（避免标题作为内容第一行再出现一次）。
+func borderTitle(box, title, color string) string {
+	lines := strings.Split(box, "\n")
+	if len(lines) == 0 {
+		return box
+	}
+	total := lipgloss.Width(lines[0])
+	if total < 6 {
+		return box
+	}
+	tw := lipgloss.Width(title)
+	if tw > total-6 {
+		title = ansi.Truncate(title, total-6, "…")
+		tw = lipgloss.Width(title)
+	}
+	n := total - tw - 5
+	if n < 1 {
+		n = 1
+	}
+	border := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+	top := border.Render("╭─ ") + title + border.Render(" "+strings.Repeat("─", n)+"╮")
+	if pad := total - lipgloss.Width(top); pad > 0 {
+		top += border.Render(strings.Repeat(" ", pad))
+	}
+	lines[0] = top
+	return strings.Join(lines, "\n")
+}
+
+// appendToolEvents 把 agent 运行时的工具调用逐行写进框外列表。
+func (m *osModel) appendToolEvents(evs []agent.ToolEvent) {
+	for _, ev := range evs {
+		m.toolCalls++
+		if ev.OK {
+			m.toolOK++
+		} else {
+			m.toolFail++
+		}
+		m.toolLog = append(m.toolLog, m.toolEventLine(ev))
+	}
+	if len(m.toolLog) > 200 {
+		m.toolLog = m.toolLog[len(m.toolLog)-200:]
+	}
+}
+
+// toolEventLine 把一条 agent 工具事件渲染成框外一行。
+func (m *osModel) toolEventLine(ev agent.ToolEvent) string {
+	icon, desc := toolIconDesc(ev.Name, ev.Args)
+	line := icon + " " + desc
+	if d := fmtToolDur(ev.Duration); d != "" {
+		line += "  " + m.styles.hint.Render(d)
+	}
+	if !ev.OK {
+		line += "  " + m.styles.err.Render("✗ "+firstNonEmptyStr(ev.Err, "失败"))
+	}
+	return line
 }
 
 func (m *osModel) appendToolCalls(rep *aios.Report) {
@@ -2638,14 +2707,15 @@ func (m *osModel) renderOutputBox(w, h int) string {
 			show = []string{""}
 		}
 	}
-	title := m.styles.accent.Render("forge") + m.styles.hint.Render(" · 输出 / 工具调用")
+	title := m.styles.accent.Render("forge") + m.styles.hint.Render(" · 回复")
 	if maxScroll > 0 {
 		title += m.styles.hint.Render(fmt.Sprintf("  (%d/%d)", len(lines)-m.outScroll, len(lines)))
 	}
 	if m.outScroll > 0 {
 		title += m.styles.err.Render(fmt.Sprintf("  ↓ %d 条新内容 · PgDn/End 回到底部", m.outScroll))
 	}
-	return m.styles.replyBox.Width(w-2).Render(title+"\n"+strings.Join(show, "\n")) + "\n"
+	body := m.styles.replyBox.Width(w - 2).Render(strings.Join(show, "\n"))
+	return borderTitle(body, title, "39") + "\n"
 }
 
 // pageSize 是展示框一页的行数（翻页步长）。
@@ -2700,8 +2770,8 @@ func (m *osModel) renderDashboard(w int) string {
 		inner = 30
 	}
 	title := m.styles.label.Render("▌ 仪表盘") + m.styles.hint.Render(" · skills / 参数")
-	body := title + "\n" + strings.TrimRight(m.renderPanels(inner), "\n")
-	return m.styles.dashBox.Width(w-2).Render(body) + "\n"
+	body := m.styles.dashBox.Width(w - 2).Render(strings.TrimRight(m.renderPanels(inner), "\n"))
+	return borderTitle(body, title, "39") + "\n"
 }
 
 func (m *osModel) renderPanels(w int) string {
