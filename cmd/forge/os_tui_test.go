@@ -696,6 +696,7 @@ func TestProjectToolsRegistered(t *testing.T) {
 		"plugin.spec", "plugin.list", "plugin.load", "plugin.call", "plugin.unload", "plugin.loaded",
 		"mcp.servers", "mcp.tools", "mcp.call",
 		"lsp.status", "lsp.definition", "lsp.hover", "lsp.references", "lsp.caps",
+		"wallet.create", "wallet.info", "wallet.balance", "x402.requirements", "x402.fetch",
 		"acp.status", "acp.prompt", "diap.identity", "diap.issue", "diap.authorize",
 	} {
 		if !have[want] {

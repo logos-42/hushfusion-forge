@@ -54,6 +54,8 @@ var Stages = []Stage{
 			"internal/lsp/",      // 2026-10-21 新增：LSP server 客户端 + manager + init 门 + 权限门（学 Hermes/Crush，归 parent）
 			"internal/agent/",    // 2026-10-23 新增：Agent Runtime（单一 queryLoop + 会话记忆 + skills + 目标/计划/待办 + serve + 上下文压缩，见 docs/wiki/agent-runtime-design.md，归 parent）
 			"internal/identity/", // 2026-10-23 新增：DID 身份（did:key/ed25519）+ 能力令牌，零依赖（归 parent）
+			"internal/wallet/",   // 2026-10-23 新增：EVM 钱包（secp256k1 + did:pkh + EIP-712 签名），归 parent
+			"internal/x402/",     // 2026-10-23 新增：x402 客户端（402 解析 + EIP-3009 TransferWithAuthorization），归 parent
 			"internal/sandbox/",  // 2026-10-23 新增：exec 围栏（目录 jail + env 白名单 + 进程组 kill + 超时，归 parent）
 			"internal/proc/",     // 2026-10-23 新增：进程管理（登记表 + 取消传播 + 进程组停止 + 回收 + 并发上限，归 parent）
 			"internal/persona/",  // 2026-10-23 新增：persona/agent 文档发现 + bootstrap 注入（归 parent）

@@ -237,17 +237,21 @@ func registerProtocolTools(s *agent.Session, base string) {
 			if err != nil {
 				return "", err
 			}
-			return jsonText(map[string]any{
+			out := map[string]any{
 				"did":        id.DID(),
 				"public_key": base64.RawStdEncoding.EncodeToString(id.PublicKey()),
-			})
+			}
+			if wd := currentWalletDID(base); wd != "" {
+				out["wallet_did"] = wd // did:pkh，可作为 DIAP subject
+			}
+			return jsonText(out)
 		},
 	})
 
 	register(agent.Tool{
 		Spec: projectTool("diap.issue", "签发 DIAP 能力令牌（subject + caps + ttl）",
 			map[string]any{
-				"subject":     map[string]any{"type": "string", "description": "被授权者 DID"},
+				"subject":     map[string]any{"type": "string", "description": "被授权者 DID（可用 wallet.info 的 did:pkh）"},
 				"caps":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "能力名，如 kernel.write"},
 				"ttl_seconds": map[string]any{"type": "integer", "description": "有效期秒数，缺省 3600；0=不过期"},
 			}, []string{"subject", "caps"}),
