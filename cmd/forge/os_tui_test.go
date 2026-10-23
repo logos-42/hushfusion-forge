@@ -829,6 +829,31 @@ func TestSlashGoalAndLoop(t *testing.T) {
 	if _, _ = m.runSlash("loop stop"); m.loopActive {
 		t.Fatal("loop stop 未停止")
 	}
+	m.busy, m.aiCancel = false, nil // 测试里不执行 startThinking 返回的 cmd
+	// 轮数上限 150；间隔支持 m/h。
+	if _, _ = m.runSlash("loop 150 5m"); !m.loopActive || m.loopMax != 150 || m.loopInterval != 5*time.Minute {
+		t.Fatalf("loop 150 5m: active=%v max=%d interval=%s", m.loopActive, m.loopMax, m.loopInterval)
+	}
+	if _, _ = m.runSlash("loop stop"); m.loopActive {
+		t.Fatal("loop stop 未停止")
+	}
+	m.busy, m.aiCancel = false, nil
+	if _, _ = m.runSlash("loop 151"); m.loopActive {
+		t.Fatal("超过 150 轮不应启动")
+	}
+	if _, _ = m.runSlash("loop 2h"); !m.loopActive || m.loopMax != 10 || m.loopInterval != 2*time.Hour {
+		t.Fatalf("loop 2h: active=%v max=%d interval=%s", m.loopActive, m.loopMax, m.loopInterval)
+	}
+	if _, _ = m.runSlash("loop stop"); m.loopActive {
+		t.Fatal("loop stop 未停止")
+	}
+	m.busy, m.aiCancel = false, nil
+	if _, err := parseLoopInterval("5m"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseLoopInterval("5"); err == nil {
+		t.Fatal("无单位间隔应报错")
+	}
 	if _, _ = m.runSlash("goal clear"); m.goal != "" {
 		t.Fatal("goal clear 未清除")
 	}
@@ -837,6 +862,30 @@ func TestSlashGoalAndLoop(t *testing.T) {
 	}
 	if isGoalDone("还没完成") {
 		t.Fatal("普通回复不应算完成")
+	}
+}
+
+// 定时器到点：不在忙时推进下一轮；忙时只重排定时器，不并发启动。
+func TestLoopTick(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.goal = "测试目标"
+	m.loopActive = true
+	m.loopMax, m.loopIter = 10, 1
+	m.loopInterval = 5 * time.Minute
+	m.loopWaiting = true
+	m.busy = false
+
+	model, cmd := m.Update(loopTickMsg{})
+	mm := model.(*osModel)
+	if cmd == nil || mm.loopWaiting || !mm.busy {
+		t.Fatalf("tick 后应开始下一轮: waiting=%v busy=%v cmd=%v", mm.loopWaiting, mm.busy, cmd != nil)
+	}
+
+	// 忙时 tick 不启动新一轮，只返回下一次定时器。
+	mm.busy = true
+	if _, cmd := mm.Update(loopTickMsg{}); cmd == nil {
+		t.Fatal("忙时 tick 应重排定时器")
 	}
 }
 

@@ -158,10 +158,12 @@ type osModel struct {
 	// 可用 /budget N 或 os/forge.config.json 的 budget_tokens 覆盖。
 	budgetTokens int
 	// goal 是 /goal 设置的长期目标；loop* 是 /loop 自主推进状态。
-	goal       string
-	loopActive bool
-	loopMax    int
-	loopIter   int
+	goal         string
+	loopActive   bool
+	loopMax      int
+	loopIter     int
+	loopInterval time.Duration
+	loopWaiting  bool
 	// frozenContext 是会话首次 AI 调用前构建一次的冻结快照：
 	// user/agent/soul 文件 + skills + 沉淀经验 + 长期记忆 + 记忆 + 工作流。
 	// 之后每轮原样注入 system，不随文件变化重建（“每轮不能忘”）。
@@ -303,6 +305,13 @@ type compressResultMsg struct {
 	err     error
 }
 
+// loopTickMsg 是 /loop 的定时器：间隔到点后推进下一轮。
+type loopTickMsg struct{}
+
+func loopTick(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return loopTickMsg{} })
+}
+
 // toolEventMsg 是一条实时工具调用事件（agent 执行完一个工具就投递一条）。
 type toolEventMsg struct {
 	ev agent.ToolEvent
@@ -401,7 +410,7 @@ var slashCommands = []slashCmd{
 	{"compress", "摘要压缩较早历史", ""},
 	{"budget", "查看/设置上下文预算", "[tokens]"},
 	{"goal", "设置/查看长期目标", "[目标|clear]"},
-	{"loop", "按目标自主循环", "[N|stop|status]"},
+	{"loop", "按目标自主循环", "[N] [30s|5m|2h] | stop | status"},
 	{"sessions", "列出历史会话", ""},
 	{"interrupt", "中断当前 AI", ""},
 	{"queue", "查看队列", ""},
@@ -847,6 +856,8 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onAIResult(msg)
 	case compressResultMsg:
 		return m.onCompressResult(msg)
+	case loopTickMsg:
+		return m.onLoopTick()
 	case wizModelsMsg:
 		return m.onWizModels(msg)
 	case tea.PasteMsg:
@@ -960,6 +971,7 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	if m.loopActive {
 		if msg.err != nil {
 			m.loopActive = false
+			m.loopWaiting = false
 			m.status = m.styles.err.Render("循环因错误停止: " + msg.err.Error())
 		} else {
 			m.loopIter++
@@ -970,10 +982,17 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 			done := isGoalDone(ans)
 			if done {
 				m.loopActive = false
+				m.loopWaiting = false
 				m.status = m.styles.ok.Render(fmt.Sprintf("✅ 目标完成（%d 轮）", m.loopIter))
 			} else if m.loopIter >= m.loopMax {
 				m.loopActive = false
+				m.loopWaiting = false
 				m.status = m.styles.err.Render(fmt.Sprintf("⏹ 达到循环上限 %d 轮，目标未标记完成", m.loopMax))
+			} else if m.loopInterval > 0 {
+				m.loopWaiting = true
+				m.status = m.styles.hint.Render(fmt.Sprintf(
+					"⏳ 循环 %d/%d，%s 后开始下一轮", m.loopIter, m.loopMax, m.loopInterval))
+				return m, loopTick(m.loopInterval)
 			} else {
 				m.status = m.styles.hint.Render(fmt.Sprintf("▶ 循环 %d/%d", m.loopIter, m.loopMax))
 				_, cmd := m.startThinking(m.loopPrompt(), "", "")
@@ -1018,9 +1037,12 @@ func (m *osModel) onCompressResult(msg compressResultMsg) (tea.Model, tea.Cmd) {
 func (m *osModel) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Ctrl+C 全局语义：忙→中断；空闲→两次退出（第二次落盘并退出）。
 	if msg.String() == "ctrl+c" {
+		if m.loopActive {
+			m.loopActive = false // 中断同时停止自主循环（含等待定时器）
+			m.loopWaiting = false
+		}
 		if m.busy && m.aiCancel != nil {
-			m.loopActive = false // 中断同时停止自主循环
-			m.aiCancel()         // 一次：中断当前 AI（ctx 取消）
+			m.aiCancel() // 一次：中断当前 AI（ctx 取消）
 		}
 		if m.ctrlCArm && time.Since(m.lastCtrlC) < 2*time.Second {
 			return m.doQuit() // 两次：整理会话并退出
@@ -1291,6 +1313,12 @@ func (m *osModel) submitCommand(text string) (tea.Model, tea.Cmd) {
 	if strings.HasPrefix(text, "/") {
 		return m.runSlash(strings.TrimPrefix(text, "/"))
 	}
+	// 等待下一轮时用户插话：以用户输入为准，停止自主循环，避免两条线并发。
+	if m.loopActive && m.loopWaiting {
+		m.loopActive = false
+		m.loopWaiting = false
+		m.status = m.styles.hint.Render("检测到手动输入，自主循环已停止")
+	}
 	m.goalCount++
 	m.appendUserEcho(text)
 	return m.startThinking(text, "", "")
@@ -1368,6 +1396,7 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 				m.sess.SetGoal("")
 			}
 			m.loopActive = false
+			m.loopWaiting = false
 			m.status = m.styles.ok.Render("长期目标已清除")
 			break
 		}
@@ -1384,12 +1413,19 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		switch arg {
 		case "stop", "off":
 			m.loopActive = false
+			m.loopWaiting = false
 			m.status = m.styles.ok.Render("自主循环已停止")
 		case "status":
 			if m.loopActive {
-				m.status = m.styles.hint.Render(fmt.Sprintf("循环中 %d/%d", m.loopIter, m.loopMax))
+				where := fmt.Sprintf("循环中 %d/%d", m.loopIter, m.loopMax)
+				if m.loopWaiting {
+					where = fmt.Sprintf("等待下一轮 %d/%d（间隔 %s）", m.loopIter+1, m.loopMax, m.loopInterval)
+				} else if m.loopInterval > 0 {
+					where += fmt.Sprintf("（间隔 %s）", m.loopInterval)
+				}
+				m.status = m.styles.hint.Render(where)
 			} else {
-				m.status = m.styles.hint.Render("循环未运行（/loop 启动，/loop stop 停止）")
+				m.status = m.styles.hint.Render("循环未运行（/loop [N] [5m|2h] 启动，/loop stop 停止）")
 			}
 		default:
 			if strings.TrimSpace(m.goal) == "" {
@@ -1400,21 +1436,33 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 				m.status = m.styles.err.Render("当前正忙；先 /interrupt 或等本轮结束")
 				break
 			}
-			maxIter := m.loopMax
-			if maxIter <= 0 {
-				maxIter = 10
-			}
-			if arg != "" {
-				n, err := strconv.Atoi(arg)
-				if err != nil || n < 1 || n > 100 {
-					m.status = m.styles.err.Render("/loop 轮数需在 1–100")
-					break
+			maxIter := 10
+			var interval time.Duration
+			for _, a := range fields[1:] {
+				if n, err := strconv.Atoi(a); err == nil {
+					maxIter = n
+					continue
 				}
-				maxIter = n
+				d, err := parseLoopInterval(a)
+				if err != nil {
+					m.status = m.styles.err.Render(err.Error())
+					return m, nil
+				}
+				interval = d
+			}
+			if maxIter < 1 || maxIter > 150 {
+				m.status = m.styles.err.Render("/loop 轮数需在 1–150")
+				break
 			}
 			m.loopMax, m.loopIter = maxIter, 0
+			m.loopInterval = interval
+			m.loopWaiting = false
 			m.loopActive = true
-			m.status = m.styles.hint.Render(fmt.Sprintf("▶ 自主循环启动（最多 %d 轮）", maxIter))
+			suffix := ""
+			if interval > 0 {
+				suffix = fmt.Sprintf("，间隔 %s", interval)
+			}
+			m.status = m.styles.hint.Render(fmt.Sprintf("▶ 自主循环启动（最多 %d 轮%s）", maxIter, suffix))
 			return m.startThinking(m.loopPrompt(), "", "")
 		}
 	case "clear":
@@ -1431,6 +1479,7 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.frozenContext = "" // 新会话重新构建快照
 		m.sess = nil         // 丢弃旧会话历史
 		m.loopActive = false
+		m.loopWaiting = false
 		m.status = m.styles.ok.Render("新会话 " + m.sessionID)
 	case "save":
 		m.persistSession()
@@ -1443,6 +1492,7 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 	case "interrupt":
 		if m.busy && m.aiCancel != nil {
 			m.loopActive = false
+			m.loopWaiting = false
 			m.aiCancel()
 			m.status = m.styles.err.Render("⏹ 已中断")
 		} else {
@@ -2480,6 +2530,35 @@ func (m *osModel) startThinking(goal, provider, model string) (tea.Model, tea.Cm
 // isGoalDone 识别模型是否在最终回复里声明目标完成。
 func isGoalDone(answer string) bool {
 	return strings.Contains(strings.ToUpper(answer), "GOAL_DONE")
+}
+
+// parseLoopInterval 解析 /loop 的间隔：30s、5m、2h（10s–24h）。
+func parseLoopInterval(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(strings.TrimSpace(s))
+	if err != nil {
+		return 0, fmt.Errorf("间隔格式：30s / 5m / 2h")
+	}
+	if d < 10*time.Second || d > 24*time.Hour {
+		return 0, fmt.Errorf("间隔需在 10s–24h")
+	}
+	return d, nil
+}
+
+// onLoopTick 定时器到点：没在忙就推进下一轮；忙则稍后再看，避免并发。
+func (m *osModel) onLoopTick() (tea.Model, tea.Cmd) {
+	if !m.loopActive {
+		m.loopWaiting = false
+		return m, nil
+	}
+	if m.busy {
+		d := m.loopInterval
+		if d <= 0 {
+			d = time.Second
+		}
+		return m, loopTick(d)
+	}
+	m.loopWaiting = false
+	return m.startThinking(m.loopPrompt(), "", "")
 }
 
 // loopPrompt 是自主循环每轮发给模型的推进指令（长期目标由 Session.Goal 注入）。
