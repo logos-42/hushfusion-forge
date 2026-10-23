@@ -25,6 +25,10 @@ os/evidence/
 # 不是决策证据(证据在 os/ 与 docs/wiki/), 不进 git
 os/sessions/
 
+# workspace 模型配置（含 API key，0600）：只在本机使用，绝不入库
+os/forge.config.json
+/forge.config.json
+
 # raw 原件(与仓库平级的本地 raw 根,外加编辑器状态): 只进 manifest,不进 git
 .obsidian/
 raw/

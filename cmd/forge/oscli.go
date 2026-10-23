@@ -369,6 +369,8 @@ func cmdOSAI(args []string) int {
 		return fail("os ai: --goal 或 -z/--oneshot 必填")
 	}
 	start := time.Now()
+	// workspace config → 环境变量（provider/model/base_url/key），CLI 与 TUI 一致。
+	applyWorkspaceConfig(osBaseDir())
 	agent := aios.NewAgent(oskernel.New(osBaseDir()), *provider, *model, *baseURL)
 	agent.Loop.MaxCalls = *max
 	rep, runErr := agent.Run(context.Background(), prompt, *dryRun)

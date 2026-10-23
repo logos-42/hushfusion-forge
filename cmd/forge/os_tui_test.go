@@ -33,6 +33,8 @@ func setupTempOS(t *testing.T) string {
 	if out, err := exec.Command("cp", "-r", src+"/.", dir).CombinedOutput(); err != nil {
 		t.Fatalf("复制 os/ 失败: %v (%s)", err, out)
 	}
+	// 真实工作区可能有本机 config（含 key），测试用副本必须剔除，避免污染环境变量。
+	_ = os.Remove(filepath.Join(dir, "forge.config.json"))
 	t.Setenv("HUSHFUSION_OS_DIR", dir)
 	return dir
 }
@@ -267,18 +269,33 @@ func TestTUIInputHistory(t *testing.T) {
 func TestUserEchoFormat(t *testing.T) {
 	base := setupTempOS(t)
 	m := newOSModel(base, mustLoad(t, base))
-	m.width = 40
+	m.width, m.height = 40, 40
 	m.appendUserEcho("hi")
-	n := len(m.out)
-	if n < 3 {
-		t.Fatalf("回显应追加三行, got %d", n)
+	if len(m.lastEcho) != 3 {
+		t.Fatalf("回显应为三行, got %d", len(m.lastEcho))
 	}
-	ln := m.out[n-3:]
-	if !strings.Contains(stripANSI(ln[1]), "❯ hi") {
-		t.Fatalf("中间应是 ❯ hi: %q", ln[1])
+	if !strings.Contains(stripANSI(m.lastEcho[1]), "❯ hi") {
+		t.Fatalf("中间应是 ❯ hi: %q", m.lastEcho[1])
 	}
-	if ln[0] == "" || ln[0] != ln[2] || !strings.Contains(ln[0], "─") {
-		t.Fatalf("上下分隔线应一致且为横线: %q / %q", ln[0], ln[2])
+	if m.lastEcho[0] == "" || m.lastEcho[0] != m.lastEcho[2] || !strings.Contains(m.lastEcho[0], "─") {
+		t.Fatalf("上下分隔线应一致且为横线: %q / %q", m.lastEcho[0], m.lastEcho[2])
+	}
+	if len(m.sentLog) != 3 {
+		t.Fatalf("会话落盘应记录发送内容, got %d 行", len(m.sentLog))
+	}
+}
+
+// 发送内容必须在 forge 框下方（不在框内）。
+func TestUserEchoBelowForgeBox(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.width, m.height = 120, 40
+	m.appendUserEcho("hi")
+	c := stripANSI(m.renderConsole(m.width))
+	boxBottom := strings.LastIndex(c, "╰")
+	echoIdx := strings.Index(c, "❯ hi")
+	if boxBottom < 0 || echoIdx < 0 || echoIdx < boxBottom {
+		t.Fatalf("发送内容应在 forge 框下方: boxBottom=%d echo=%d", boxBottom, echoIdx)
 	}
 }
 
@@ -328,6 +345,49 @@ func TestRunAICmdChatFallback(t *testing.T) {
 	}
 }
 
+func TestWorkspaceConfigRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	want := workspaceConfig{Provider: "custom", Model: "glm-5.3-flash", BaseURL: "https://x/v1", APIKey: "sk-test"}
+	if err := saveWorkspaceConfig(base, want); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadWorkspaceConfig(base); got != want {
+		t.Fatalf("config 往返不一致: %+v", got)
+	}
+	info, err := os.Stat(workspaceConfigPath(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("config 权限应为 0600, got %o", perm)
+	}
+}
+
+func TestApplyWorkspaceConfigInjectsEnv(t *testing.T) {
+	base := t.TempDir()
+	_ = saveWorkspaceConfig(base, workspaceConfig{
+		Provider: "custom", Model: "glm-5.3-flash",
+		BaseURL: "https://x/v1", APIKey: "sk-test",
+	})
+	t.Setenv("HUSHFUSION_AI_PROVIDER", "")
+	t.Setenv("HUSHFUSION_AI_MODEL", "")
+	t.Setenv("HUSHFUSION_AI_BASE_URL", "")
+	t.Setenv("AI_CUSTOM_API_KEY", "")
+	applyWorkspaceConfig(base)
+	if got := os.Getenv("HUSHFUSION_AI_PROVIDER"); got != "custom" {
+		t.Fatalf("provider 未注入: %q", got)
+	}
+	if got := os.Getenv("HUSHFUSION_AI_MODEL"); got != "glm-5.3-flash" {
+		t.Fatalf("model 未注入: %q", got)
+	}
+	if got := os.Getenv("HUSHFUSION_AI_BASE_URL"); got != "https://x/v1" {
+		t.Fatalf("base url 未注入: %q", got)
+	}
+	if got := os.Getenv("AI_CUSTOM_API_KEY"); got != "sk-test" {
+		t.Fatalf("key 未注入: %q", got)
+	}
+}
+
 // 纯对话结果（Answer，无动作）应显示在终端，且不再追加空「AI 回合」。
 func TestAIResultShowsAnswer(t *testing.T) {
 	base := setupTempOS(t)
@@ -352,8 +412,7 @@ func TestUserEchoNoGarbledRule(t *testing.T) {
 	m := newOSModel(base, mustLoad(t, base))
 	m.width, m.height = 120, 40
 	m.appendUserEcho("hi")
-	n := len(m.out)
-	for _, s := range m.out[n-3:] {
+	for _, s := range m.lastEcho {
 		if strings.ContainsRune(s, '\uFFFD') {
 			t.Fatalf("回显不应含非法 UTF-8: %q", s)
 		}
@@ -361,7 +420,7 @@ func TestUserEchoNoGarbledRule(t *testing.T) {
 			t.Fatalf("回显横线不应被裁剪: %q", s)
 		}
 	}
-	if view := m.renderOutputBox(m.width, 20); strings.ContainsRune(view, '\uFFFD') {
+	if view := m.renderConsole(m.width); strings.ContainsRune(view, '\uFFFD') {
 		t.Fatalf("渲染后不应出现 �: %q", view)
 	}
 }

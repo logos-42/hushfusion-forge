@@ -121,6 +121,10 @@ type osModel struct {
 	out       []string
 	outScroll int
 
+	// 用户发送内容：lastEcho 渲染在 forge 框下方；sentLog 用于会话落盘。
+	lastEcho []string
+	sentLog  []string
+
 	// 上下文加载进度条
 	loading bool
 	progPct float64
@@ -395,6 +399,8 @@ func (m *osModel) runSlashByName(name string) (tea.Model, tea.Cmd) {
 }
 
 func newOSModel(base string, snap *osview.Snapshot) *osModel {
+	// 先加载 workspace config 并注入环境变量，后面的 envOr 才能读到。
+	applyWorkspaceConfig(base)
 	m := &osModel{
 		base:      base,
 		snap:      snap,
@@ -882,19 +888,10 @@ func (m *osModel) appendUserEcho(text string) {
 	if w < 40 {
 		w = 80
 	}
-	// 回显在 forge 框内：横线取框内宽 = 总宽 - 2(框宽) - 2(边框) - 2(内边距)，
-	// 与 renderOutputBox 的 w-6 一致，避免超宽被裁出「…」。
-	ruleW := w - 6
-	if ruleW < 10 {
-		ruleW = 10
-	}
-	rule := strings.Repeat("─", ruleW)
-	m.out = append(m.out,
-		rule,
-		m.styles.label.Render("❯ ")+text,
-		rule,
-	)
-	m.trimOut()
+	// 发送内容独立渲染在 forge 框下方（不在框内），横线用整宽。
+	rule := strings.Repeat("─", max(0, w-2))
+	m.lastEcho = []string{rule, m.styles.label.Render("❯ ") + text, rule}
+	m.sentLog = append(m.sentLog, m.lastEcho...)
 }
 
 // submitCommand：忙则入队；否则立即跑（/ 命令 或 AI 目标）。
@@ -1546,6 +1543,7 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 
 	m.provider, m.model = prof.Name, model
 	keyNote := ""
+	keyForConfig := ""
 	switch w.keyAction {
 	case "replace":
 		k := strings.TrimSpace(w.key.Value())
@@ -1556,18 +1554,25 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 			w.key.Focus()
 			return m, nil
 		}
+		keyForConfig = k
 		if len(prof.EnvVars) > 0 {
 			_ = os.Setenv(prof.EnvVars[0], k)
-			keyNote = fmt.Sprintf("  key 已替换并写入本进程环境（%s），不落盘、不进日志", prof.EnvVars[0])
+			keyNote = fmt.Sprintf("  key 已替换：写入本进程环境 + workspace config（%s，0600）", prof.EnvVars[0])
 		}
 	case "clear":
 		for _, e := range prof.EnvVars {
 			_ = os.Unsetenv(e)
 		}
-		keyNote = fmt.Sprintf("  key 已清除（%s）；如仍需调用请重新配置", strings.Join(prof.EnvVars, "/"))
-	default: // keep
+		keyForConfig = ""
+		keyNote = fmt.Sprintf("  key 已清除（env + workspace config，%s）", strings.Join(prof.EnvVars, "/"))
+	default: // keep：把当前生效 key 同步进 config，下次启动直接可用
+		if c := loadWorkspaceConfig(m.base); c.APIKey != "" {
+			keyForConfig = c.APIKey
+		} else {
+			keyForConfig = ai.ResolveAPIKey(prof)
+		}
 		if modelKeySet(prof) {
-			keyNote = "  key 沿用现有环境变量（keep）"
+			keyNote = "  key 沿用现有环境变量（keep，已同步到 workspace config）"
 		}
 	}
 	// Base URL 总是显式设定（空则清掉），避免沿用上一个 provider 的残留覆盖。
@@ -1576,6 +1581,13 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 	} else {
 		_ = os.Unsetenv("HUSHFUSION_AI_BASE_URL")
 	}
+	// 持久化到 workspace config（含 key，0600、已 gitignore）；下次启动自动注入 env。
+	cfgErr := saveWorkspaceConfig(m.base, workspaceConfig{
+		Provider: prof.Name,
+		Model:    model,
+		BaseURL:  url,
+		APIKey:   keyForConfig,
+	})
 	recordRecentModel(m.base, prof.Name, model) // 最近使用落盘（best-effort）
 
 	m.out = append(m.out, m.styles.ok.Render(fmt.Sprintf("✓ 模型 → %s / %s", m.provider, m.model)))
@@ -1584,6 +1596,11 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 	}
 	if keyNote != "" {
 		m.out = append(m.out, m.styles.hint.Render(keyNote))
+	}
+	if cfgErr != nil {
+		m.out = append(m.out, m.styles.err.Render("  ⚠ workspace config 写入失败: "+cfgErr.Error()))
+	} else {
+		m.out = append(m.out, m.styles.hint.Render("  config: "+workspaceConfigPath(m.base)+"（0600，gitignore）"))
 	}
 	if !modelKeySet(prof) {
 		m.out = append(m.out, m.styles.err.Render(fmt.Sprintf("⚠ 该 provider 仍未配 key（env: %s）",
@@ -2241,6 +2258,9 @@ func (m *osModel) persistSession() {
 	b.WriteString(fmt.Sprintf("- AI 目标数: %d\n", m.goalCount))
 	b.WriteString(fmt.Sprintf("- 工具调用: %d（✓ %d / ✗ %d）\n", m.toolCalls, m.toolOK, m.toolFail))
 	b.WriteString(fmt.Sprintf("- 退出时未处理队列: %d\n", len(m.queue)))
+	if len(m.sentLog) > 0 {
+		b.WriteString("\n## 用户消息\n\n```\n" + strings.Join(m.sentLog, "\n") + "\n```\n")
+	}
 	b.WriteString("\n## 输出日志\n\n```\n" + strings.Join(m.out, "\n") + "\n```\n")
 	_ = os.WriteFile(filepath.Join(dir, m.sessionID+".md"), []byte(b.String()), 0o644)
 	// 机器可读侧车：供 --resume 恢复（输出日志 + 计数）。
@@ -2255,6 +2275,7 @@ func (m *osModel) persistSession() {
 		ToolOK:    m.toolOK,
 		ToolFail:  m.toolFail,
 		Out:       m.out,
+		Sent:      m.sentLog,
 		Usage:     m.ledger,
 	}
 	if jb, err := json.MarshalIndent(data, "", "  "); err == nil {
@@ -2274,6 +2295,7 @@ type sessionData struct {
 	ToolOK    int      `json:"tool_ok"`
 	ToolFail  int      `json:"tool_fail"`
 	Out       []string `json:"out"`
+	Sent      []string `json:"sent,omitempty"`
 	// Usage 是会话累计的真实 token 用量（provider 上报才有；--resume 后继续累计）。
 	Usage ai.UsageLedger `json:"usage,omitempty"`
 }
@@ -2420,11 +2442,17 @@ func (m *osModel) renderConsole(w int) string {
 	if m.busy {
 		chrome++ // 内联「AI 思考中」行占一行
 	}
+	if len(m.lastEcho) > 0 {
+		chrome += len(m.lastEcho) // 发送内容块在 forge 框下方
+	}
 	outH := m.height - chrome - popupH
 	if outH < 4 {
 		outH = 4
 	}
 	b.WriteString(m.renderOutputBox(w, outH))
+	if len(m.lastEcho) > 0 {
+		b.WriteString(strings.Join(m.lastEcho, "\n") + "\n")
+	}
 	if m.loading {
 		b.WriteString(m.renderProgress(w))
 	}
@@ -2916,6 +2944,12 @@ func cmdOSTUI(args []string) int {
 			m.ledger = d.Usage // 用量随会话恢复（成本/命中率继续累计）
 			m.out = append(m.out, m.styles.label.Render("── 恢复会话 "+m.sessionID+" ──"))
 			m.out = append(m.out, d.Out...)
+			if len(d.Sent) > 0 {
+				m.sentLog = append(m.sentLog, d.Sent...)
+				if len(d.Sent) >= 3 {
+					m.lastEcho = append([]string(nil), d.Sent[len(d.Sent)-3:]...)
+				}
+			}
 			m.startTime = time.Now() // 计时自恢复时刻起
 		} else {
 			fmt.Fprintln(os.Stderr, "os tui: 恢复会话失败（将开新会话）:", lerr)
