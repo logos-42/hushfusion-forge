@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/oskernel"
@@ -116,9 +117,13 @@ type PlanStep struct {
 // ExecResult 是一次系统调用的执行结果。
 type ExecResult struct {
 	Syscall string
-	OK      bool
-	Message string
-	Err     string
+	// Args 保留本次调用的参数，供 TUI 在框外逐行展示（命令/文件/skill 等）。
+	Args map[string]any
+	// Duration 是内核执行耗时（dry-run / 未执行时为 0）。
+	Duration time.Duration
+	OK       bool
+	Message  string
+	Err      string
 }
 
 // Report 是一次 AI 粘合运行的完整记录（可核对）。
@@ -243,7 +248,7 @@ func (a *Agent) applySteps(rs *runState, steps []rawStep, dryRun bool) (rejectio
 		if !ps.Allowed {
 			rejections = append(rejections, fmt.Sprintf("- %s 被拒：%s（参数：%v）", s.Syscall, ps.Reason, s.Args))
 			if rs.seen[key] == 1 {
-				rs.rep.Results = append(rs.rep.Results, ExecResult{Syscall: s.Syscall, OK: false, Err: "拒绝执行: " + ps.Reason})
+				rs.rep.Results = append(rs.rep.Results, ExecResult{Syscall: s.Syscall, Args: s.Args, OK: false, Err: "拒绝执行: " + ps.Reason})
 			}
 			continue
 		}
@@ -251,16 +256,18 @@ func (a *Agent) applySteps(rs *runState, steps []rawStep, dryRun bool) (rejectio
 			continue // 已执行过，跳过去重
 		}
 		if !dryRun {
+			start := time.Now()
 			res, e := a.Kernel.Syscall(s.Syscall, s.Args)
+			dur := time.Since(start)
 			if e != nil {
 				rejections = append(rejections, fmt.Sprintf("- %s 执行失败：%s（参数：%v）", s.Syscall, e.Error(), s.Args))
 				if rs.seen[key] == 1 {
-					rs.rep.Results = append(rs.rep.Results, ExecResult{Syscall: s.Syscall, OK: false, Err: e.Error()})
+					rs.rep.Results = append(rs.rep.Results, ExecResult{Syscall: s.Syscall, Args: s.Args, Duration: dur, OK: false, Err: e.Error()})
 				}
 				continue
 			}
 			if rs.seen[key] == 1 {
-				rs.rep.Results = append(rs.rep.Results, ExecResult{Syscall: s.Syscall, OK: res.OK, Message: res.Message})
+				rs.rep.Results = append(rs.rep.Results, ExecResult{Syscall: s.Syscall, Args: s.Args, Duration: dur, OK: res.OK, Message: res.Message})
 			}
 		}
 		rs.executed[key] = true

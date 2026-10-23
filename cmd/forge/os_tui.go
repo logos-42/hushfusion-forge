@@ -121,9 +121,11 @@ type osModel struct {
 	out       []string
 	outScroll int
 
-	// 用户发送内容：lastEcho 渲染在 forge 框下方；sentLog 用于会话落盘。
+	// 用户发送内容：lastEcho 渲染在 forge 框上方；sentLog 用于会话落盘。
 	lastEcho []string
 	sentLog  []string
+	// 工具调用：渲染在 forge 框外，逐行（💻/📖/📚…）。
+	toolLog []string
 
 	// 上下文加载进度条
 	loading bool
@@ -1958,6 +1960,7 @@ func (m *osModel) startThinking(goal, provider, model string) (tea.Model, tea.Cm
 	m.lastGoal = goal
 	m.thinkFrame = 0
 	m.report, m.reportErr = nil, nil
+	m.toolLog = nil // 新一轮：工具调用列表重新开始
 	m.status = ""
 	m.busy = true
 	m.aiStart = time.Now()
@@ -2148,48 +2151,99 @@ func (m *osModel) appendAnswer(rep *aios.Report) {
 }
 
 func (m *osModel) appendToolCalls(rep *aios.Report) {
-	allowed, denied := 0, 0
-	for _, p := range rep.Plan {
-		if p.Allowed {
-			allowed++
-		} else {
-			denied++
-		}
-	}
-	if m.verbose == 0 { // low：仅汇总
-		m.out = append(m.out, m.styles.accent.Render("forge")+
-			m.styles.hint.Render(fmt.Sprintf(" · AI 回合 · %d 步（✓%d/✗%d）", len(rep.Plan), allowed, denied)))
-		m.trimOut()
+	// 工具调用放框外逐行；AI 文字回复由 appendAnswer 放框内。
+	if rep == nil || (len(rep.Plan) == 0 && len(rep.Results) == 0) {
 		return
 	}
-	m.out = append(m.out, m.styles.accent.Render("forge")+m.styles.hint.Render(" · AI 回合"))
-	for _, p := range rep.Plan {
-		m.toolCalls++
-		if p.Allowed {
-			m.toolOK++
-			line := "  ✓ " + p.Syscall
-			if m.verbose >= 2 {
-				line += " " + argsSummary(p.Args)
+	// 优先用实际执行结果（含 Args/Duration）；dry-run 无结果时退回计划。
+	if len(rep.Results) > 0 {
+		for _, r := range rep.Results {
+			m.toolCalls++
+			if r.OK {
+				m.toolOK++
+			} else {
+				m.toolFail++
 			}
-			m.out = append(m.out, m.styles.ok.Render(line))
-		} else {
-			m.toolFail++
-			m.out = append(m.out, m.styles.err.Render("  ✗ "+p.Syscall+" ("+p.Reason+")"))
+			m.toolLog = append(m.toolLog, m.toolLine(r))
+		}
+	} else {
+		for _, p := range rep.Plan {
+			m.toolCalls++
+			if p.Allowed {
+				m.toolOK++
+			} else {
+				m.toolFail++
+			}
+			m.toolLog = append(m.toolLog, m.toolLine(aios.ExecResult{
+				Syscall: p.Syscall, Args: p.Args, OK: p.Allowed, Err: p.Reason,
+			}))
 		}
 	}
-	for _, r := range rep.Results {
-		if r.OK {
-			m.out = append(m.out, m.styles.ok.Render("    → "+r.Syscall+" "+r.Message))
-		} else {
-			m.out = append(m.out, m.styles.err.Render("    → "+r.Syscall+" "+r.Err))
-		}
+	if len(m.toolLog) > 200 {
+		m.toolLog = m.toolLog[len(m.toolLog)-200:]
 	}
-	if m.verbose >= 2 {
-		for _, n := range rep.Notes {
-			m.out = append(m.out, m.styles.hint.Render("  · "+n))
-		}
+}
+
+// toolLine 把一次工具调用渲染成框外的一行（图标 + 描述 + 耗时）。
+func (m *osModel) toolLine(r aios.ExecResult) string {
+	icon, desc := toolIconDesc(r.Syscall, r.Args)
+	line := icon + " " + desc
+	if d := fmtToolDur(r.Duration); d != "" {
+		line += "  " + m.styles.hint.Render(d)
 	}
-	m.trimOut()
+	if !r.OK {
+		line += "  " + m.styles.err.Render("✗ "+firstNonEmptyStr(r.Err, "失败"))
+	}
+	return line
+}
+
+// toolIconDesc 把系统调用映射成「图标 + 人类可读描述」。
+func toolIconDesc(syscall string, args map[string]any) (string, string) {
+	get := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := args[k]; ok {
+				if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+					return s
+				}
+			}
+		}
+		return ""
+	}
+	switch syscall {
+	case "shell", "bash", "exec", "run", "command":
+		cmd := get("cmd", "command", "script", "argv")
+		if cmd == "" {
+			cmd = argsSummary(args)
+		}
+		return "💻", "$ " + cmd
+	case "skill", "skill.view", "skills.view":
+		return "📚", "Skill " + firstNonEmptyStr(get("name", "skill", "id"), argsSummary(args))
+	case "read", "file.read", "fs.read":
+		return "📖", "Read " + firstNonEmptyStr(get("path", "file"), argsSummary(args))
+	case "tasks.propose":
+		return "📋", "Task " + firstNonEmptyStr(get("id", "title"), argsSummary(args))
+	case "opportunities.add":
+		return "🎯", "Opportunity " + get("chance")
+	case "decisions.add":
+		return "⚖️", "Decision"
+	case "experiments.new":
+		return "🧪", "Experiment " + get("tag")
+	case "experiments.advance":
+		return "🧪", fmt.Sprintf("Experiment %s → 态%v", get("tag"), args["state"])
+	default:
+		return "🔧", syscall + " " + argsSummary(args)
+	}
+}
+
+func fmtToolDur(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return ""
+	case d >= time.Second:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	default:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
 }
 
 // appendGitDiff 把 os/ 的 git 改动概要追加进展示框（只读）。
@@ -2425,8 +2479,13 @@ func (m *osModel) renderConsole(w int) string {
 		chrome++ // 内联「AI 思考中」行占一行
 	}
 	if len(m.lastEcho) > 0 {
-		chrome += len(m.lastEcho) // 发送内容块在 forge 框下方
+		chrome += len(m.lastEcho) // 发送内容块在 forge 框上方
 	}
+	toolH := len(m.toolLog)
+	if toolH > maxToolLines {
+		toolH = maxToolLines
+	}
+	chrome += toolH // 工具调用列表（框外逐行）
 	outH := m.height - chrome - popupH
 	if outH < 4 {
 		outH = 4
@@ -2436,6 +2495,9 @@ func (m *osModel) renderConsole(w int) string {
 		b.WriteString(strings.Join(m.lastEcho, "\n") + "\n")
 	}
 	b.WriteString(m.renderOutputBox(w, outH))
+	if len(m.toolLog) > 0 {
+		b.WriteString(m.renderToolLog(w) + "\n")
+	}
 	if m.loading {
 		b.WriteString(m.renderProgress(w))
 	}
@@ -2445,6 +2507,21 @@ func (m *osModel) renderConsole(w int) string {
 	}
 	b.WriteString(m.renderInput(w))
 	return b.String()
+}
+
+const maxToolLines = 8
+
+// renderToolLog 把工具调用渲染在 forge 框外，逐行（取最近 maxToolLines 行）。
+func (m *osModel) renderToolLog(w int) string {
+	lines := m.toolLog
+	if len(lines) > maxToolLines {
+		lines = lines[len(lines)-maxToolLines:]
+	}
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, truncateLine(l, w-2))
+	}
+	return strings.Join(out, "\n")
 }
 
 // renderThinkingLine 是内联的「AI 思考中」行：固定在输入框上方，不抢整屏。
@@ -2460,7 +2537,7 @@ func (m *osModel) renderThinkingLine(w int) string {
 	default:
 		ind = m.styles.title.Render(kaomoji[m.thinkFrame%len(kaomoji)])
 	}
-	s := fmt.Sprintf("  %s AI 思考中… %s · ⏱ %s · Ctrl+C 中断", ind, m.thinkingGoal, el)
+	s := fmt.Sprintf("── %s AI 思考中… %s · ⏱ %s · Ctrl+C 中断", ind, m.thinkingGoal, el)
 	return truncateLine(s, w) + "\n"
 }
 

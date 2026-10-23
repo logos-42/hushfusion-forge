@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	key "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -286,6 +287,42 @@ func TestUserEchoFormat(t *testing.T) {
 	}
 	if len(m.sentLog) != 3 {
 		t.Fatalf("会话落盘应记录发送内容, got %d 行", len(m.sentLog))
+	}
+}
+
+// 工具调用在 forge 框外逐行：图标 + 描述 + 耗时。
+func TestToolLogOutsideForgeBox(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.width, m.height = 120, 40
+	m.out = append(m.out, "reply")
+	m.appendToolCalls(&aios.Report{
+		Plan: []aios.PlanStep{{Syscall: "read", Args: map[string]any{"path": "index.md"}, Allowed: true}},
+		Results: []aios.ExecResult{{
+			Syscall: "read", Args: map[string]any{"path": "index.md"},
+			OK: true, Duration: 2700 * time.Millisecond,
+		}},
+	})
+	if len(m.toolLog) != 1 || !strings.Contains(stripANSI(m.toolLog[0]), "📖 Read index.md") {
+		t.Fatalf("工具行格式不对: %#v", m.toolLog)
+	}
+	c := stripANSI(m.renderConsole(m.width))
+	boxBottom := strings.LastIndex(c, "╰")
+	toolIdx := strings.Index(c, "📖 Read index.md")
+	if boxBottom < 0 || toolIdx < 0 || toolIdx < boxBottom {
+		t.Fatalf("工具调用应在 forge 框外/下方: boxBottom=%d tool=%d", boxBottom, toolIdx)
+	}
+}
+
+func TestToolLineShellFormat(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	line := stripANSI(m.toolLine(aios.ExecResult{
+		Syscall: "shell", Args: map[string]any{"cmd": "python3 scripts/version_check.py"},
+		OK: true, Duration: 5300 * time.Millisecond,
+	}))
+	if !strings.Contains(line, "💻 $ python3 scripts/version_check.py") || !strings.Contains(line, "5.3s") {
+		t.Fatalf("shell 行格式不对: %q", line)
 	}
 }
 
