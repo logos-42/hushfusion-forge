@@ -196,6 +196,42 @@ func TestTUIInputOnlyNoPanelShortcuts(t *testing.T) {
 	}
 }
 
+// 仪表盘快照在输出（forge 框）上方；输入框上下各一条分隔线；面板不再套框。
+func TestConsoleLayout(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.width, m.height = 120, 40
+
+	c := m.renderConsole(m.width)
+	iDash := strings.Index(c, "仪表盘")
+	iForge := strings.Index(c, "forge")
+	if iDash < 0 || iForge < 0 || iDash > iForge {
+		t.Fatalf("仪表盘应在输出(forge)之前: dash=%d forge=%d", iDash, iForge)
+	}
+
+	lines := strings.Split(c, "\n")
+	for i, ln := range lines {
+		if !strings.Contains(ln, "❯") {
+			continue
+		}
+		if i == 0 || !strings.Contains(lines[i-1], "─") {
+			t.Fatalf("输入框上方应有分隔线")
+		}
+		if i+1 >= len(lines) || !strings.Contains(lines[i+1], "─") {
+			t.Fatalf("输入框下方应有分隔线")
+		}
+		break
+	}
+
+	if pan := m.renderPanels(m.width); strings.ContainsAny(pan, "╭╮╰╯") {
+		t.Fatalf("仪表盘面板不应再套框: %q", pan)
+	}
+	out := m.renderOutputBox(m.width, 10)
+	if !strings.Contains(out, "forge") || !strings.ContainsAny(out, "╭╮╰╯") {
+		t.Fatalf("输出区应是带 forge 的框: %q", out)
+	}
+}
+
 // 主输入框也支持粘贴（bracketed paste → tea.PasteMsg）。
 func TestTUICmdInputPaste(t *testing.T) {
 	base := setupTempOS(t)

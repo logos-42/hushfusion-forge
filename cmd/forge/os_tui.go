@@ -192,6 +192,8 @@ type uiStyles struct {
 	sel       lipgloss.Style
 	searchBar lipgloss.Style
 	hintBox   lipgloss.Style
+	// replyBox 是 AI 回复 / 工具调用的「forge」框（仪表盘面板本身不再套框）。
+	replyBox lipgloss.Style
 }
 
 type formModel struct {
@@ -440,8 +442,9 @@ func (m *osModel) initStyles() {
 		title:       lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("51")),
 		label:       lipgloss.NewStyle().Foreground(lipgloss.Color("39")),
 		value:       lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
-		panel:       lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("241")).Padding(0, 1),
+		panel:       lipgloss.NewStyle(), // 仪表盘面板不再套框（纯文本网格）
 		panelActive: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("51")).Padding(0, 1),
+		replyBox:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1),
 		footer:      lipgloss.NewStyle().Reverse(true).Foreground(lipgloss.Color("252")),
 		hint:        lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("244")),
 		spinner:     lipgloss.NewStyle().Foreground(lipgloss.Color("51")),
@@ -2011,11 +2014,12 @@ func (m *osModel) appendToolCalls(rep *aios.Report) {
 		}
 	}
 	if m.verbose == 0 { // low：仅汇总
-		m.out = append(m.out, m.styles.label.Render(fmt.Sprintf("── AI 回合 ── %d 步（✓%d/✗%d）", len(rep.Plan), allowed, denied)))
+		m.out = append(m.out, m.styles.accent.Render("forge")+
+			m.styles.hint.Render(fmt.Sprintf(" · AI 回合 · %d 步（✓%d/✗%d）", len(rep.Plan), allowed, denied)))
 		m.trimOut()
 		return
 	}
-	m.out = append(m.out, m.styles.label.Render("── AI 回合 ──"))
+	m.out = append(m.out, m.styles.accent.Render("forge")+m.styles.hint.Render(" · AI 回合"))
 	for _, p := range rep.Plan {
 		m.toolCalls++
 		if p.Allowed {
@@ -2255,15 +2259,17 @@ func (m *osModel) renderConsole(w int) string {
 	var b strings.Builder
 	if !m.focus {
 		b.WriteString(m.renderHeader(w))
+		// 仪表盘快照在最上面（只读、无边框）；输出在其下方。
+		b.WriteString(m.renderDashboard(w))
 	}
 	popup := m.renderSlashPopup(w)
 	popupH := 0
 	if popup != "" {
 		popupH = strings.Count(popup, "\n")
 	}
-	chrome := 20
+	chrome := 21 // 含输入框上下两条分隔线
 	if m.focus {
-		chrome = 8
+		chrome = 9
 	}
 	if m.busy {
 		chrome++ // 内联「AI 思考中」行占一行
@@ -2275,9 +2281,6 @@ func (m *osModel) renderConsole(w int) string {
 	b.WriteString(m.renderOutputBox(w, outH))
 	if m.loading {
 		b.WriteString(m.renderProgress(w))
-	}
-	if !m.focus {
-		b.WriteString(m.renderDashboard(w))
 	}
 	b.WriteString(popup)
 	if m.busy {
@@ -2386,12 +2389,13 @@ func (m *osModel) renderOutputBox(w, h int) string {
 	}
 	var show []string
 	for i := start; i < end; i++ {
-		show = append(show, truncateLine(lines[i], w-4))
+		show = append(show, truncateLine(lines[i], w-6))
 	}
 	if len(show) == 0 {
 		show = []string{m.styles.hint.Render("  （等待上下文加载…）")}
 	}
-	title := m.styles.label.Render("▌ 输出 / 工具调用")
+	// 每个回复区都带一个 forge 框（仪表盘面板本身不再套框）。
+	title := m.styles.accent.Render("forge") + m.styles.hint.Render(" · 输出 / 工具调用")
 	if maxScroll > 0 {
 		title += m.styles.hint.Render(fmt.Sprintf("  (%d/%d)", len(lines)-m.outScroll, len(lines)))
 	}
@@ -2399,7 +2403,7 @@ func (m *osModel) renderOutputBox(w, h int) string {
 		title += m.styles.err.Render(fmt.Sprintf("  ↓ %d 条新内容 · PgDn/End 回到底部", m.outScroll))
 	}
 	content := title + "\n" + strings.Join(show, "\n")
-	return m.styles.panel.Width(w-2).Render(content) + "\n"
+	return m.styles.replyBox.Width(w-2).Render(content) + "\n"
 }
 
 // pageSize 是展示框一页的行数（翻页步长）。
@@ -2453,7 +2457,8 @@ func (m *osModel) renderDashboard(w int) string {
 
 func (m *osModel) renderPanels(w int) string {
 	const cols = panelCols
-	colW := (w - 2*(cols-1) - 2) / cols
+	const gap = 3
+	colW := (w - gap*(cols-1) - 2) / cols
 	if colW < 18 {
 		colW = 18
 	}
@@ -2461,6 +2466,9 @@ func (m *osModel) renderPanels(w int) string {
 	for i := 0; i < len(m.panels); i += cols {
 		var cells []string
 		for j := 0; j < cols; j++ {
+			if j > 0 {
+				cells = append(cells, strings.Repeat(" ", gap))
+			}
 			idx := i + j
 			if idx >= len(m.panels) {
 				cells = append(cells, strings.Repeat(" ", colW))
@@ -2476,13 +2484,13 @@ func (m *osModel) renderPanels(w int) string {
 func (m *osModel) panelCell(idx, colW int) string {
 	p := m.panels[idx]
 	n := len(p.lines())
-	// 面板只读：不再渲染选中高亮（没有「当前面板」这个概念了）。
-	head := "  " + p.name + fmt.Sprintf(" (%d)", n)
-	first := "（空）"
+	// 面板只读、无边框：名称亮蓝、内容高亮白，纯文本网格。
+	head := m.styles.accent.Render(p.name) + m.styles.hint.Render(fmt.Sprintf(" (%d)", n))
+	first := m.styles.hint.Render("（空）")
 	if n > 0 {
-		first = truncateLine(p.lines()[0], colW-4)
+		first = m.styles.bright.Render(truncateLine(p.lines()[0], colW-2))
 	}
-	content := m.styles.label.Render(head) + "\n" + m.styles.value.Render(first)
+	content := head + "\n" + first
 	return m.styles.panel.Width(colW).Render(content)
 }
 
@@ -2495,7 +2503,8 @@ func (m *osModel) renderInput(w int) string {
 	}
 	rule := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).
 		Render(strings.Repeat("─", max(0, w-1)))
-	return "\n" + line + q + "\n" + rule + "\n"
+	// 输入框上下各一条分隔线（两条线隔开输入区）。
+	return "\n" + rule + "\n" + line + q + "\n" + rule + "\n"
 }
 
 // renderSlashPopup 渲染 / 命令快速选择面板（激活且匹配非空时，出现在输入框上方）。
