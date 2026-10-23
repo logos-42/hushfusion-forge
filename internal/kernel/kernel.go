@@ -1,6 +1,7 @@
 package kernel
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -117,17 +118,27 @@ func (c *Client) ModelAcquire(snapshot, ports map[string]any) (map[string]any, e
 
 // BolloonExec 把一次 bolloon CLI 调用放进内核 ChannelActor 里串行/审计执行。
 // 便捷入口: 固定注入 exec.bolloon 端口 (调用方无需给 ports)。
+// 不可取消（用 context.Background()）；要可取消/可中断用 BolloonExecContext。
 func (c *Client) BolloonExec(args ...string) (map[string]any, error) {
-	return c.execThroughChannel(args, map[string]any{"exec": "bolloon"})
+	return c.BolloonExecContext(context.Background(), args...)
+}
+
+// BolloonExecContext 同 BolloonExec，但接受 ctx：取消即强杀 bolloon 进程组
+// （含孙子），不等自然结束。TUI 的 Ctrl+C 中断、上层超时看门狗都走这条。
+func (c *Client) BolloonExecContext(ctx context.Context, args ...string) (map[string]any, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return c.execThroughChannel(ctx, args, map[string]any{"exec": "bolloon"})
 }
 
 // ExecThroughChannel 暴露底层原语: exec 端口必须显式注入, 否则 fail-closed。
 // (对齐原内核「不默认任何端口」的纪律; 便捷入口 BolloonExec 才固定注入。)
 func (c *Client) ExecThroughChannel(args []string, ports map[string]any) (map[string]any, error) {
-	return c.execThroughChannel(args, ports)
+	return c.execThroughChannel(context.Background(), args, ports)
 }
 
-func (c *Client) execThroughChannel(args []string, ports map[string]any) (map[string]any, error) {
+func (c *Client) execThroughChannel(ctx context.Context, args []string, ports map[string]any) (map[string]any, error) {
 	if args == nil {
 		return nil, errors.New("params.args 必填 (string[])")
 	}
@@ -141,7 +152,11 @@ func (c *Client) execThroughChannel(args []string, ports map[string]any) (map[st
 	const channelID = "bolloon"
 	actor := c.reg.getOrCreate("bridge:"+channelID, map[string]any{"channelId": channelID, "kind": "bolloon-cli"})
 	result := actor.Submit(func(st ActorState) any {
-		out, _ := p.Exec(args)
+		out, execErr := p.Exec(ctx, args)
+		if execErr != nil {
+			// 端口自身失败（区别于 bolloon 退出码非 0 —— 那是 out.ok=false）。
+			return map[string]any{"ok": false, "error": execErr.Error()}
+		}
 		st["lastBolloon"] = map[string]any{"args": args, "at": time.Now().UnixMilli()}
 		return out
 	})

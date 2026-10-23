@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -47,6 +48,13 @@ type Options struct {
 	Env    []string
 	Stdout io.Writer
 	Stderr io.Writer
+	// Timeout 到点强杀进程组（0 = 不限）。
+	Timeout time.Duration
+	// KillGrace 是 TERM→KILL 宽限（当前实现直接 KILL，字段保留给将来分级）。
+	KillGrace time.Duration
+	// Fence 是围栏钩子：启动前对 cmd 做最后加工（如 sandbox.Apply 设置
+	// jail/env/独立进程组）。返回 error 则不启动（fail-closed）。
+	Fence func(cmd *exec.Cmd) error
 }
 
 // Proc 是一条登记在册的进程。
@@ -57,6 +65,7 @@ type Proc struct {
 	PID       int       `json:"pid"`
 	State     State     `json:"state"`
 	ExitCode  int       `json:"exit_code"`
+	TimedOut  bool      `json:"timed_out,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at,omitempty"`
 
@@ -64,7 +73,9 @@ type Proc struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	killedByUs bool // Stop 显式杀过（用于把退出态判为 Killed 而非 Failed）
+	killedByUs bool        // Stop 显式杀过（用于把退出态判为 Killed 而非 Failed）
+	timedOut   bool        // 超时杀过（与 killedByUs 并列，均映射为 Killed 态）
+	ctxDone    func() bool // 派生 ctx 是否已取消（ctx 驱动的杀也判 Killed，不误判为 Failed）
 }
 
 // Duration 返回运行时长（进行中则至今）。
@@ -83,12 +94,13 @@ type Info struct {
 	PID       int
 	State     State
 	ExitCode  int
+	TimedOut  bool
 	StartedAt time.Time
 	EndedAt   time.Time
 }
 
 func (p *Proc) info() Info {
-	return Info{ID: p.ID, Name: p.Name, PID: p.PID, State: p.State, ExitCode: p.ExitCode, StartedAt: p.StartedAt, EndedAt: p.EndedAt}
+	return Info{ID: p.ID, Name: p.Name, PID: p.PID, State: p.State, ExitCode: p.ExitCode, TimedOut: p.timedOut, StartedAt: p.StartedAt, EndedAt: p.EndedAt}
 }
 
 // Manager 是进程登记表。
@@ -154,11 +166,37 @@ func (m *Manager) Start(ctx context.Context, id, name string, args []string, opt
 	cmd.Stdout = opts.Stdout
 	cmd.Stderr = opts.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // 独立进程组
+	// 取消时杀**整个进程组**（负 pgid），而不是只杀直接子进程。
+	// 为什么必须这样：exec.CommandContext 的默认取消只杀直接子进程；若子进程是
+	// shell（bash -c 'sleep 30'  fork 出 sleep），杀 shell 后 sleep 仍继承着
+	// stdout/stderr 管道，cmd.Wait() 会一直阻塞到管道关闭（=所有孙进程退出），
+	// 于是"取消"看起来完全无效。杀组 + WaitDelay 双保险。
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			return cmd.Process.Kill() // 组杀失败（可能已退出）退化为杀本体
+		}
+		return nil
+	}
+	cmd.WaitDelay = 5 * time.Second // 管道被孙进程持住时的兜底：到点强制收口
+	// 围栏钩子（如 sandbox.Apply）：失败则不启动（fail-closed），并先还并发闸。
+	if opts.Fence != nil {
+		if err := opts.Fence(cmd); err != nil {
+			cancel()
+			if m.sem != nil {
+				<-m.sem
+			}
+			return nil, fmt.Errorf("proc: 围栏拒绝启动 %s: %w", name, err)
+		}
+	}
 
 	p := &Proc{
 		ID: id, Name: name, Args: append([]string{}, args...),
 		State: StateRunning, StartedAt: m.now(),
 		cmd: cmd, cancel: cancel, done: make(chan struct{}),
+		ctxDone: func() bool { return cmdCtx.Err() != nil },
 	}
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -166,6 +204,10 @@ func (m *Manager) Start(ctx context.Context, id, name string, args []string, opt
 		return nil, fmt.Errorf("proc: 启动 %s 失败: %w", name, err)
 	}
 	p.PID = cmd.Process.Pid
+	// 超时看门狗：到点强杀整个进程组（含孙子）。
+	if opts.Timeout > 0 {
+		go m.watchTimeout(p, opts.Timeout)
+	}
 
 	m.mu.Lock()
 	m.procs[id] = p
@@ -176,15 +218,33 @@ func (m *Manager) Start(ctx context.Context, id, name string, args []string, opt
 	return p, nil
 }
 
+// watchTimeout 超时强杀进程组（含孙子），并把退出态标记为超时。
+func (m *Manager) watchTimeout(p *Proc, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		m.mu.Lock()
+		p.timedOut = true
+		p.killedByUs = true
+		m.mu.Unlock()
+		if p.cmd.Process != nil {
+			_ = syscall.Kill(-p.PID, syscall.SIGKILL) // 负 pgid = 整组
+		}
+	case <-p.done:
+	}
+}
+
 // reap 等待进程结束、记录退出码、释放并发闸。
 func (m *Manager) reap(id string, p *Proc) {
 	defer close(p.done)
 	err := p.cmd.Wait() // 由本 goroutine 回收，绝不留下僵尸
 	p.EndedAt = m.now()
 	p.ExitCode = exitCodeOf(err)
+	ctxCancelled := p.ctxDone != nil && p.ctxDone()
 	switch {
-	case p.killedByUs:
-		p.State = StateKilled
+	case p.killedByUs || p.timedOut || ctxCancelled:
+		p.State = StateKilled // 我们杀的（Stop/超时/ctx 取消）≠ 它自己失败的
 	case err != nil:
 		p.State = StateFailed
 	default:
@@ -276,6 +336,23 @@ func (m *Manager) Running() int {
 		}
 	}
 	return n
+}
+
+// Forget 从登记表移除一条已结束的进程（长驻进程里避免登记表无限增长）。
+func (m *Manager) Forget(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.procs[id]; !ok {
+		return false
+	}
+	delete(m.procs, id)
+	for i, x := range m.order {
+		if x == id {
+			m.order = append(m.order[:i], m.order[i+1:]...)
+			break
+		}
+	}
+	return true
 }
 
 // Shutdown 停掉一切并标记关闭（进程内收尾）。

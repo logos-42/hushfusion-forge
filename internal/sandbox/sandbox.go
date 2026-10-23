@@ -62,6 +62,36 @@ var ErrBinaryNotFound = errors.New("sandbox: 可执行文件不在 PATH")
 // ErrRootNotDir 表示 jail 根不是目录。
 var ErrRootNotDir = errors.New("sandbox: jail 根不是目录")
 
+// Apply 把围栏策略应用到一条已构造的 exec.Cmd 上（不负责启动/等待）。
+//
+// 给"自己管生命周期"的调用方复用同一套围栏语义（如 internal/proc 的进程管理器：
+// 它负责登记/并发/超时/回收，围栏语义仍由此处单一来源提供，避免两套漂移）。
+//
+// 做三件事：确认二进制可解析（fail-closed）、钉 cwd 到 jail 根、按白名单重建 env、
+// 并让子进程独立成组（调用方才能杀整组）。不设置 Stdin（交互输入卡死）。
+func Apply(cmd *exec.Cmd, p Policy) error {
+	if cmd == nil {
+		return errors.New("sandbox: cmd 为 nil")
+	}
+	if cmd.Err != nil {
+		// exec.Command 构造期就 LookPath 过；失败在此如实反映，不进 shell 猜。
+		return fmt.Errorf("%w: %v", ErrBinaryNotFound, cmd.Err)
+	}
+	if p.Root != "" {
+		st, err := os.Stat(p.Root)
+		if err != nil {
+			return fmt.Errorf("sandbox: jail 根不可用: %w", err)
+		}
+		if !st.IsDir() {
+			return ErrRootNotDir
+		}
+		cmd.Dir = p.Root
+	}
+	cmd.Env = buildEnv(p)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return nil
+}
+
 // Run 执行一条命令并等待其结束。
 func Run(ctx context.Context, p Policy, name string, args ...string) (Result, error) {
 	if strings.TrimSpace(name) == "" {
@@ -71,27 +101,18 @@ func Run(ctx context.Context, p Policy, name string, args ...string) (Result, er
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %s", ErrBinaryNotFound, name)
 	}
-	if p.Root != "" {
-		st, err := os.Stat(p.Root)
-		if err != nil {
-			return Result{}, fmt.Errorf("sandbox: jail 根不可用: %w", err)
-		}
-		if !st.IsDir() {
-			return Result{}, ErrRootNotDir
-		}
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	cmd := exec.Command(bin, args...)
-	cmd.Dir = p.Root
-	cmd.Env = buildEnv(p)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.Stdin = nil // 不继承父 stdin，避免子进程读交互输入卡死
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := Apply(cmd, p); err != nil {
+		return Result{}, err
+	}
 
 	start := time.Now()
 	if err := cmd.Start(); err != nil {

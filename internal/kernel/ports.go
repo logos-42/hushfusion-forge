@@ -1,11 +1,16 @@
 package kernel
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/logos-42/hushfusion-forge/internal/proc"
+	"github.com/logos-42/hushfusion-forge/internal/sandbox"
 )
 
 // errUnknownPort 表示调用方注入了一个内核不认识的命名端口 (fail-closed)。
@@ -33,7 +38,8 @@ type Ports struct {
 	OpenConnection func(snapshot map[string]any) (Conn, error)
 
 	// Exec 执行一次外部进程调用 (bolloon CLI); 返回 {ok, code, stdout, stderr}。
-	Exec func(args []string) (map[string]any, error)
+	// 带 ctx：取消即强杀进程组（含孙子），不等自然结束。
+	Exec func(ctx context.Context, args []string) (map[string]any, error)
 }
 
 // namedPort 是「名字 → 装配函数」。名字形如 "<端口>.<实现>" (如 recordStep.echo)。
@@ -89,9 +95,16 @@ func (c *fakeConn) Call(_ map[string]any) (map[string]any, error) {
 }
 func (c *fakeConn) Close() error { return nil }
 
-// execBolloon 真正 spawn 本机 bolloon 二进制 (去中心化智能体 CLI), 追加 --json。
+// execBolloon 经进程管理器 + 沙箱围栏真正 spawn 本机 bolloon 二进制
+// (去中心化智能体 CLI), 追加 --json。
+//
+// 两条线都不省：
+//   - proc：登记 + 并发闸 + ctx 取消传播 + 超时杀进程组 + waiter 回收（不留僵尸）；
+//   - sandbox：目录 jail + env 白名单 + 独立进程组（否则杀不掉孙子）。
+//
 // 二进制路径由 BOLLOON_BIN 覆盖 (测试/非常规安装用); 内核只负责执行, 不判业务。
-func execBolloon(args []string) (map[string]any, error) {
+// 围栏策略全部来自 env（见 execPolicyFromEnv），默认保守。
+func execBolloon(ctx context.Context, args []string) (map[string]any, error) {
 	bin := os.Getenv("BOLLOON_BIN")
 	if bin == "" {
 		bin = "bolloon"
@@ -100,30 +113,109 @@ func execBolloon(args []string) (map[string]any, error) {
 	if !containsStr(argv, "--json") {
 		argv = append(argv, "--json")
 	}
-	cmd := exec.Command(bin, argv...)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// 并发闸（进程级资源约束；满了 fail-closed，不排队吞掉）。
+	if max := execMaxConcurrent(); max > 0 && bolloonRunning() >= max {
+		return map[string]any{
+			"ok": false, "code": -1, "stdout": "",
+			"stderr": fmt.Sprintf("bolloon exec 并发已达上限 %d（fail-closed）", max),
+		}, nil
+	}
+	policy := execPolicyFromEnv()
 	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
+	id := fmt.Sprintf("%s-%d", bolloonProcName, time.Now().UnixNano())
+	p, err := kernelProc.Start(ctx, id, bin, argv, proc.Options{
+		Stdout:  &stdout,
+		Stderr:  &stderr,
+		Timeout: policy.Timeout,
+		Fence:   func(c *exec.Cmd) error { return sandbox.Apply(c, policy) },
+	})
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return map[string]any{
-				"ok":     false,
-				"code":   ee.ExitCode(),
-				"stdout": strings.TrimSpace(stdout.String()),
-				"stderr": strings.TrimSpace(stderr.String()),
-			}, nil
-		}
-		// 二进制缺失等: 如实反映为失败 (ok:false), 不假装成功。
+		// 二进制缺失 / 围栏拒绝 / 启动失败：如实反映为失败，不假装成功。
 		return map[string]any{"ok": false, "code": -1, "stdout": "", "stderr": err.Error()}, nil
 	}
+	_ = kernelProc.Wait(p.ID)
+	info, _ := kernelProc.Get(p.ID)
+	kernelProc.Forget(p.ID) // 结束即注销，长驻进程里登记表不无限增长
+	if info.TimedOut {
+		return map[string]any{
+			"ok": false, "code": info.ExitCode,
+			"stdout": strings.TrimSpace(stdout.String()),
+			"stderr": strings.TrimSpace(stderr.String()) + "（沙箱超时强杀）",
+		}, nil
+	}
 	return map[string]any{
-		"ok":     true,
-		"code":   0,
+		"ok":     info.State == proc.StateDone,
+		"code":   info.ExitCode,
 		"stdout": strings.TrimSpace(stdout.String()),
 		"stderr": strings.TrimSpace(stderr.String()),
 	}, nil
+}
+
+const bolloonProcName = "bolloon"
+
+// kernelProc 是进程级外部进程管理器。"最多同时几个 bolloon" 是进程级资源约束
+// （不是每会话的），所以放包级；并发上限在调用时读 env（测试可 t.Setenv）。
+var kernelProc = proc.NewManager(0)
+
+// bolloonRunning 当前运行中的 bolloon exec 数。
+// 按 ID 前缀识别（Name 是二进制绝对路径，不适合做标识；ID 由 execBolloon 统一命名）。
+func bolloonRunning() int {
+	n := 0
+	for _, in := range kernelProc.List() {
+		if strings.HasPrefix(in.ID, bolloonProcName+"-") && in.State == proc.StateRunning {
+			n++
+		}
+	}
+	return n
+}
+
+// execPolicyFromEnv 从环境变量构造 exec 围栏（默认保守，可显式覆盖）：
+//
+//	BOLLOON_EXEC_ROOT           jail 根（空/未设 = 不切 cwd）
+//	BOLLOON_EXEC_TIMEOUT        Go duration（未设/0 = 不限；到点强杀进程组）
+//	BOLLOON_EXEC_ENV_ALLOW      逗号分隔白名单；未设 = 默认最小集 PATH,HOME,BOLLOON_BIN；
+//	                            显式设空串 = 不给任何环境变量（最严）
+//	BOLLOON_EXEC_MAX_CONCURRENT 并发上限（0 = 不限；满了 fail-closed）
+func execPolicyFromEnv() sandbox.Policy {
+	p := sandbox.Policy{EnvSet: map[string]string{}}
+	if v := os.Getenv("BOLLOON_EXEC_ROOT"); v != "" {
+		p.Root = v
+	}
+	if v := os.Getenv("BOLLOON_EXEC_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			p.Timeout = d
+		}
+	}
+	if raw, ok := os.LookupEnv("BOLLOON_EXEC_ENV_ALLOW"); ok {
+		p.EnvAllow = splitCSV(raw) // 显式设空串 ⇒ 空白名单 ⇒ 空环境（最严）
+	} else {
+		p.EnvAllow = []string{"PATH", "HOME", "BOLLOON_BIN"} // 默认最小集
+	}
+	return p
+}
+
+// execMaxConcurrent 读并发上限（非法值按 0 = 不限）。
+func execMaxConcurrent() int {
+	n := 0
+	if v := os.Getenv("BOLLOON_EXEC_MAX_CONCURRENT"); v != "" {
+		if x, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && x > 0 {
+			n = x
+		}
+	}
+	return n
+}
+
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(part); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func containsStr(xs []string, x string) bool {
