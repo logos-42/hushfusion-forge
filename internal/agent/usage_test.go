@@ -50,7 +50,7 @@ func TestTokenScaleCalibratesCompaction(t *testing.T) {
 		{Role: RoleUser, Content: "b"},
 	}
 	// 未校准：估算 75 < 预算 100 ⇒ 不压缩
-	if n := s.compact(); n != 0 {
+	if n := s.compact(context.Background()); n != 0 {
 		t.Fatalf("未校准时不该压缩, got %d", n)
 	}
 	// 校准：真实 500 / 估算 27 ≈ 18.5 倍（中文 UTF-8 的典型低估幅度）
@@ -59,7 +59,7 @@ func TestTokenScaleCalibratesCompaction(t *testing.T) {
 	if scale := s.tokenScale(); scale < 10 {
 		t.Fatalf("scale 应≈18.5, got %v", scale)
 	}
-	if n := s.compact(); n == 0 {
+	if n := s.compact(context.Background()); n == 0 {
 		t.Fatal("校准后应触发压缩")
 	}
 	if !s.CompactedReported() {

@@ -399,7 +399,7 @@ func TestRunAICmdAgentReply(t *testing.T) {
 	t.Setenv("AI_CUSTOM_API_KEY", "test-key")
 	t.Setenv("HUSHFUSION_AI_BASE_URL", srv.URL)
 
-	msg := runAICmd(context.Background(), base, "你好", "custom", "m", "")()
+	msg := runAICmd(context.Background(), base, "你好", "custom", "m", "", nil, 12000)()
 	res, ok := msg.(aiResultMsg)
 	if !ok {
 		t.Fatalf("消息类型 = %T", msg)
@@ -755,6 +755,57 @@ func TestPickWizardModelCustom(t *testing.T) {
 	w.provider.Name = "zai"
 	if got := pickWizardModel(w); got != "custom-model" {
 		t.Fatalf("普通 provider 应以列表选中项为准, got %q", got)
+	}
+}
+
+// /budget 应写入 workspace config，并更新当前预算。
+func TestSlashBudgetPersists(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	if _, _ = m.runSlash("budget 50000"); m.budgetTokens != 50000 {
+		t.Fatalf("内存预算 = %d", m.budgetTokens)
+	}
+	if got := loadWorkspaceConfig(base).BudgetTokens; got != 50000 {
+		t.Fatalf("落盘预算 = %d", got)
+	}
+}
+
+// 模型变化没有显式预算时，预算应按新模型上下文窗口重算。
+func TestBudgetAutoMatchesModel(t *testing.T) {
+	base := setupTempOS(t)
+	wc := loadWorkspaceConfig(base)
+	wc.BudgetTokens = 0
+	if err := saveWorkspaceConfig(base, wc); err != nil {
+		t.Fatal(err)
+	}
+	m := newOSModel(base, mustLoad(t, base))
+	m.model = "glm-5.3-flash"
+	m.onModelChanged()
+	if m.budgetTokens != agent.BudgetForModel("glm-5.3-flash", 0.6) {
+		t.Fatalf("预算未按模型匹配: %d", m.budgetTokens)
+	}
+}
+
+// /compress 的底层命令：把较早消息摘要掉，保留最近 keep 条。
+func TestCompressCommand(t *testing.T) {
+	chat := func(_ context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+		if len(req.Messages) > 0 && strings.Contains(req.Messages[0].Content, "上下文压缩器") {
+			return &ai.ChatResponse{Content: "SUMMARY"}, nil
+		}
+		return &ai.ChatResponse{Content: "ok"}, nil
+	}
+	s := agent.NewSession(agent.DefaultConfig(), chat, agent.NewRegistry(), "")
+	for i := 0; i < 4; i++ {
+		if _, err := s.Turn(context.Background(), "msg"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msg, ok := compressCmd(context.Background(), s, 2)().(compressResultMsg)
+	if !ok {
+		t.Fatal("compressCmd 返回类型不对")
+	}
+	if msg.err != nil || msg.removed == 0 || !strings.Contains(msg.summary, "SUMMARY") {
+		t.Fatalf("compress 结果: %+v", msg)
 	}
 }
 

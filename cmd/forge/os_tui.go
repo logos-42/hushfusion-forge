@@ -151,6 +151,12 @@ type osModel struct {
 
 	// mem 是持久记忆（--persist 时落盘，否则纯内存）。每轮 AI 把它注入 system。
 	mem *agent.MemStore
+	// sess 是跨轮复用的 agent 会话：只有它持有对话历史，/compress 才有东西可压。
+	// /new、切换模型时置 nil，下一轮重建。
+	sess *agent.Session
+	// budgetTokens 是对话历史预算；默认按模型上下文窗口的 60% 自动匹配，
+	// 可用 /budget N 或 os/forge.config.json 的 budget_tokens 覆盖。
+	budgetTokens int
 	// frozenContext 是会话首次 AI 调用前构建一次的冻结快照：
 	// user/agent/soul 文件 + skills + 沉淀经验 + 长期记忆 + 记忆 + 工作流。
 	// 之后每轮原样注入 system，不随文件变化重建（“每轮不能忘”）。
@@ -280,6 +286,16 @@ type aiResultMsg struct {
 	answer string            // agent 运行时的最终文字回复
 	tools  []agent.ToolEvent // 本轮工具调用（框外逐行展示）
 	err    error
+	// sess 是跨轮复用的会话；compacted 表示本轮自动压缩过。
+	sess      *agent.Session
+	compacted bool
+}
+
+// compressResultMsg 是 /compress 手动摘要的结果。
+type compressResultMsg struct {
+	removed int
+	summary string
+	err     error
 }
 
 // toolEventMsg 是一条实时工具调用事件（agent 执行完一个工具就投递一条）。
@@ -377,6 +393,8 @@ var slashCommands = []slashCmd{
 	{"new", "开新会话", ""},
 	{"save", "立即落盘会话", ""},
 	{"summary", "打印会话摘要", ""},
+	{"compress", "摘要压缩较早历史", ""},
+	{"budget", "查看/设置上下文预算", "[tokens]"},
 	{"sessions", "列出历史会话", ""},
 	{"interrupt", "中断当前 AI", ""},
 	{"queue", "查看队列", ""},
@@ -446,6 +464,11 @@ func newOSModel(base string, snap *osview.Snapshot) *osModel {
 		}
 	}
 	modelName := envOr("HUSHFUSION_AI_MODEL", defModel)
+	// 预算随模型自动匹配；workspace 显式配置优先。
+	budgetTokens := loadWorkspaceConfig(base).BudgetTokens
+	if budgetTokens <= 0 {
+		budgetTokens = agent.BudgetForModel(modelName, 0.6)
+	}
 	m := &osModel{
 		base:         base,
 		snap:         snap,
@@ -459,6 +482,7 @@ func newOSModel(base string, snap *osview.Snapshot) *osModel {
 		provider:     provName,
 		model:        modelName,
 		cacheHit:     "–",
+		budgetTokens: budgetTokens,
 	}
 	m.initStyles()
 	m.spinner = spinner.New(
@@ -814,6 +838,8 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForMsg(msg.ch)
 	case aiResultMsg:
 		return m.onAIResult(msg)
+	case compressResultMsg:
+		return m.onCompressResult(msg)
 	case wizModelsMsg:
 		return m.onWizModels(msg)
 	case tea.PasteMsg:
@@ -875,6 +901,9 @@ func (m *osModel) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	m.aiCancel = nil
+	if msg.sess != nil {
+		m.sess = msg.sess // 跨轮复用；下一轮继续带历史
+	}
 	m.state = statePanels // 内联：结果直接落展示框，不切「AI 粘合报告」弹窗
 	m.outScroll = 0       // 新回复吸底，避免用户上翻后看不到回复
 	m.report = msg.rep
@@ -920,6 +949,9 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 		m.modelUsed = firstNonEmptyStr(msg.rep.Model, m.modelUsed)
 	}
 	m.cacheHit = m.cacheLabel()
+	if msg.compacted && msg.err == nil {
+		m.status = m.styles.hint.Render(fmt.Sprintf("🗜 已自动压缩较早轮次（预算 %d tokens，/compress 可手动）", m.budgetTokens))
+	}
 	m.reload()
 	if len(m.queue) > 0 {
 		next := m.queue[0]
@@ -927,6 +959,27 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 		_, cmd := m.startThinking(next, "", "")
 		return m, cmd
 	}
+	return m, nil
+}
+
+// onCompressResult 收 /compress 结果：展示摘要预览，不打断当前展示框。
+func (m *osModel) onCompressResult(msg compressResultMsg) (tea.Model, tea.Cmd) {
+	m.busy = false
+	m.aiCancel = nil
+	if msg.err != nil {
+		m.out = append(m.out, m.styles.err.Render("✗ 压缩失败: "+msg.err.Error()))
+		m.status = m.styles.err.Render("压缩失败")
+		return m, nil
+	}
+	if msg.removed == 0 {
+		m.status = m.styles.hint.Render("没有可压缩的较早历史（至少先聊两轮）")
+		return m, nil
+	}
+	m.out = append(m.out, m.styles.label.Render(fmt.Sprintf("🗜 已压缩 %d 条较早消息 → 摘要", msg.removed)))
+	if s := strings.TrimSpace(msg.summary); s != "" {
+		m.out = append(m.out, m.styles.hint.Render("摘要: "+clipSkillText(s, 300)))
+	}
+	m.status = m.styles.ok.Render(fmt.Sprintf("压缩完成（%d 条 → 摘要）", msg.removed))
 	return m, nil
 }
 
@@ -1232,6 +1285,40 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.openForm("ai")
 	case "model":
 		return m.slashModel(cmd, fields[0])
+	case "compress":
+		if m.sess == nil {
+			m.status = m.styles.hint.Render("还没有可压缩的会话；先对话一轮")
+			break
+		}
+		m.busy = true
+		m.aiStart = time.Now()
+		ctx, cancel := context.WithCancel(context.Background())
+		m.aiCancel = cancel
+		m.status = m.styles.hint.Render("🗜 正在摘要较早轮次…")
+		return m, tea.Batch(m.spinner.Tick, compressCmd(ctx, m.sess, 4))
+	case "budget":
+		if len(fields) > 1 {
+			n, err := strconv.Atoi(fields[1])
+			if err != nil || n < 1000 {
+				m.status = m.styles.err.Render("预算需要 ≥ 1000 tokens")
+				break
+			}
+			m.budgetTokens = n
+			if m.sess != nil {
+				m.sess.SetBudget(n)
+			}
+			wc := loadWorkspaceConfig(m.base)
+			wc.BudgetTokens = n
+			if err := saveWorkspaceConfig(m.base, wc); err != nil {
+				m.status = m.styles.err.Render("预算保存失败: " + err.Error())
+				break
+			}
+			m.status = m.styles.ok.Render(fmt.Sprintf("预算 → %d tokens（已写入 %s）", n, workspaceConfigPath(m.base)))
+			break
+		}
+		m.status = m.styles.hint.Render(fmt.Sprintf(
+			"预算 %d tokens；模型 %s 上下文 %d（/budget N 修改）",
+			m.budgetTokens, m.model, agent.ContextWindowForModel(m.model)))
 	case "clear":
 		m.out = nil
 		m.outScroll = 0
@@ -1244,6 +1331,7 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.goalCount, m.toolCalls, m.toolOK, m.toolFail = 0, 0, 0, 0
 		m.queue = nil
 		m.frozenContext = "" // 新会话重新构建快照
+		m.sess = nil         // 丢弃旧会话历史
 		m.status = m.styles.ok.Render("新会话 " + m.sessionID)
 	case "save":
 		m.persistSession()
@@ -1443,6 +1531,7 @@ func (m *osModel) slashModel(cmd, head string) (tea.Model, tea.Cmd) {
 	} else {
 		m.model = prof.DefaultModel
 	}
+	m.onModelChanged()
 	m.out = append(m.out, m.styles.ok.Render(fmt.Sprintf("✓ 已切换模型 → %s / %s", m.provider, m.model)))
 	if !modelKeySet(prof) {
 		m.out = append(m.out, m.styles.err.Render(fmt.Sprintf("⚠ 该 provider 似未配 key（env: %s）", strings.Join(prof.EnvVars, " / "))))
@@ -1848,6 +1937,7 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 	url := strings.TrimSpace(w.url.Value())
 
 	m.provider, m.model = prof.Name, model
+	m.onModelChanged()
 	keyNote := ""
 	keyForConfig := ""
 	switch w.keyAction {
@@ -1888,12 +1978,9 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 		_ = os.Unsetenv("HUSHFUSION_AI_BASE_URL")
 	}
 	// 持久化到 workspace config（含 key，0600、已 gitignore）；下次启动自动注入 env。
-	cfgErr := saveWorkspaceConfig(m.base, workspaceConfig{
-		Provider: prof.Name,
-		Model:    model,
-		BaseURL:  url,
-		APIKey:   keyForConfig,
-	})
+	wc := loadWorkspaceConfig(m.base) // 保留 lsp_servers / budget_tokens 等既有配置
+	wc.Provider, wc.Model, wc.BaseURL, wc.APIKey = prof.Name, model, url, keyForConfig
+	cfgErr := saveWorkspaceConfig(m.base, wc)
 	recordRecentModel(m.base, prof.Name, model) // 最近使用落盘（best-effort）
 
 	m.out = append(m.out, m.styles.ok.Render(fmt.Sprintf("✓ 模型 → %s / %s", m.provider, m.model)))
@@ -2252,11 +2339,16 @@ func (m *osModel) appendQueue() {
 
 // startThinking 进入思考态：spinner + 颜文字 + 可中断 ctx + 异步 AI。
 func (m *osModel) startThinking(goal, provider, model string) (tea.Model, tea.Cmd) {
+	oldProvider, oldModel := m.provider, m.model
 	if provider == "" {
 		provider = m.provider
 	}
 	if model == "" {
 		model = m.model
+	}
+	// 会话绑定 provider/model；切换后必须重建，否则会用旧模型的历史和 chat。
+	if m.sess != nil && (provider != oldProvider || model != oldModel) {
+		m.sess = nil
 	}
 	m.provider = provider
 	m.model = model
@@ -2277,12 +2369,21 @@ func (m *osModel) startThinking(goal, provider, model string) (tea.Model, tea.Cm
 	ctx, cancel := context.WithCancel(context.Background())
 	m.aiCancel = cancel
 	cmd := tea.Batch(m.spinner.Tick, thinkTick(),
-		runAICmd(ctx, m.base, goal, provider, model, m.frozenContext))
+		runAICmd(ctx, m.base, goal, provider, model, m.frozenContext, m.sess, m.budgetTokens))
 	if fresh {
 		m.status = m.styles.hint.Render(fmt.Sprintf(
 			"❄ 已冻结上下文快照（%d 字符）：soul/agent/user + skills + 经验 + 记忆", len([]rune(m.frozenContext))))
 	}
 	return m, cmd
+}
+
+// onModelChanged 切换模型后重建会话：旧会话的 chat/model 仍是旧 provider。
+// 没有显式 /budget 时，预算随新模型上下文窗口自动重算。
+func (m *osModel) onModelChanged() {
+	m.sess = nil
+	if loadWorkspaceConfig(m.base).BudgetTokens <= 0 {
+		m.budgetTokens = agent.BudgetForModel(m.model, 0.6)
+	}
 }
 
 func (m *osModel) openForm(kind string) {
@@ -2408,40 +2509,58 @@ func (m *osModel) submitForm() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem string) tea.Cmd {
+func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem string, sess *agent.Session, budget int) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan tea.Msg, 256)
 		go func() {
 			baseURL := os.Getenv("HUSHFUSION_AI_BASE_URL")
-			cfg := agent.DefaultConfig()
-			cfg.Provider, cfg.Model, cfg.BaseURL = provider, model, baseURL
-			cfg.Root = repoRoot()
-			chat := func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
-				return ai.Chat(ctx, provider, req, ai.ClientOptions{BaseURL: baseURL})
-			}
-			sys := agentSystemPrompt()
-			if strings.TrimSpace(extraSystem) != "" {
-				sys += "\n\n" + extraSystem
-			}
-			// 冻结快照已由 startThinking 构建并通过 extraSystem 传入；
-			// 这里不再动态读取经验/记忆，保证“每轮看到的是同一份快照”。
-			s := agent.NewSession(cfg, chat, agent.NewRegistry(), sys)
-			skills := agent.NewSkills([]string{globalSkillsDir(base), projectSkillsDir(base)}, agent.NewKeywordMatcher())
-			s.Skills = skills
-			_ = s.RegisterBuiltinTools(skills) // read / ls / shell / mem.* / tasks.* / skill.view / delegate
-			registerProjectTools(s, base)      // fusion.* / plant.* / plugin.* / mcp.* / acp.* / diap.*
-			// shell 默认 fail-closed；只有显式 HUSHFUSION_ALLOW_SHELL=1 才放行。
-			if os.Getenv("HUSHFUSION_ALLOW_SHELL") == "1" {
-				s.AllowWrites["shell"] = true
+			if sess == nil {
+				cfg := agent.DefaultConfig()
+				cfg.Provider, cfg.Model, cfg.BaseURL = provider, model, baseURL
+				cfg.MaxBudgetTokens = budget
+				cfg.Root = repoRoot()
+				chat := func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+					return ai.Chat(ctx, provider, req, ai.ClientOptions{BaseURL: baseURL})
+				}
+				sys := agentSystemPrompt()
+				if strings.TrimSpace(extraSystem) != "" {
+					sys += "\n\n" + extraSystem
+				}
+				// 冻结快照已由 startThinking 构建并通过 extraSystem 传入；
+				// 这里不再动态读取经验/记忆，保证“每轮看到的是同一份快照”。
+				sess = agent.NewSession(cfg, chat, agent.NewRegistry(), sys)
+				skills := agent.NewSkills([]string{globalSkillsDir(base), projectSkillsDir(base)}, agent.NewKeywordMatcher())
+				sess.Skills = skills
+				_ = sess.RegisterBuiltinTools(skills) // read / ls / shell / mem.* / tasks.* / skill.view / delegate
+				registerProjectTools(sess, base)      // fusion.* / plant.* / plugin.* / mcp.* / acp.* / diap.*
+				// shell 默认 fail-closed；只有显式 HUSHFUSION_ALLOW_SHELL=1 才放行。
+				if os.Getenv("HUSHFUSION_ALLOW_SHELL") == "1" {
+					sess.AllowWrites["shell"] = true
+				}
+			} else {
+				sess.SetBudget(budget) // /budget 改动下一轮生效
 			}
 			// 工具执行完立刻投递一行；最终回复最后到达。
-			s.OnTool = func(ev agent.ToolEvent) {
+			// 每轮换新通道（复用会话时旧的 OnTool 仍指向上一个已结束的通道）。
+			sess.OnTool = func(ev agent.ToolEvent) {
 				ch <- toolEventMsg{ev: ev, ch: ch}
 			}
-			reply, err := s.Turn(ctx, goal)
-			ch <- aiResultMsg{answer: reply, err: err}
+			wasCompacted := sess.CompactedReported()
+			reply, err := sess.Turn(ctx, goal)
+			ch <- aiResultMsg{
+				answer: reply, err: err, sess: sess,
+				compacted: !wasCompacted && sess.CompactedReported(),
+			}
 		}()
 		return <-ch
+	}
+}
+
+// compressCmd 手动把较早历史摘要掉（/compress）。
+func compressCmd(ctx context.Context, sess *agent.Session, keep int) tea.Cmd {
+	return func() tea.Msg {
+		removed, summary, err := sess.Compress(ctx, keep)
+		return compressResultMsg{removed: removed, summary: summary, err: err}
 	}
 }
 

@@ -247,6 +247,8 @@ func cmdAgentServe(args []string) int {
 func newAgentSession(sessionID string, o agentOpts) *agent.Session {
 	cfg := agent.DefaultConfig()
 	cfg.Provider, cfg.Model, cfg.BaseURL = o.provider, o.model, o.baseURL
+	// 预算按模型上下文窗口自动匹配；HUSHFUSION_MAX_BUDGET_TOKENS 可覆盖。
+	cfg.MaxBudgetTokens = agent.BudgetFromEnv(agent.BudgetForModel(o.model, 0.6))
 	// 精确 tokenizer（可选）：HUSHFUSION_TOKENIZER_CMD；未设则 len/4 估算。
 	cfg.Tokenizer = agent.TokenizerFromEnv()
 	chat := func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {

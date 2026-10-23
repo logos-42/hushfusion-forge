@@ -294,13 +294,13 @@ func estimateAIMessages(msgs []ai.Message) int {
 	return n
 }
 
-// compact 渐进压缩（学 Claude Code 5 层压缩的最简两段）：
+// compact 渐进压缩：
 //   - 预算削减：单条工具结果超长直接截断（不删，保审计）；
-//   - 历史裁剪：仍超预算 → 丢最旧轮次（v0.1 无智能摘要，诚实标记 Compacted）。
+//   - 摘要压缩：仍超预算 → 把最早的一段交给模型做摘要，保留摘要 + 最近消息；
+//   - 摘要失败时才退回“丢最旧 + 诚实通知”，绝不假装无损。
 //
 // 返回被压缩掉的消息数（0 = 没压）。
-func (s *Session) compact() int {
-	removed := 0
+func (s *Session) compact(ctx context.Context) int {
 	// 阶段1：单条 tool 结果截断（预算削减，开销最低第一步）。
 	for i := range s.messages {
 		m := &s.messages[i]
@@ -308,42 +308,159 @@ func (s *Session) compact() int {
 			m.Content = m.Content[:toolResultBudget] + " …(截断)"
 		}
 	}
-	// 阶段2：整体超预算 → 从最旧逐条丢（保留最后一条 = 当前 user 消息）。
-	// 注意：system 不占 messages 栈（是 Session.System 单独字段，assemble 时注入），
-	// 所以这里所有消息都可丢，只是必须保住最后一条让模型有东西可回应。
-	//
+	budget := s.cfg.MaxBudgetTokens
+	if budget <= 0 || len(s.messages) < 2 {
+		return 0
+	}
 	// 预算判定用「估算 × 校准系数」：系数来自上一次真实 prompt_tokens / 当次估算，
 	// 让中文这类被低估的上下文也能按**真实**预算压缩。
-	scale := s.tokenScale()
-	for int(float64(s.countMessages(s.messages))*scale) > s.cfg.MaxBudgetTokens && len(s.messages) > 1 {
-		dropped := false
-		for i := 0; i < len(s.messages)-1; i++ {
-			m := s.messages[i]
-			j := i
-			// 丢 assistant 时，连带它后面紧跟的 tool 回填一起丢（保持配对完整性）。
-			if m.Role == RoleAssistant && i+1 < len(s.messages) && s.messages[i+1].Role == RoleTool {
-				j = i + 1
-			}
-			// 不能越过最后一条（当前 user）。
-			if j > len(s.messages)-2 {
-				j = len(s.messages) - 2
-			}
-			if j < i {
-				continue
-			}
-			s.messages = append(s.messages[:i], s.messages[j+1:]...)
-			removed += j - i + 1
-			dropped = true
-			break
+	if s.scaledCount(s.messages) <= budget {
+		return 0
+	}
+	// 找到必须丢掉的前缀：保留的后缀尽量装进预算；至少保住最后一条。
+	cut := 0
+	for cut < len(s.messages)-1 && s.scaledCount(s.messages[cut:]) > budget {
+		cut++
+	}
+	if cut <= 0 {
+		return 0
+	}
+	// 不要把 tool 消息单独留在队首（它必须紧跟在带 tool_calls 的 assistant 后面）。
+	for cut < len(s.messages)-1 && s.messages[cut].Role == RoleTool {
+		cut++
+	}
+	dropped := append([]Message(nil), s.messages[:cut]...)
+	s.messages = s.messages[cut:]
+
+	summary, _ := s.summarize(ctx, dropped, budget)
+	if strings.TrimSpace(summary) != "" {
+		s.messages = append([]Message{{
+			Role:    RoleUser,
+			Content: "## 压缩摘要（较早轮次）\n" + summary + "\n\n" + compactNotice(),
+		}}, s.messages...)
+	} else {
+		s.messages = append([]Message{{Role: RoleUser, Content: compactNotice()}}, s.messages...)
+	}
+	s.Compacted = true
+	return len(dropped)
+}
+
+// Compress 手动压缩：把除最近 keepRecent 条以外的历史摘要掉。
+// 返回被压缩的消息数、摘要文本；没有可压内容时返回 0。
+func (s *Session) Compress(ctx context.Context, keepRecent int) (int, string, error) {
+	if keepRecent < 1 {
+		keepRecent = 4
+	}
+	if len(s.messages) <= keepRecent+1 {
+		return 0, "", nil
+	}
+	cut := len(s.messages) - keepRecent
+	for cut < len(s.messages)-1 && s.messages[cut].Role == RoleTool {
+		cut++
+	}
+	dropped := append([]Message(nil), s.messages[:cut]...)
+	summary, err := s.summarize(ctx, dropped, s.cfg.MaxBudgetTokens)
+	if err != nil {
+		return 0, "", err
+	}
+	if strings.TrimSpace(summary) == "" {
+		summary = "（模型未返回摘要）"
+	}
+	s.messages = append([]Message{{
+		Role:    RoleUser,
+		Content: "## 压缩摘要（手动 /compress）\n" + summary + "\n\n" + compactNotice(),
+	}}, s.messages[cut:]...)
+	s.Compacted = true
+	return len(dropped), summary, nil
+}
+
+// SetBudget 更新对话历史预算（/budget 命令；自动压缩下一轮生效）。
+func (s *Session) SetBudget(n int) {
+	if n > 0 {
+		s.cfg.MaxBudgetTokens = n
+	}
+}
+
+// Budget 返回当前对话历史预算。
+func (s *Session) Budget() int { return s.cfg.MaxBudgetTokens }
+
+func (s *Session) scaledCount(msgs []Message) int {
+	return int(float64(s.countMessages(msgs)) * s.tokenScale())
+}
+
+const compactSummaryPrompt = `你是上下文压缩器。把下面的“较早对话”压缩成一份可继续工作的摘要：
+- 保留：目标、已确认的决策与依据、关键证据/数字、改动过的文件路径、未完成任务；
+- 删除：寒暄、重复内容、已失效的中间尝试；
+- 不编造，不添加原文没有的事实；
+- 用中文，300-600 字，直接输出摘要正文。`
+
+// summarize 调用当前模型做摘要；失败返回 error，由 compact 回退到丢消息。
+func (s *Session) summarize(ctx context.Context, msgs []Message, budget int) (string, error) {
+	if s.chat == nil {
+		return "", errors.New("agent: 没有可用的模型调用，无法生成摘要")
+	}
+	req := ai.ChatRequest{
+		Model: s.cfg.Model,
+		Messages: []ai.Message{
+			{Role: "system", Content: compactSummaryPrompt},
+			{Role: "user", Content: formatTranscript(msgs)},
+		},
+		MaxTokens: 600,
+	}
+	resp, err := s.chat(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if resp == nil {
+		return "", errors.New("agent: 摘要模型返回 nil")
+	}
+	text := strings.TrimSpace(resp.Content)
+	maxChars := 2000
+	if budget > 0 && budget*3 < maxChars {
+		maxChars = budget * 3
+	}
+	if maxChars < 120 {
+		maxChars = 120
+	}
+	return clipRunes(text, maxChars), nil
+}
+
+// formatTranscript 把待压缩消息拼成文本；超长时保留头尾，避免摘要请求本身撑爆。
+func formatTranscript(msgs []Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		content := strings.TrimSpace(m.Content)
+		if content == "" && len(m.ToolCalls) == 0 {
+			continue
 		}
-		if !dropped {
-			break
+		if len([]rune(content)) > 1500 {
+			content = clipRunes(content, 1500)
+		}
+		b.WriteString("[" + string(m.Role) + "] " + content + "\n")
+		if len(m.ToolCalls) > 0 {
+			var names []string
+			for _, tc := range m.ToolCalls {
+				names = append(names, tc.Function.Name)
+			}
+			b.WriteString("  (tool_calls: " + strings.Join(names, ", ") + ")\n")
 		}
 	}
-	if removed > 0 {
-		s.Compacted = true
+	out := b.String()
+	const maxTranscript = 24000
+	r := []rune(out)
+	if len(r) > maxTranscript {
+		half := maxTranscript / 2
+		out = string(r[:half]) + "\n…(中间省略)…\n" + string(r[len(r)-half:])
 	}
-	return removed
+	return out
+}
+
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 const toolResultBudget = 2000 // 单条工具结果截断上限（字符）
@@ -426,7 +543,7 @@ func (s *Session) Turn(ctx context.Context, userMsg string) (string, error) {
 	if s.Skills != nil {
 		s.System = s.Skills.Inject(userMsg, s.baseSystem)
 	}
-	if s.compact() > 0 {
+	if s.compact(ctx) > 0 {
 		// 压缩发生：追加说明（去重 —— 模型知道一次即可，重复追加只会吃预算）。
 		// 说明作为最后一条 user 消息的追加（不插在队首，避免打破 system→user 顺序）。
 		if !s.hasNotice() {
@@ -509,7 +626,7 @@ func (s *Session) TurnStream(ctx context.Context, userMsg string, onDelta func(a
 	if s.Skills != nil {
 		s.System = s.Skills.Inject(userMsg, s.baseSystem)
 	}
-	if s.compact() > 0 {
+	if s.compact(ctx) > 0 {
 		if !s.hasNotice() {
 			s.messages = append(s.messages, Message{Role: RoleUser, Content: compactNotice()})
 		}
@@ -636,7 +753,8 @@ func (s *Session) fail(err error) error {
 // hasNotice 消息栈里是否已有压缩说明。
 func (s *Session) hasNotice() bool {
 	for _, m := range s.messages {
-		if m.Role == RoleUser && m.Content == compactNotice() {
+		if m.Role == RoleUser && (m.Content == compactNotice() ||
+			strings.Contains(m.Content, "压缩丢弃") || strings.Contains(m.Content, "压缩摘要")) {
 			return true
 		}
 	}

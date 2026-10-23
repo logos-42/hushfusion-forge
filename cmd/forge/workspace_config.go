@@ -21,11 +21,12 @@ import (
 
 // workspaceConfig 是落盘的模型配置。APIKey 为空表示「没有可用 key」。
 type workspaceConfig struct {
-	Provider   string             `json:"provider,omitempty"`
-	Model      string             `json:"model,omitempty"`
-	BaseURL    string             `json:"base_url,omitempty"`
-	APIKey     string             `json:"api_key,omitempty"`
-	LSPServers []lsp.ServerConfig `json:"lsp_servers,omitempty"`
+	Provider     string             `json:"provider,omitempty"`
+	Model        string             `json:"model,omitempty"`
+	BaseURL      string             `json:"base_url,omitempty"`
+	APIKey       string             `json:"api_key,omitempty"`
+	BudgetTokens int                `json:"budget_tokens,omitempty"`
+	LSPServers   []lsp.ServerConfig `json:"lsp_servers,omitempty"`
 }
 
 func workspaceConfigPath(base string) string {

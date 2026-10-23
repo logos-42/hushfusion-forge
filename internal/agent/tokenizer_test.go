@@ -78,7 +78,7 @@ func TestInjectedTokenizerDrivesCompaction(t *testing.T) {
 	if got := s.countMessages(s.messages); got < 100 {
 		t.Fatalf("注入的计数器应给出 >100, got %d", got)
 	}
-	if n := s.compact(); n == 0 {
+	if n := s.compact(context.Background()); n == 0 {
 		t.Fatal("精确计数超预算时应触发压缩")
 	}
 	if !strings.Contains(s.TokenizerName(), "bytes") {
