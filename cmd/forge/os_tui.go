@@ -157,6 +157,11 @@ type osModel struct {
 	// budgetTokens 是对话历史预算；默认按模型上下文窗口的 60% 自动匹配，
 	// 可用 /budget N 或 os/forge.config.json 的 budget_tokens 覆盖。
 	budgetTokens int
+	// goal 是 /goal 设置的长期目标；loop* 是 /loop 自主推进状态。
+	goal       string
+	loopActive bool
+	loopMax    int
+	loopIter   int
 	// frozenContext 是会话首次 AI 调用前构建一次的冻结快照：
 	// user/agent/soul 文件 + skills + 沉淀经验 + 长期记忆 + 记忆 + 工作流。
 	// 之后每轮原样注入 system，不随文件变化重建（“每轮不能忘”）。
@@ -395,6 +400,8 @@ var slashCommands = []slashCmd{
 	{"summary", "打印会话摘要", ""},
 	{"compress", "摘要压缩较早历史", ""},
 	{"budget", "查看/设置上下文预算", "[tokens]"},
+	{"goal", "设置/查看长期目标", "[目标|clear]"},
+	{"loop", "按目标自主循环", "[N|stop|status]"},
 	{"sessions", "列出历史会话", ""},
 	{"interrupt", "中断当前 AI", ""},
 	{"queue", "查看队列", ""},
@@ -949,6 +956,31 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 		m.modelUsed = firstNonEmptyStr(msg.rep.Model, m.modelUsed)
 	}
 	m.cacheHit = m.cacheLabel()
+	// 自主循环：未完成且未到上限 → 立即推进下一轮（用量先入账再续跑）。
+	if m.loopActive {
+		if msg.err != nil {
+			m.loopActive = false
+			m.status = m.styles.err.Render("循环因错误停止: " + msg.err.Error())
+		} else {
+			m.loopIter++
+			ans := msg.answer
+			if ans == "" && msg.rep != nil {
+				ans = msg.rep.Answer
+			}
+			done := isGoalDone(ans)
+			if done {
+				m.loopActive = false
+				m.status = m.styles.ok.Render(fmt.Sprintf("✅ 目标完成（%d 轮）", m.loopIter))
+			} else if m.loopIter >= m.loopMax {
+				m.loopActive = false
+				m.status = m.styles.err.Render(fmt.Sprintf("⏹ 达到循环上限 %d 轮，目标未标记完成", m.loopMax))
+			} else {
+				m.status = m.styles.hint.Render(fmt.Sprintf("▶ 循环 %d/%d", m.loopIter, m.loopMax))
+				_, cmd := m.startThinking(m.loopPrompt(), "", "")
+				return m, cmd
+			}
+		}
+	}
 	if msg.compacted && msg.err == nil {
 		m.status = m.styles.hint.Render(fmt.Sprintf("🗜 已自动压缩较早轮次（预算 %d tokens，/compress 可手动）", m.budgetTokens))
 	}
@@ -987,7 +1019,8 @@ func (m *osModel) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Ctrl+C 全局语义：忙→中断；空闲→两次退出（第二次落盘并退出）。
 	if msg.String() == "ctrl+c" {
 		if m.busy && m.aiCancel != nil {
-			m.aiCancel() // 一次：中断当前 AI（ctx 取消）
+			m.loopActive = false // 中断同时停止自主循环
+			m.aiCancel()         // 一次：中断当前 AI（ctx 取消）
 		}
 		if m.ctrlCArm && time.Since(m.lastCtrlC) < 2*time.Second {
 			return m.doQuit() // 两次：整理会话并退出
@@ -1319,6 +1352,71 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.status = m.styles.hint.Render(fmt.Sprintf(
 			"预算 %d tokens；模型 %s 上下文 %d（/budget N 修改）",
 			m.budgetTokens, m.model, agent.ContextWindowForModel(m.model)))
+	case "goal":
+		text := strings.TrimSpace(strings.TrimPrefix(cmd, fields[0]))
+		if text == "" {
+			if m.goal == "" {
+				m.status = m.styles.hint.Render("当前没有长期目标；/goal <目标> 设置")
+			} else {
+				m.status = m.styles.hint.Render("当前目标: " + clipSkillText(m.goal, 120))
+			}
+			break
+		}
+		if text == "clear" || text == "none" {
+			m.goal = ""
+			if m.sess != nil {
+				m.sess.SetGoal("")
+			}
+			m.loopActive = false
+			m.status = m.styles.ok.Render("长期目标已清除")
+			break
+		}
+		m.goal = text
+		if m.sess != nil {
+			m.sess.SetGoal(text)
+		}
+		m.status = m.styles.ok.Render("目标 → " + clipSkillText(text, 80))
+	case "loop":
+		arg := ""
+		if len(fields) > 1 {
+			arg = strings.ToLower(fields[1])
+		}
+		switch arg {
+		case "stop", "off":
+			m.loopActive = false
+			m.status = m.styles.ok.Render("自主循环已停止")
+		case "status":
+			if m.loopActive {
+				m.status = m.styles.hint.Render(fmt.Sprintf("循环中 %d/%d", m.loopIter, m.loopMax))
+			} else {
+				m.status = m.styles.hint.Render("循环未运行（/loop 启动，/loop stop 停止）")
+			}
+		default:
+			if strings.TrimSpace(m.goal) == "" {
+				m.status = m.styles.err.Render("先 /goal <目标> 再 /loop")
+				break
+			}
+			if m.busy {
+				m.status = m.styles.err.Render("当前正忙；先 /interrupt 或等本轮结束")
+				break
+			}
+			maxIter := m.loopMax
+			if maxIter <= 0 {
+				maxIter = 10
+			}
+			if arg != "" {
+				n, err := strconv.Atoi(arg)
+				if err != nil || n < 1 || n > 100 {
+					m.status = m.styles.err.Render("/loop 轮数需在 1–100")
+					break
+				}
+				maxIter = n
+			}
+			m.loopMax, m.loopIter = maxIter, 0
+			m.loopActive = true
+			m.status = m.styles.hint.Render(fmt.Sprintf("▶ 自主循环启动（最多 %d 轮）", maxIter))
+			return m.startThinking(m.loopPrompt(), "", "")
+		}
 	case "clear":
 		m.out = nil
 		m.outScroll = 0
@@ -1332,6 +1430,7 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.queue = nil
 		m.frozenContext = "" // 新会话重新构建快照
 		m.sess = nil         // 丢弃旧会话历史
+		m.loopActive = false
 		m.status = m.styles.ok.Render("新会话 " + m.sessionID)
 	case "save":
 		m.persistSession()
@@ -1343,6 +1442,7 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.appendSessions()
 	case "interrupt":
 		if m.busy && m.aiCancel != nil {
+			m.loopActive = false
 			m.aiCancel()
 			m.status = m.styles.err.Render("⏹ 已中断")
 		} else {
@@ -2369,12 +2469,25 @@ func (m *osModel) startThinking(goal, provider, model string) (tea.Model, tea.Cm
 	ctx, cancel := context.WithCancel(context.Background())
 	m.aiCancel = cancel
 	cmd := tea.Batch(m.spinner.Tick, thinkTick(),
-		runAICmd(ctx, m.base, goal, provider, model, m.frozenContext, m.sess, m.budgetTokens))
+		runAICmd(ctx, m.base, goal, provider, model, m.frozenContext, m.sess, m.budgetTokens, m.goal))
 	if fresh {
 		m.status = m.styles.hint.Render(fmt.Sprintf(
 			"❄ 已冻结上下文快照（%d 字符）：soul/agent/user + skills + 经验 + 记忆", len([]rune(m.frozenContext))))
 	}
 	return m, cmd
+}
+
+// isGoalDone 识别模型是否在最终回复里声明目标完成。
+func isGoalDone(answer string) bool {
+	return strings.Contains(strings.ToUpper(answer), "GOAL_DONE")
+}
+
+// loopPrompt 是自主循环每轮发给模型的推进指令（长期目标由 Session.Goal 注入）。
+func (m *osModel) loopPrompt() string {
+	if m.loopIter == 0 {
+		return "开始执行当前长期目标。每轮只做可验证的一步；完成时在最终回复末尾单独一行输出 `GOAL_DONE: <证据>`。"
+	}
+	return fmt.Sprintf("继续推进当前长期目标（第 %d/%d 轮）。完成时输出 `GOAL_DONE: <证据>`；未完成则说明下一步并继续。", m.loopIter+1, m.loopMax)
 }
 
 // onModelChanged 切换模型后重建会话：旧会话的 chat/model 仍是旧 provider。
@@ -2509,7 +2622,7 @@ func (m *osModel) submitForm() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem string, sess *agent.Session, budget int) tea.Cmd {
+func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem string, sess *agent.Session, budget int, longGoal string) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan tea.Msg, 256)
 		go func() {
@@ -2540,6 +2653,7 @@ func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem stri
 			} else {
 				sess.SetBudget(budget) // /budget 改动下一轮生效
 			}
+			sess.SetGoal(longGoal) // /goal 每轮动态注入，不占历史
 			// 工具执行完立刻投递一行；最终回复最后到达。
 			// 每轮换新通道（复用会话时旧的 OnTool 仍指向上一个已结束的通道）。
 			sess.OnTool = func(ev agent.ToolEvent) {
@@ -3295,6 +3409,7 @@ func (m *osModel) persistSession() {
 		Out:       m.allOutputLines(),
 		Sent:      m.sentLog,
 		Frozen:    m.frozenContext,
+		Goal:      m.goal,
 		Usage:     m.ledger,
 	}
 	if jb, err := json.MarshalIndent(data, "", "  "); err == nil {
@@ -3317,6 +3432,8 @@ type sessionData struct {
 	Sent      []string `json:"sent,omitempty"`
 	// Frozen 是本次会话的冻结上下文快照（--resume 后原样复用，不重建）。
 	Frozen string `json:"frozen,omitempty"`
+	// Goal 是 /goal 的长期目标（--resume 后继续生效）。
+	Goal string `json:"goal,omitempty"`
 	// Usage 是会话累计的真实 token 用量（provider 上报才有；--resume 后继续累计）。
 	Usage ai.UsageLedger `json:"usage,omitempty"`
 }
@@ -4068,6 +4185,7 @@ func cmdOSTUI(args []string) int {
 			if strings.TrimSpace(d.Frozen) != "" {
 				m.frozenContext = d.Frozen // 恢复同一份冻结快照，不重建
 			}
+			m.goal = d.Goal
 			m.out = append(m.out, m.styles.label.Render("── 恢复会话 "+m.sessionID+" ──"))
 			m.out = append(m.out, d.Out...)
 			if len(d.Sent) > 0 {

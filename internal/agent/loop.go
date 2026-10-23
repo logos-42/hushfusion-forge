@@ -88,6 +88,10 @@ type Session struct {
 	// 它比 System 更权威：装配时拼在 System 之前（人格 > 指令）。
 	Persona string
 
+	// Goal 是当前长期目标（/goal 设置）。它不写进 messages 历史，
+	// 而是在每次 assemble 时作为一条 system 消息动态注入，保证不会丢。
+	Goal string
+
 	// Compacted 记录发生过上下文压缩（真实发生过，不是假装无损）。
 	Compacted bool
 
@@ -476,12 +480,25 @@ func (s *Session) AppendSystem(block string) {
 	s.System = s.baseSystem
 }
 
+// SetGoal 设置长期目标；空串表示清除。每轮 assemble 动态注入，不占历史消息。
+func (s *Session) SetGoal(goal string) { s.Goal = strings.TrimSpace(goal) }
+
 // assemble 组装一次模型调用的消息（学 Claude Code 的 assemble() 注入点）：
 // system（persona 优先，随后 skills/指令）在最前，工具 schema 附在请求上，
 // 对话历史原样。
 func (s *Session) assemble() []ai.Message {
 	out := make([]ai.Message, 0, 1+len(s.messages))
-	if sys := s.systemText(); sys != "" {
+	sys := s.systemText()
+	if strings.TrimSpace(s.Goal) != "" {
+		goal := "## 当前长期目标（每轮都要对齐）\n" + s.Goal +
+			"\n\n推进目标时每轮只做可验证的一步；完成时在最终回复末尾单独一行输出 `GOAL_DONE: <证据>`。"
+		if strings.TrimSpace(sys) == "" {
+			sys = goal
+		} else {
+			sys = strings.TrimSpace(sys) + "\n\n" + goal
+		}
+	}
+	if strings.TrimSpace(sys) != "" {
 		out = append(out, ai.Message{Role: "system", Content: sys})
 	}
 	for _, m := range s.messages {

@@ -399,7 +399,7 @@ func TestRunAICmdAgentReply(t *testing.T) {
 	t.Setenv("AI_CUSTOM_API_KEY", "test-key")
 	t.Setenv("HUSHFUSION_AI_BASE_URL", srv.URL)
 
-	msg := runAICmd(context.Background(), base, "你好", "custom", "m", "", nil, 12000)()
+	msg := runAICmd(context.Background(), base, "你好", "custom", "m", "", nil, 12000, "")()
 	res, ok := msg.(aiResultMsg)
 	if !ok {
 		t.Fatalf("消息类型 = %T", msg)
@@ -806,6 +806,37 @@ func TestCompressCommand(t *testing.T) {
 	}
 	if msg.err != nil || msg.removed == 0 || !strings.Contains(msg.summary, "SUMMARY") {
 		t.Fatalf("compress 结果: %+v", msg)
+	}
+}
+
+// /goal 设置/清除目标；/loop 需要目标，启动后进入自主循环状态。
+func TestSlashGoalAndLoop(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	if _, _ = m.runSlash("goal 完成 D9857 线圈优化"); m.goal != "完成 D9857 线圈优化" {
+		t.Fatalf("goal = %q", m.goal)
+	}
+	if m2 := newOSModel(base, mustLoad(t, base)); func() bool {
+		_, cmd := m2.runSlash("loop")
+		return m2.loopActive || cmd != nil
+	}() {
+		t.Fatal("没有目标时 /loop 不应启动")
+	}
+	_, cmd := m.runSlash("loop 3")
+	if !m.loopActive || m.loopMax != 3 || m.loopIter != 0 || cmd == nil {
+		t.Fatalf("loop 状态: active=%v max=%d iter=%d cmd=%v", m.loopActive, m.loopMax, m.loopIter, cmd != nil)
+	}
+	if _, _ = m.runSlash("loop stop"); m.loopActive {
+		t.Fatal("loop stop 未停止")
+	}
+	if _, _ = m.runSlash("goal clear"); m.goal != "" {
+		t.Fatal("goal clear 未清除")
+	}
+	if !isGoalDone("推进完成\nGOAL_DONE: 测试通过") {
+		t.Fatal("应识别 GOAL_DONE")
+	}
+	if isGoalDone("还没完成") {
+		t.Fatal("普通回复不应算完成")
 	}
 }
 
