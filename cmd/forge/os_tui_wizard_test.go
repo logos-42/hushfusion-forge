@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 )
@@ -81,9 +82,12 @@ func TestModelWizardFullFlowAppliesKeyAndURL(t *testing.T) {
 
 	// 上下键能移动光标（相对位移断言，不依赖列表长度）。
 	before := m.wiz.cursor
-	if len(m.wiz.providers) > 1 {
+	if len(m.wiz.provShown) > 1 {
 		m = pressKey(t, m, rune(tea.KeyDown))
-		want := (before + 1) % len(m.wiz.providers)
+		want := before + 1
+		if want >= len(m.wiz.provShown) {
+			want = len(m.wiz.provShown) - 1
+		}
 		if m.wiz.cursor != want {
 			t.Fatalf("↓ 应从 %d 移到 %d, got %d", before, want, m.wiz.cursor)
 		}
@@ -386,6 +390,68 @@ func TestModelWizardKeyPaste(t *testing.T) {
 	m = pressEnter(t, m)
 	if m.wiz == nil || m.wiz.step != wizStepModel {
 		t.Fatalf("粘贴后 Enter 应进入 model 步, got %+v", m.wiz)
+	}
+}
+
+// provider 步支持关键词搜索（名称/显示名/默认模型）。
+func TestModelWizardProviderSearch(t *testing.T) {
+	m := openWizard(t)
+	all := len(m.wiz.provShown)
+	m.wiz.provFilter.SetValue("deep")
+	m.applyProviderFilter()
+	if len(m.wiz.provShown) == 0 || len(m.wiz.provShown) >= all {
+		t.Fatalf("provider 搜索应缩小列表: all=%d got=%d", all, len(m.wiz.provShown))
+	}
+	for _, p := range m.wiz.provShown {
+		hay := strings.ToLower(p.Name + " " + p.DisplayName + " " + p.DefaultModel)
+		if !strings.Contains(hay, "deep") {
+			t.Fatalf("过滤结果含不匹配项: %s", p.Name)
+		}
+	}
+}
+
+// 弹窗不再显示「步骤 N/5」，provider/模型步都有搜索栏，操作提示带框。
+func TestModelWizardBodyVisuals(t *testing.T) {
+	m := openWizard(t)
+	body := m.wizardBody()
+	if strings.Contains(body, "步骤") {
+		t.Fatalf("不应显示步骤提示: %q", body)
+	}
+	if !strings.Contains(body, "搜索 provider") {
+		t.Fatalf("provider 步应有搜索栏: %q", body)
+	}
+	if !strings.Contains(body, "╭") {
+		t.Fatalf("操作提示应带框: %q", body)
+	}
+	m = pressEnter(t, m) // provider → key
+	m = pressEnter(t, m) // keep → model
+	body = m.wizardBody()
+	if !strings.Contains(body, "搜索模型") {
+		t.Fatalf("模型步应有搜索栏: %q", body)
+	}
+	if !strings.Contains(body, "╭") {
+		t.Fatalf("模型步操作提示应带框: %q", body)
+	}
+}
+
+// 弹窗在常见终端尺寸（80 列）下不横向溢出。
+func TestModelWizardViewFitsWidth(t *testing.T) {
+	m := openWizard(t)
+	m.width, m.height = 80, 24
+	for _, step := range []int{wizStepProvider, wizStepKey, wizStepModel, wizStepURL, wizStepConfirm} {
+		m.wiz.step = step
+		if step >= wizStepKey && m.wiz.provider == nil {
+			m.wiz.provider = m.wiz.provShown[0]
+		}
+		for _, line := range strings.Split(m.View().Content, "\n") {
+			// 只看对话框（外框是 ║/╔/╚），跳过 banner 与状态栏。
+			if !strings.ContainsAny(line, "║╔╚╗╝") {
+				continue
+			}
+			if w := lipgloss.Width(line); w > 82 {
+				t.Fatalf("step %d 弹窗行宽 %d 超过终端 80: %q", step, w, line)
+			}
+		}
 	}
 }
 

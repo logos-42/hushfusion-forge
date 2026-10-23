@@ -185,6 +185,13 @@ type uiStyles struct {
 	dialog      lipgloss.Style
 	dialogTitle lipgloss.Style
 	header      lipgloss.Style
+	// 向导专用：accent=加粗亮蓝（provider/模型名），bright=高亮正文，
+	// sel=选中行（蓝底白字），searchBar=带下划线的搜索框，hintBox=亮眼的操作提示框。
+	accent    lipgloss.Style
+	bright    lipgloss.Style
+	sel       lipgloss.Style
+	searchBar lipgloss.Style
+	hintBox   lipgloss.Style
 }
 
 type formModel struct {
@@ -210,6 +217,10 @@ type modelWizard struct {
 	keyAction  string // "keep" | "replace" | "clear"
 	keyEditing bool   // replace 子态：正在输入新 key
 	key        textinput.Model
+
+	// provider 步：搜索栏 + 上下选择（cursor 指 provShown 的下标）
+	provFilter textinput.Model
+	provShown  []*ai.Profile
 
 	// 模型步：内置型号 + 关键词筛选 + 上下选择
 	filter     textinput.Model
@@ -442,6 +453,11 @@ func (m *osModel) initStyles() {
 		dialog:      lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).BorderForeground(lipgloss.Color("51")).Padding(1, 2),
 		dialogTitle: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")),
 		header:      lipgloss.NewStyle().Foreground(lipgloss.Color("250")),
+		accent:      lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")),
+		bright:      lipgloss.NewStyle().Foreground(lipgloss.Color("255")),
+		sel:         lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("24")),
+		searchBar:   lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, false, true, false).BorderForeground(lipgloss.Color("39")).Padding(0, 1),
+		hintBox:     lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("39")).Padding(0, 1).Bold(true).Foreground(lipgloss.Color("231")).Background(lipgloss.Color("24")),
 	}
 }
 
@@ -1099,25 +1115,59 @@ func (m *osModel) openModelWizard() (tea.Model, tea.Cmd) {
 		}
 		w.providers = append(w.providers, p)
 	}
-	for i, p := range w.providers {
+	w.provFilter = newWizInput("搜索 provider…")
+	w.provFilter.SetWidth(40)
+	w.provFilter.Focus()
+	w.provShown = w.providers
+	for i, p := range w.provShown {
 		if p.Name == m.provider {
 			w.cursor = i
 		}
 	}
 	w.key = newWizInput("输入新 API key（掩码，不落盘）")
 	w.key.EchoMode = textinput.EchoPassword // 输入不显形
-	w.filter = newWizInput("输入关键词筛选模型…")
+	w.filter = newWizInput("搜索模型…")
+	w.filter.SetWidth(40)
 	w.url = newWizInput("Base URL")
 	m.wiz = w
 	m.state = stateModelWizard
-	m.status = m.styles.hint.Render("模型向导：↑↓ 选 provider · Enter 下一步 · Esc 上一步/取消")
+	m.status = m.styles.hint.Render("模型向导：输入关键词搜索 provider · ↑↓ 选择 · Enter 下一步 · Esc 取消")
 	return m, nil
+}
+
+// applyProviderFilter 按搜索栏内容过滤 provider 列表（名称/显示名/默认模型）。
+func (m *osModel) applyProviderFilter() {
+	w := m.wiz
+	q := strings.ToLower(strings.TrimSpace(w.provFilter.Value()))
+	shown := make([]*ai.Profile, 0, len(w.providers))
+	for _, p := range w.providers {
+		if q == "" ||
+			strings.Contains(strings.ToLower(p.Name), q) ||
+			strings.Contains(strings.ToLower(p.DisplayName), q) ||
+			strings.Contains(strings.ToLower(p.DefaultModel), q) {
+			shown = append(shown, p)
+		}
+	}
+	w.provShown = shown
+	if w.cursor >= len(shown) {
+		w.cursor = len(shown) - 1
+	}
+	if w.cursor < 0 {
+		w.cursor = 0
+	}
 }
 
 func newWizInput(placeholder string) textinput.Model {
 	ti := textinput.New()
 	ti.Placeholder = placeholder
 	ti.SetWidth(64)
+	// 亮色正文（默认主题在深色终端上偏暗，用户反馈「字体颜色太暗」）。
+	st := textinput.DefaultDarkStyles()
+	st.Focused.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+	st.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+	st.Blurred.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	st.Blurred.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	ti.SetStyles(st)
 	return ti
 }
 
@@ -1211,24 +1261,50 @@ func (m *osModel) updateWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.wiz, m.state = nil, statePanels
 			m.status = m.styles.err.Render("已取消模型设置")
-		case "up", "k":
-			if len(w.providers) > 0 {
-				w.cursor = (w.cursor - 1 + len(w.providers)) % len(w.providers)
+		case "up":
+			if w.cursor > 0 {
+				w.cursor--
 			}
-		case "down", "j":
-			if len(w.providers) > 0 {
-				w.cursor = (w.cursor + 1) % len(w.providers)
+		case "down":
+			if w.cursor < len(w.provShown)-1 {
+				w.cursor++
+			}
+		case "pgup":
+			w.cursor -= m.wizListRows()
+			if w.cursor < 0 {
+				w.cursor = 0
+			}
+		case "pgdown":
+			w.cursor += m.wizListRows()
+			if w.cursor >= len(w.provShown) {
+				w.cursor = len(w.provShown) - 1
+			}
+			if w.cursor < 0 {
+				w.cursor = 0
+			}
+		case "home":
+			w.cursor = 0
+		case "end":
+			w.cursor = len(w.provShown) - 1
+			if w.cursor < 0 {
+				w.cursor = 0
 			}
 		case "enter":
-			if len(w.providers) == 0 {
-				m.status = m.styles.err.Render("没有可用的 provider")
+			if len(w.provShown) == 0 {
+				m.status = m.styles.err.Render("没有匹配的 provider")
 				return m, nil
 			}
-			w.provider = w.providers[w.cursor]
+			w.provider = w.provShown[w.cursor]
 			w.url.SetValue(w.provider.BaseURL) // 预填 profile 默认，可改成内网网关
 			w.keyAction, w.keyEditing = "keep", false
 			w.key.SetValue("")
+			w.provFilter.Blur()
 			w.step = wizStepKey // 先填 API，后选模型和 URL
+		default:
+			var cmd tea.Cmd
+			w.provFilter, cmd = w.provFilter.Update(msg)
+			m.applyProviderFilter()
+			return m, cmd
 		}
 		return m, nil
 
@@ -1432,80 +1508,82 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// wizardBody 渲染向导当前步骤（已完成步骤打 ✓，当前步骤打 ▶）。
+// wizardBody 渲染向导当前步骤（不再显示「步骤 N/5」提示，聚焦当前步内容）。
 func (m *osModel) wizardBody() string {
 	w := m.wiz
 	if w == nil {
 		return ""
 	}
-	var b strings.Builder
-	mark := func(step int) string {
-		switch {
-		case w.step == step:
-			return "▶ "
-		case w.step > step:
-			return "✓ "
-		default:
-			return "  "
-		}
-	}
-	stepName := []string{"provider", "api key", "模型", "base url", "确认"}
-	b.WriteString(m.styles.label.Render(fmt.Sprintf("步骤 %d/5 · %s", w.step+1, stepName[w.step])) + "\n\n")
-
 	if w.step == wizStepProvider {
-		rows := m.wizListRows()
-		start, end := windowAround(w.cursor, len(w.providers), rows)
-		for i := start; i < end; i++ {
-			p := w.providers[i]
-			cursor := "  "
-			if i == w.cursor {
-				cursor = "❯ "
-			}
-			keyState := "无 key"
-			if modelKeySet(p) {
-				keyState = "key ✓"
-			}
-			line := fmt.Sprintf("%s%-14s %-24s 默认 %-20s %s", cursor, p.Name, p.DisplayName, p.DefaultModel, keyState)
-			if i == w.cursor {
-				b.WriteString(m.styles.ok.Render(clipWizLine(line, 76)) + "\n")
-			} else {
-				b.WriteString(m.styles.hint.Render(clipWizLine(line, 76)) + "\n")
-			}
-		}
-		b.WriteString(m.scrollHint(w.cursor, len(w.providers), rows))
-	} else {
-		b.WriteString(m.styles.hint.Render(fmt.Sprintf("  provider: %s（%s）", w.provider.Name, w.provider.DisplayName)) + "\n\n")
+		return m.renderProviderStep()
 	}
+	var b strings.Builder
+	// 已选 provider 的上下文（加粗亮蓝）。
+	b.WriteString(m.styles.accent.Render(w.provider.Name) + m.styles.bright.Render("  "+w.provider.DisplayName) + "\n\n")
 
-	if w.step == wizStepKey {
+	switch w.step {
+	case wizStepKey:
 		b.WriteString(m.renderKeyStep())
-	} else if w.step > wizStepKey {
-		b.WriteString(mark(wizStepKey) + "api key  : " + w.keyActionLabel() + "\n")
-	}
-
-	if w.step == wizStepModel {
+	case wizStepModel:
 		b.WriteString(m.renderModelStep())
-	} else if w.step > wizStepModel {
-		b.WriteString(mark(wizStepModel) + "model    : " + orDefault(w.model, w.provider.DefaultModel) + "\n")
-	}
-
-	if w.step == wizStepURL {
-		b.WriteString(m.styles.label.Render("Base URL：") + "\n" + w.url.View() + "\n")
-	} else if w.step > wizStepURL {
-		b.WriteString(mark(wizStepURL) + "base url : " + orDefault(strings.TrimSpace(w.url.Value()), "（空 = provider 默认）") + "\n")
-	}
-
-	if w.step == wizStepConfirm {
-		b.WriteString("\n" + m.styles.ok.Render("确认后立即生效：") + "\n")
-		b.WriteString(fmt.Sprintf("  provider : %s\n", w.provider.Name))
-		b.WriteString(fmt.Sprintf("  model    : %s\n", orDefault(w.model, w.provider.DefaultModel)))
-		b.WriteString(fmt.Sprintf("  api key  : %s\n", w.keyActionLabel()))
-		b.WriteString(fmt.Sprintf("  base url : %s\n", orDefault(strings.TrimSpace(w.url.Value()), "（空 = provider 默认）")))
-		b.WriteString("\n" + m.styles.hint.Render("Enter 应用 · Esc 返回修改"))
-	} else {
-		b.WriteString("\n" + m.styles.hint.Render("Enter 下一步 · Esc 上一步 · Ctrl+C 中断"))
+	case wizStepURL:
+		b.WriteString(m.styles.accent.Render("Base URL") + "\n" + w.url.View() + "\n\n")
+		b.WriteString(m.renderHintBox("Enter 下一步 · Esc 上一步"))
+	default: // wizStepConfirm
+		b.WriteString(m.styles.accent.Render("确认后立即生效") + "\n\n")
+		row := func(label, val string) {
+			b.WriteString(m.styles.accent.Render(fmt.Sprintf("%-10s", label)) + m.styles.bright.Render(val) + "\n")
+		}
+		row("provider", w.provider.Name)
+		row("model", orDefault(w.model, w.provider.DefaultModel))
+		row("api key", w.keyActionLabel())
+		row("base url", orDefault(strings.TrimSpace(w.url.Value()), "（空 = provider 默认）"))
+		b.WriteString("\n" + m.renderHintBox("Enter 应用 · Esc 返回修改"))
 	}
 	return b.String()
+}
+
+// renderProviderStep 渲染 provider 步：搜索栏 + 加粗蓝名称列表（选中行蓝底白字）。
+func (m *osModel) renderProviderStep() string {
+	w := m.wiz
+	var b strings.Builder
+	b.WriteString(m.renderSearchBar(m.styles.accent.Render("搜索 provider")+"  ", w.provFilter))
+	rows := m.wizListRows()
+	b.WriteString(m.styles.bright.Render(fmt.Sprintf("  %d 个候选", len(w.provShown))) + "\n")
+	if len(w.provShown) == 0 {
+		b.WriteString(m.styles.bright.Render("  无匹配；换个关键词试试") + "\n")
+	}
+	start, end := windowAround(w.cursor, len(w.provShown), rows)
+	for i := start; i < end; i++ {
+		p := w.provShown[i]
+		keyState := "无 key"
+		if modelKeySet(p) {
+			keyState = "key ✓"
+		}
+		name := clipRunes(p.Name, 12)
+		disp := clipRunes(p.DisplayName, 18)
+		def := clipRunes(p.DefaultModel, 15)
+		if i == w.cursor {
+			line := fmt.Sprintf("❯ %-12s %-20s 默认 %-16s %s", name, disp, def, keyState)
+			b.WriteString(m.styles.sel.Render(clipWizLine(line, 68)) + "\n")
+		} else {
+			b.WriteString("  " + m.styles.accent.Render(fmt.Sprintf("%-12s", name)) +
+				m.styles.bright.Render(fmt.Sprintf(" %-20s 默认 %-16s %s", disp, def, keyState)) + "\n")
+		}
+	}
+	b.WriteString(m.scrollHint(w.cursor, len(w.provShown), rows))
+	b.WriteString("\n" + m.renderHintBox("输入关键词搜索 · ↑↓ 选择 · Enter 下一步 · Esc 取消"))
+	return b.String()
+}
+
+// renderSearchBar 渲染带蓝色下划线的搜索栏（亮色正文）。
+func (m *osModel) renderSearchBar(label string, input textinput.Model) string {
+	return m.styles.searchBar.Render("🔍 "+label+input.View()) + "\n"
+}
+
+// renderHintBox 把操作提示放进亮眼圆角框（蓝底白字加粗）。
+func (m *osModel) renderHintBox(text string) string {
+	return m.styles.hintBox.Render(text) + "\n"
 }
 
 // renderKeyStep 渲染 API key 步（keep / replace / clear 三选一，或 replace 输入态）。
@@ -1517,10 +1595,10 @@ func (m *osModel) renderKeyStep() string {
 	if modelKeySet(w.provider) {
 		state = "已有 key（env: " + envs + "）"
 	}
-	b.WriteString(m.styles.hint.Render("  当前: "+state) + "\n\n")
+	b.WriteString(m.styles.bright.Render("当前: "+state) + "\n\n")
 	if w.keyEditing {
-		b.WriteString(m.styles.label.Render("新 API key（掩码，不落盘）：") + "\n" + w.key.View() + "\n")
-		b.WriteString(m.styles.hint.Render("Enter 确认 · Esc 返回"))
+		b.WriteString(m.styles.accent.Render("新 API key（掩码，不落盘）") + "\n" + w.key.View() + "\n\n")
+		b.WriteString(m.renderHintBox("Enter 确认 · Esc 返回"))
 		return b.String()
 	}
 	for _, o := range []struct{ k, label string }{
@@ -1528,47 +1606,46 @@ func (m *osModel) renderKeyStep() string {
 		{"r", "replace（输入新 key）"},
 		{"c", "clear（清除该 provider 的 key）"},
 	} {
-		b.WriteString(fmt.Sprintf("  [%s] %s\n", o.k, o.label))
+		b.WriteString("  " + m.styles.accent.Render("["+o.k+"]") + " " + m.styles.bright.Render(o.label) + "\n")
 	}
-	b.WriteString("\n" + m.styles.hint.Render("按 k / r / c 选择 · Esc 上一步"))
+	b.WriteString("\n" + m.renderHintBox("按 k / r / c 选择 · Esc 上一步"))
 	return b.String()
 }
 
-// renderModelStep 渲染模型步：筛选框 + 可滚动列表（置顶分组带标记）。
+// renderModelStep 渲染模型步：搜索栏 + 可滚动列表（名称蓝粗、选中蓝底白字）。
 // 列表行数随终端高度自适应；↑↓ 逐条移动，PgUp/PgDn 翻页，Home/End 首尾。
 func (m *osModel) renderModelStep() string {
 	w := m.wiz
 	var b strings.Builder
-	b.WriteString(m.styles.label.Render("筛选：") + w.filter.View() + "\n")
+	b.WriteString(m.renderSearchBar(m.styles.accent.Render("搜索模型")+"  ", w.filter))
 	busy := ""
 	if w.modelsBusy {
 		busy = "  · 解析 /models 中…"
 	}
 	rows := m.wizListRows()
-	b.WriteString(m.styles.hint.Render(fmt.Sprintf("  %d 个候选%s", len(w.modelShown), busy)) + "\n")
+	b.WriteString(m.styles.bright.Render(fmt.Sprintf("  %d 个候选%s", len(w.modelShown), busy)) + "\n")
 	if len(w.modelShown) == 0 {
 		if strings.TrimSpace(w.filter.Value()) != "" {
-			b.WriteString(m.styles.hint.Render("  无匹配 —— Enter 可把关键词作为自定义模型 id\n"))
+			b.WriteString(m.styles.bright.Render("  无匹配 —— Enter 可把关键词作为自定义模型 id") + "\n")
 		} else {
-			b.WriteString(m.styles.hint.Render("  无内置候选；输入关键词可直接指定模型 id\n"))
+			b.WriteString(m.styles.bright.Render("  无内置候选；输入关键词可直接指定模型 id") + "\n")
 		}
 	}
 	start, end := windowAround(w.modelSel, len(w.modelShown), rows)
 	for i := start; i < end; i++ {
-		id := w.modelShown[i]
-		cursor := "  "
+		full := w.modelShown[i]
+		tag := m.modelTag(full)
+		id := clipRunes(full, 40)
 		if i == w.modelSel {
-			cursor = "❯ "
-		}
-		line := fmt.Sprintf("%s%-42s %s", cursor, id, m.modelTag(id))
-		if i == w.modelSel {
-			b.WriteString(m.styles.ok.Render(clipWizLine(line, 76)) + "\n")
+			line := fmt.Sprintf("❯ %-40s %s", id, tag)
+			b.WriteString(m.styles.sel.Render(clipWizLine(line, 72)) + "\n")
 		} else {
-			b.WriteString(m.styles.hint.Render(clipWizLine(line, 76)) + "\n")
+			b.WriteString("  " + m.styles.accent.Render(fmt.Sprintf("%-40s", id)) +
+				" " + m.styles.bright.Render(tag) + "\n")
 		}
 	}
 	b.WriteString(m.scrollHint(w.modelSel, len(w.modelShown), rows))
-	b.WriteString("\n" + m.styles.hint.Render("↑↓ 选择 · PgUp/PgDn 翻页 · 输入筛选 · Enter 确认 · Esc 返回"))
+	b.WriteString("\n" + m.renderHintBox("↑↓ 选择 · PgUp/PgDn 翻页 · 输入搜索 · Enter 确认 · Esc 返回"))
 	return b.String()
 }
 
@@ -1578,7 +1655,7 @@ func (m *osModel) scrollHint(sel, total, rows int) string {
 		return ""
 	}
 	start, end := windowAround(sel, total, rows)
-	return m.styles.hint.Render(fmt.Sprintf("  …（%d–%d / %d，PgUp/PgDn 翻页）…\n", start+1, end, total))
+	return m.styles.bright.Render(fmt.Sprintf("  …（%d–%d / %d，PgUp/PgDn 翻页）…\n", start+1, end, total))
 }
 
 // wizListRows 是向导列表可用的行数（随终端高度自适应，给弹窗留足空间）。
@@ -1671,6 +1748,15 @@ func clipWizLine(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
+}
+
+// clipRunes 把字符串按 rune 截断到 n 个字符（不加省略号，供定宽列对齐）。
+func clipRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 // keyPreview 把 key 变成可展示的摘要：永远不打印明文。
@@ -2169,7 +2255,7 @@ func (m *osModel) View() tea.View {
 	case stateForm:
 		b.WriteString(m.renderDialog("录入："+m.form.title, m.formBody()))
 	case stateModelWizard:
-		b.WriteString(m.renderDialog("模型设置（分步）", m.wizardBody()))
+		b.WriteString(m.renderDialog("模型设置", m.wizardBody()))
 	case stateThinking:
 		b.WriteString(m.renderDialog("AI 思考中", m.thinkingBody()))
 	case stateReport:
