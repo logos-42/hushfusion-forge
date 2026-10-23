@@ -477,6 +477,43 @@ func TestAIResultShowsAnswer(t *testing.T) {
 	}
 }
 
+// 空闲心跳：做梦写 dreams.md、整理工作流写 memory/workflow.md 并写入记忆。
+func TestIdleHeartbeatActions(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.lastActivity = time.Now().Add(-time.Hour)
+	m.lastIdleRun = time.Time{}
+	m.lastGoal = "测试目标"
+	m.toolLog = []string{"📖 Read index.md  0.01s"}
+	m.out = append(m.out, "这是一段足够长的测试结论，用来做梦与整理工作流。")
+	m.idlePulse()
+
+	if _, err := os.Stat(filepath.Join(base, "dreams.md")); err != nil {
+		t.Fatalf("dreams.md 未生成: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "memory", "workflow.md")); err != nil {
+		t.Fatalf("workflow.md 未生成: %v", err)
+	}
+	if _, ok := m.mem.Get("workflow"); !ok {
+		t.Fatal("workflow 未写入记忆")
+	}
+	if !strings.Contains(stripANSI(m.status), "空闲心跳") {
+		t.Fatalf("状态未显示空闲心跳: %q", m.status)
+	}
+}
+
+func TestIdleHeartbeatSkipsBusy(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.busy = true
+	m.lastActivity = time.Now().Add(-time.Hour)
+	m.lastIdleRun = time.Time{}
+	m.idlePulse()
+	if _, err := os.Stat(filepath.Join(base, "dreams.md")); err == nil {
+		t.Fatal("忙时不应做梦")
+	}
+}
+
 // 每轮沉淀经验：同一 skill 追加多条，且能被 agent 索引（下次启动复用）。
 func TestEvolvedSkillAccumulates(t *testing.T) {
 	base := setupTempOS(t)

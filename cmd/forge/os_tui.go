@@ -135,9 +135,13 @@ type osModel struct {
 	// 会话 / 头部元信息
 	sessionID string
 	startTime time.Time
-	provider  string
-	model     string
-	cacheHit  string
+
+	// 空闲心跳：最后一次用户活动 / 最后一次空闲动作的时间。
+	lastActivity time.Time
+	lastIdleRun  time.Time
+	provider     string
+	model        string
+	cacheHit     string
 
 	// 真实用量（provider 上报才有）：会话累计账本 + provider 实际回报的模型名。
 	ledger    ai.UsageLedger
@@ -425,17 +429,18 @@ func newOSModel(base string, snap *osview.Snapshot) *osModel {
 	// 先加载 workspace config 并注入环境变量，后面的 envOr 才能读到。
 	applyWorkspaceConfig(base)
 	m := &osModel{
-		base:      base,
-		snap:      snap,
-		panels:    buildPanels(snap),
-		state:     statePanels,
-		width:     100,
-		height:    30,
-		sessionID: fmt.Sprintf("sess-%s-%04d", time.Now().Format("0102-150405"), time.Now().UnixNano()%10000),
-		startTime: time.Now(),
-		provider:  envOr("HUSHFUSION_AI_PROVIDER", "zai"),
-		model:     envOr("HUSHFUSION_AI_MODEL", "default"),
-		cacheHit:  "–",
+		base:         base,
+		snap:         snap,
+		panels:       buildPanels(snap),
+		state:        statePanels,
+		width:        100,
+		height:       30,
+		sessionID:    fmt.Sprintf("sess-%s-%04d", time.Now().Format("0102-150405"), time.Now().UnixNano()%10000),
+		startTime:    time.Now(),
+		lastActivity: time.Now(),
+		provider:     envOr("HUSHFUSION_AI_PROVIDER", "zai"),
+		model:        envOr("HUSHFUSION_AI_MODEL", "default"),
+		cacheHit:     "–",
 	}
 	m.initStyles()
 	m.spinner = spinner.New(
@@ -451,6 +456,7 @@ func newOSModel(base string, snap *osview.Snapshot) *osModel {
 	m.verbose = 1
 	m.indicator = "kaomoji"
 	m.mem = agent.NewMemStore() // 默认纯内存；cmdOSTUI --persist 会换成文件后备
+	m.loadWorkflowMemory()      // 恢复上次空闲沉淀的工作流记忆
 	// 检查工作区经验 skill：存在则加载（第二轮打开同一目录也能复用/继续迭代）。
 	if b := ensureEvolvedSkill(base); b != "" {
 		if n := strings.Count(b, "\n## "); n > 0 {
@@ -512,7 +518,163 @@ func (m *osModel) initStyles() {
 // ---------------------------------------------------------------------------
 
 func (m *osModel) Init() tea.Cmd {
-	return tea.Batch(secondTick(), m.startLoad())
+	return tea.Batch(secondTick(), heartbeatTick(), m.startLoad())
+}
+
+// 空闲心跳：无输入一段时间后，自动做梦 / 进化 skill / 整理工作流并写入记忆。
+const (
+	heartbeatInterval = 15 * time.Second
+	idleThreshold     = 45 * time.Second
+	idleCooldown      = 2 * time.Minute
+)
+
+type heartbeatMsg struct{}
+
+func heartbeatTick() tea.Cmd {
+	return tea.Tick(heartbeatInterval, func(time.Time) tea.Msg { return heartbeatMsg{} })
+}
+
+func (m *osModel) idlePulse() {
+	if m.busy || m.loading {
+		return
+	}
+	if time.Since(m.lastActivity) < idleThreshold {
+		return
+	}
+	if time.Since(m.lastIdleRun) < idleCooldown {
+		return
+	}
+	m.lastIdleRun = time.Now()
+	var parts []string
+	if m.dream() {
+		parts = append(parts, "做梦")
+	}
+	if m.compactEvolvedSkill() {
+		parts = append(parts, "进化 skill")
+	}
+	m.organizeWorkflow()
+	parts = append(parts, "整理工作流")
+	m.status = m.styles.hint.Render("💤 空闲心跳：" + strings.Join(parts, " + "))
+}
+
+// dream 把近期回复里的碎片重新拼成一条“梦”，追加到 os/dreams.md（不调模型）。
+func (m *osModel) dream() bool {
+	pool := append([]string(nil), m.out...)
+	for _, blk := range m.replyBlocks {
+		pool = append(pool, blk...)
+	}
+	var picks []string
+	for i := len(pool) - 1; i >= 0 && len(picks) < 3; i-- {
+		s := strings.TrimSpace(stripANSI(pool[i]))
+		if len([]rune(s)) >= 12 {
+			picks = append(picks, s)
+		}
+	}
+	if len(picks) == 0 {
+		return false
+	}
+	line := fmt.Sprintf("\n## %s · 空闲梦\n%s\n", time.Now().Format("2006-01-02 15:04"), strings.Join(picks, " … "))
+	f, err := os.OpenFile(filepath.Join(m.base, "dreams.md"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	_, err = f.WriteString(line)
+	return err == nil
+}
+
+// compactEvolvedSkill 去重并裁剪经验 skill（相同结论只留最新一条）。
+func (m *osModel) compactEvolvedSkill() bool {
+	b, err := os.ReadFile(evolvedSkillPath(m.base))
+	if err != nil {
+		return false
+	}
+	content := string(b)
+	const marker = "\n# 历史经验\n"
+	i := strings.Index(content, marker)
+	if i < 0 {
+		return false
+	}
+	head := content[:i+len(marker)]
+	parts := strings.Split(content[i+len(marker):], "\n## ")
+	seen := map[string]bool{}
+	var kept []string
+	changed := false
+	for j := len(parts) - 1; j >= 0; j-- {
+		p := parts[j]
+		key := ""
+		for _, ln := range strings.Split(p, "\n") {
+			t := strings.TrimSpace(ln)
+			if strings.HasPrefix(t, "- 结论:") {
+				key = strings.TrimSpace(strings.TrimPrefix(t, "- 结论:"))
+			}
+		}
+		if key != "" && seen[key] {
+			changed = true
+			continue
+		}
+		if key != "" {
+			seen[key] = true
+		}
+		kept = append([]string{p}, kept...)
+	}
+	if len(kept) > 60 {
+		kept = kept[len(kept)-60:]
+		changed = true
+	}
+	if !changed {
+		return false
+	}
+	return os.WriteFile(evolvedSkillPath(m.base), []byte(head+strings.Join(kept, "\n## ")), 0o644) == nil
+}
+
+// organizeWorkflow 把当前工作流沉淀到 os/memory/workflow.md，并写进 agent 记忆供下轮回调。
+func (m *osModel) organizeWorkflow() {
+	dir := filepath.Join(m.base, "memory")
+	_ = os.MkdirAll(dir, 0o755)
+	var b strings.Builder
+	b.WriteString("# 工作流快照\n\n")
+	b.WriteString("- 时间: " + time.Now().Format("2006-01-02 15:04") + "\n")
+	b.WriteString("- 会话: " + m.sessionID + "\n")
+	b.WriteString("- 最近目标: " + firstNonEmptyStr(m.lastGoal, "（无）") + "\n")
+	b.WriteString(fmt.Sprintf("- 工具调用: %d（✓%d / ✗%d）\n", m.toolCalls, m.toolOK, m.toolFail))
+	if len(m.toolLog) > 0 {
+		b.WriteString("\n## 最近工具\n")
+		start := len(m.toolLog) - 10
+		if start < 0 {
+			start = 0
+		}
+		for _, l := range m.toolLog[start:] {
+			b.WriteString("- " + strings.TrimSpace(stripANSI(l)) + "\n")
+		}
+	}
+	if len(m.panels) > 0 {
+		b.WriteString("\n## 面板\n")
+		for _, p := range m.panels {
+			b.WriteString("### " + p.name + "\n")
+			for i, l := range p.lines() {
+				if i >= 3 {
+					break
+				}
+				b.WriteString("- " + strings.TrimSpace(stripANSI(l)) + "\n")
+			}
+		}
+	}
+	body := b.String()
+	_ = os.WriteFile(filepath.Join(dir, "workflow.md"), []byte(body), 0o644)
+	if m.mem != nil {
+		m.mem.Set("workflow", clipSkillText(body, 1200))
+	}
+}
+
+// loadWorkflowMemory 启动时把上次沉淀的工作流恢复到 agent 记忆。
+func (m *osModel) loadWorkflowMemory() {
+	if m.mem == nil {
+		return
+	}
+	if b, err := os.ReadFile(filepath.Join(m.base, "memory", "workflow.md")); err == nil {
+		m.mem.Set("workflow", clipSkillText(string(b), 1200))
+	}
 }
 
 func (m *osModel) startLoad() tea.Cmd {
@@ -539,6 +701,9 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case secondTickMsg:
 		return m, secondTick() // 驱动 header 运行时间每秒刷新
+	case heartbeatMsg:
+		m.idlePulse()
+		return m, heartbeatTick()
 	case loadTickMsg:
 		m.progPct += 20
 		if m.progPct >= 100 {
@@ -562,8 +727,10 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wizModelsMsg:
 		return m.onWizModels(msg)
 	case tea.PasteMsg:
+		m.lastActivity = time.Now()
 		return m.handlePaste(msg)
 	case tea.KeyPressMsg:
+		m.lastActivity = time.Now()
 		return m.updateKey(msg)
 	}
 	return m, nil
@@ -3374,6 +3541,7 @@ func cmdOSTUI(args []string) int {
 		}
 		if st, merr := agent.NewMemStoreFile(path); merr == nil {
 			m.mem = st
+			m.loadWorkflowMemory()
 			m.out = append(m.out, m.styles.ok.Render("✓ 记忆持久化: "+path))
 		} else {
 			fmt.Fprintln(os.Stderr, "os tui: 记忆文件不可用（退回内存模式）:", merr)
