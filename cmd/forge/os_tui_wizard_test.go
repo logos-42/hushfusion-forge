@@ -455,6 +455,59 @@ func TestModelWizardViewFitsWidth(t *testing.T) {
 	}
 }
 
+// custom/local 的 /models 结果排在占位默认之前；普通 provider 内置在前。
+func TestBuildWizardModelListOrder(t *testing.T) {
+	base := t.TempDir()
+	custom := &ai.Profile{Name: "custom", DefaultModel: "custom-model"}
+	ids := buildWizardModelList(base, custom, []string{"m1", "m2"})
+	if len(ids) < 2 || ids[0] != "m1" || ids[1] != "m2" {
+		t.Fatalf("custom 应把解析模型放前面, got %v", ids)
+	}
+	ds := &ai.Profile{Name: "deepseek", DefaultModel: "deepseek-chat"}
+	ids = buildWizardModelList(base, ds, []string{"resolved-x"})
+	idxDef, idxRes := -1, -1
+	for i, id := range ids {
+		if id == "deepseek-chat" {
+			idxDef = i
+		}
+		if id == "resolved-x" {
+			idxRes = i
+		}
+	}
+	if idxDef < 0 || idxRes < 0 || idxDef > idxRes {
+		t.Fatalf("正常 provider 内置应在解析之前: def=%d res=%d list=%v", idxDef, idxRes, ids)
+	}
+}
+
+// custom：/models 异步返回后自动选中第一个真实模型（不再停在占位默认）。
+func TestModelWizardCustomAutoSelectsResolved(t *testing.T) {
+	m := openWizard(t)
+	idx := -1
+	for i, p := range m.wiz.provShown {
+		if p.Name == "custom" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Skip("目录里没有 custom")
+	}
+	m.wiz.cursor = idx
+	m = pressEnter(t, m) // provider → key
+	m = pressEnter(t, m) // keep → model
+	if m.wiz.provider == nil || m.wiz.provider.Name != "custom" {
+		t.Fatalf("应选中 custom, got %+v", m.wiz.provider)
+	}
+	nm, _ := m.Update(wizModelsMsg{provider: "custom", models: []string{"my-model-a", "my-model-b"}})
+	m = nm.(*osModel)
+	if m.wiz.model != "my-model-a" {
+		t.Fatalf("custom 应自动选第一个解析模型, got %q", m.wiz.model)
+	}
+	if len(m.wiz.modelShown) == 0 || m.wiz.modelShown[m.wiz.modelSel] != "my-model-a" {
+		t.Fatalf("光标应停在 my-model-a, got %v", m.wiz.modelShown)
+	}
+}
+
 func TestKeyPreviewNeverLeaksPlaintext(t *testing.T) {
 	p := &ai.Profile{Name: "t", EnvVars: []string{"T_KEY"}}
 	const secret = "sk-super-secret-value"

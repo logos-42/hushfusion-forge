@@ -98,6 +98,9 @@ type ClientOptions struct {
 	APIKey string
 	// Timeout 覆盖默认 60s。
 	Timeout time.Duration
+	// AllowNoKey 允许无 key 构造客户端，仅用于 /models 探测本地/自托管端点
+	// （如 custom / local）；Chat 仍要求 key，不会因此放宽认证。
+	AllowNoKey bool
 }
 
 // NewClient 构造 provider 客户端：校验 profile、解析 key、锁定端点。
@@ -118,7 +121,7 @@ func NewClient(p *Profile, opts ClientOptions) (*Client, error) {
 	if key == "" {
 		key = ResolveAPIKey(p)
 	}
-	if key == "" {
+	if key == "" && !opts.AllowNoKey {
 		return nil, fmt.Errorf("ai: provider %q 没有 API key（显式 APIKey 或环境变量 %v 均为空）",
 			p.Name, p.EnvVars)
 	}
@@ -512,6 +515,9 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 
 // auth 按 provider 注入认证头。v0.1 只有 bearer（OpenAI 兼容）；anthropic 未实现。
 func (c *Client) auth(r *http.Request) {
+	if c.apiKey == "" {
+		return // 无 key（本地/自托管 /models 探测）：不塞空 Bearer
+	}
 	r.Header.Set("Authorization", "Bearer "+c.apiKey)
 }
 

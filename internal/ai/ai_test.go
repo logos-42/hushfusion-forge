@@ -148,6 +148,29 @@ func TestListModels(t *testing.T) {
 	}
 }
 
+// AllowNoKey：无 key 也能探测 /models（本地/自托管），且不发送空 Bearer；
+// 未设 AllowNoKey 时仍 fail-closed。
+func TestListModelsAllowNoKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("无 key 时不应发送 Authorization, got %q", got)
+		}
+		w.Write([]byte(`{"data":[{"id":"local-1"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c, err := NewClient(&Profile{Name: "custom", BaseURL: srv.URL}, ClientOptions{AllowNoKey: true})
+	if err != nil {
+		t.Fatalf("AllowNoKey 应允许无 key 构造: %v", err)
+	}
+	ids, err := c.ListModels(context.Background())
+	if err != nil || len(ids) != 1 || ids[0] != "local-1" {
+		t.Fatalf("ids=%v err=%v", ids, err)
+	}
+	if _, err := NewClient(&Profile{Name: "custom", BaseURL: srv.URL}, ClientOptions{}); err == nil {
+		t.Fatal("未设 AllowNoKey 时无 key 必须报错")
+	}
+}
+
 func TestListModelsEmptyFailsClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"data":[]}`))

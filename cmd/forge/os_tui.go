@@ -405,7 +405,7 @@ func newOSModel(base string, snap *osview.Snapshot) *osModel {
 		spinner.WithStyle(m.styles.spinner),
 	)
 	ci := textinput.New()
-	ci.Placeholder = "输入目标回车让 AI 推进；或 /model /task /opp /decide /check /help（↑↓←→ 选面板，PgUp/PgDn 滚输出）"
+	ci.Placeholder = "输入目标回车让 AI 推进；或 /model /task /opp /decide /help（面板只读，PgUp/PgDn 滚输出）"
 	ci.SetWidth(80)
 	m.cmdInput = ci
 	m.cmdInput.Focus()
@@ -751,54 +751,8 @@ func (m *osModel) updatePanels(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
-	// 方向键：仪表盘 2D 选择
-	switch {
-	case key.Matches(msg, km.up):
-		m.moveSel(-panelCols)
-		return m, nil
-	case key.Matches(msg, km.down):
-		m.moveSel(panelCols)
-		return m, nil
-	case key.Matches(msg, km.left):
-		m.moveSel(-1)
-		return m, nil
-	case key.Matches(msg, km.right):
-		m.moveSel(1)
-		return m, nil
-	}
-	// 输入框为空时：单键快捷键
-	if strings.TrimSpace(m.cmdInput.Value()) == "" {
-		switch {
-		case key.Matches(msg, km.help):
-			m.showHelp = true
-			return m, nil
-		case key.Matches(msg, km.reload):
-			m.reload()
-			m.appendDashboard()
-			m.status = m.styles.ok.Render("已重新加载")
-			return m, nil
-		case key.Matches(msg, km.check):
-			m.status = runCheckInline()
-			m.out = append(m.out, stripANSI(m.status))
-			m.reload()
-			return m, nil
-		case key.Matches(msg, km.task):
-			m.openForm("task")
-			return m, nil
-		case key.Matches(msg, km.opp):
-			m.openForm("opp")
-			return m, nil
-		case key.Matches(msg, km.decide):
-			m.openForm("decide")
-			return m, nil
-		case key.Matches(msg, km.ai):
-			m.openForm("ai")
-			return m, nil
-		case key.Matches(msg, km.quit):
-			return m.doQuit()
-		}
-	}
-	// 其余键进输入框
+	// 面板只读：不再用方向键 / 单键快捷键选择面板，所有可打印键都进输入框。
+	// （之前输入框为空时按 a/n/o 等会直接开表单，方向键会切换选中面板，属误触源。）
 	switch msg.String() {
 	case "esc":
 		m.cmdInput.SetValue("")
@@ -807,12 +761,7 @@ func (m *osModel) updatePanels(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if t := strings.TrimSpace(m.cmdInput.Value()); t != "" {
 			return m.submitCommand(t)
 		}
-		if m.sel >= 0 && m.sel < len(m.panels) {
-			m.detail = m.sel
-			m.panels[m.detail].scroll = 0
-			m.state = stateDetail
-		}
-		return m, nil
+		return m, nil // 空回车不再打开面板详情（避免误触）
 	default:
 		var cmd tea.Cmd
 		m.cmdInput, cmd = m.cmdInput.Update(msg)
@@ -1202,12 +1151,35 @@ func (m *osModel) onWizModels(msg wizModelsMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	w := m.wiz
+	prev := ""
+	if w.modelSel >= 0 && w.modelSel < len(w.modelShown) {
+		prev = w.modelShown[w.modelSel]
+	}
 	w.modelsBusy = false
 	if len(msg.models) > 0 {
 		w.resolved = msg.models
 	}
 	w.modelAll = buildWizardModelList(m.base, w.provider, w.resolved)
 	m.applyModelFilter()
+	// custom / local：若仍停在占位默认，真实 /models 加载后自动选第一个。
+	if (w.provider.Name == "custom" || w.provider.Name == "local") &&
+		len(w.resolved) > 0 && prev == w.provider.DefaultModel {
+		w.model = w.resolved[0]
+		for i, id := range w.modelShown {
+			if id == w.model {
+				w.modelSel = i
+				break
+			}
+		}
+		return m, nil
+	}
+	// 其余 provider：保持原选中项（列表重排后按 id 重新定位）。
+	for i, id := range w.modelShown {
+		if id == prev {
+			w.modelSel = i
+			break
+		}
+	}
 	return m, nil
 }
 
@@ -1247,7 +1219,7 @@ func (m *osModel) fetchModelsCmd(p *ai.Profile, key, url string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 		defer cancel()
-		ids, err := ai.ListModels(ctx, p.Name, ai.ClientOptions{APIKey: key, BaseURL: url})
+		ids, err := ai.ListModels(ctx, p.Name, ai.ClientOptions{APIKey: key, BaseURL: url, AllowNoKey: true})
 		return wizModelsMsg{provider: p.Name, models: ids, err: err}
 	}
 }
@@ -1645,7 +1617,7 @@ func (m *osModel) renderModelStep() string {
 		}
 	}
 	b.WriteString(m.scrollHint(w.modelSel, len(w.modelShown), rows))
-	b.WriteString("\n" + m.renderHintBox("↑↓ 选择 · PgUp/PgDn 翻页 · 输入搜索 · Enter 确认 · Esc 返回"))
+	b.WriteString("\n" + m.renderHintBox("↑↓ 选择 · PgUp/PgDn 翻页 · 输入可筛选/自定义 id · Enter 确认 · Esc 返回"))
 	return b.String()
 }
 
@@ -2504,17 +2476,14 @@ func (m *osModel) renderPanels(w int) string {
 func (m *osModel) panelCell(idx, colW int) string {
 	p := m.panels[idx]
 	n := len(p.lines())
-	head := marker(idx == m.sel) + " " + p.name + fmt.Sprintf(" (%d)", n)
+	// 面板只读：不再渲染选中高亮（没有「当前面板」这个概念了）。
+	head := "  " + p.name + fmt.Sprintf(" (%d)", n)
 	first := "（空）"
 	if n > 0 {
 		first = truncateLine(p.lines()[0], colW-4)
 	}
 	content := m.styles.label.Render(head) + "\n" + m.styles.value.Render(first)
-	st := m.styles.panel
-	if idx == m.sel {
-		st = m.styles.panelActive
-	}
-	return st.Width(colW).Render(content)
+	return m.styles.panel.Width(colW).Render(content)
 }
 
 func (m *osModel) renderInput(w int) string {
@@ -2718,16 +2687,21 @@ func (m *osModel) keyHint() string {
 
 func (m *osModel) helpBody() string {
 	var b strings.Builder
-	for _, bd := range []key.Binding{km.up, km.down, km.left, km.right, km.open, km.task, km.opp, km.decide, km.ai, km.check, km.reload, km.help, km.cancel, km.quit} {
-		if !bd.Enabled() {
-			continue
-		}
-		h := bd.Help()
-		b.WriteString(fmt.Sprintf("  %-10s %s\n", h.Key, h.Desc))
+	b.WriteString(m.styles.label.Render("输入框命令（面板只读；所有按键都进输入框）") + "\n")
+	cmds := []struct{ name, desc string }{
+		{"/model", "模型设置（provider → API key → 模型 → URL）"},
+		{"/task /opp /decide", "录入任务 / 机会 / 决策"},
+		{"/ai <目标>", "让 AI 推进目标（结果内联）"},
+		{"/check", "跑门禁自检"},
+		{"/reload", "重新加载仪表盘"},
+		{"/open N", "查看第 N 个面板详情"},
+		{"/help", "本帮助"},
+		{"/quit", "退出（会话落盘）"},
 	}
-	b.WriteString("\n" + m.styles.hint.Render("Ctrl+P 或 /palette 开命令面板；/title /retry /reset /statusbar /focus /verbose /indicator /diff /redraw"))
-	b.WriteString("\n" + m.styles.hint.Render("PgUp/PgDn 滚展示框；输入框命令：/model /task /opp /decide /ai <目标> /check /reload /open N /save /summary /sessions /queue /help /quit"))
-	b.WriteString("\n" + m.styles.hint.Render("Ctrl+C：忙=中断，空闲=按两次退出（退出整理会话并落盘 os/sessions）"))
+	for _, c := range cmds {
+		b.WriteString(fmt.Sprintf("  %-20s %s\n", c.name, c.desc))
+	}
+	b.WriteString("\n" + m.styles.hint.Render("PgUp/PgDn 滚展示框 · Ctrl+P 命令面板 · Ctrl+C 两次退出 · Esc 清空输入"))
 	b.WriteString("\n" + m.styles.hint.Render("任意键关闭帮助"))
 	return b.String()
 }

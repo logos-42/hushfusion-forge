@@ -17,6 +17,9 @@ import (
 func keyRune(r rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: r} }
 func keyCode(c rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: c} }
 
+// keyText 模拟真实终端的可打印键（Code + Text 都有；textinput 按 Text 插入）。
+func keyText(r rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: r, Text: string(r)} }
+
 // setupTempOS 复制一份 os/ 到临时目录并设为 HUSHFUSION_OS_DIR（沙箱写操作）。
 func setupTempOS(t *testing.T) string {
 	t.Helper()
@@ -44,10 +47,9 @@ func TestTUIStateMachine(t *testing.T) {
 	base := setupTempOS(t)
 	m := newOSModel(base, mustLoad(t, base))
 
-	nm, _ := m.Update(keyRune('a'))
-	m = nm.(*osModel)
+	m.openForm("ai")
 	if m.state != stateForm || m.form.kind != "ai" {
-		t.Fatalf("a 应打开 AI 表单, got state=%v kind=%v", m.state, m.form.kind)
+		t.Fatalf("openForm(ai) 应打开 AI 表单, got state=%v kind=%v", m.state, m.form.kind)
 	}
 
 	// 填目标并回车提交 → 内联思考：仍在主控制台，busy=true + 异步 tea.Cmd。
@@ -75,10 +77,11 @@ func TestTUIStateMachine(t *testing.T) {
 		t.Fatal("收到结果后 busy 应解除")
 	}
 
-	// 面板态按 q → 退出 Cmd。
-	_, cmd = m.Update(keyRune('q'))
+	// 面板只读后 q 不再退出；用 /quit 退出。
+	m.cmdInput.SetValue("/quit")
+	_, cmd = m.Update(keyCode(rune(tea.KeyEnter)))
 	if cmd == nil {
-		t.Fatal("q 应返回 tea.Quit")
+		t.Fatal("/quit 应返回 tea.Quit")
 	}
 }
 
@@ -86,7 +89,7 @@ func TestTUIStateMachine(t *testing.T) {
 func TestTUITaskFormWrites(t *testing.T) {
 	base := setupTempOS(t)
 	m := newOSModel(base, mustLoad(t, base))
-	m.Update(keyRune('n'))
+	m.openForm("task")
 	set := func(i int, s string) { m.form.inputs[i].SetValue(s) }
 	set(0, "T-99")
 	set(1, "测试任务")
@@ -136,18 +139,18 @@ func TestTUIViewsNoPanic(t *testing.T) {
 func TestTUIHelpOverlay(t *testing.T) {
 	base := setupTempOS(t)
 	m := newOSModel(base, mustLoad(t, base))
-	nm, _ := m.Update(keyRune('?'))
+	nm, _ := m.runSlash("help")
 	m = nm.(*osModel)
 	if !m.showHelp {
-		t.Fatal("? 应打开帮助覆盖层")
+		t.Fatal("/help 应打开帮助覆盖层")
 	}
 	if !strings.Contains(m.View().Content, "按键帮助") {
 		t.Fatal("帮助屏应含『按键帮助』")
 	}
-	nm, _ = m.Update(keyRune('?'))
+	nm, _ = m.Update(keyRune('x')) // 任意键关闭
 	m = nm.(*osModel)
 	if m.showHelp {
-		t.Fatal("再按 ? 应关闭帮助")
+		t.Fatal("任意键应关闭帮助")
 	}
 }
 
@@ -161,6 +164,35 @@ func TestKeyMapBindings(t *testing.T) {
 	}
 	if !key.Matches(keyRune('?'), km.help) {
 		t.Fatal("km.help 应匹配 ?")
+	}
+}
+
+// 主界面只读：字母进输入框、方向键不切面板、空回车不开详情。
+func TestTUIInputOnlyNoPanelShortcuts(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	sel := m.sel
+
+	nm, _ := m.Update(keyText('a'))
+	m = nm.(*osModel)
+	if m.state != statePanels {
+		t.Fatalf("a 不应再打开表单, state=%v", m.state)
+	}
+	if got := m.cmdInput.Value(); got != "a" {
+		t.Fatalf("a 应写入输入框, got %q", got)
+	}
+
+	nm, _ = m.Update(keyCode(rune(tea.KeyLeft)))
+	m = nm.(*osModel)
+	if m.sel != sel {
+		t.Fatalf("方向键不应切换面板 (%d → %d)", sel, m.sel)
+	}
+
+	m.cmdInput.SetValue("")
+	nm, _ = m.Update(keyCode(rune(tea.KeyEnter)))
+	m = nm.(*osModel)
+	if m.state != statePanels {
+		t.Fatalf("空回车不应打开面板详情, state=%v", m.state)
 	}
 }
 

@@ -139,11 +139,21 @@ func buildWizardModelList(base string, p *ai.Profile, resolved []string) []strin
 	for _, id := range loadRecentModels(base)[p.Name] {
 		add(id)
 	}
-	for _, id := range builtinModels(p) {
-		add(id)
-	}
-	for _, id := range resolved {
-		add(id)
+	if p.Name == "custom" || p.Name == "local" {
+		// 自定义/本地端点：真实 /models 结果优先，占位 DefaultModel 垫底。
+		for _, id := range resolved {
+			add(id)
+		}
+		for _, id := range builtinModels(p) {
+			add(id)
+		}
+	} else {
+		for _, id := range builtinModels(p) {
+			add(id)
+		}
+		for _, id := range resolved {
+			add(id)
+		}
 	}
 	return out
 }
