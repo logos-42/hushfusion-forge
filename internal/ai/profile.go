@@ -140,7 +140,21 @@ func Builtins() []*Profile {
 			BaseURL: "http://127.0.0.1:11434/v1", DefaultModel: "qwen3:8b",
 		},
 	}
-	return append(base, override...)
+	// 合并去重：同名保留「后者」（手选覆盖层），避免选择器/列表里出现重复
+	// provider（catalog 里已有 zai/deepseek/openai/openrouter/anthropic/local，
+	// 覆盖层再声明一遍是为了固定默认模型）。保持原有顺序、只在最后出现处保留。
+	merged := append(base, override...)
+	last := make(map[string]int, len(merged))
+	for i, p := range merged {
+		last[p.Name] = i
+	}
+	out := make([]*Profile, 0, len(last))
+	for i, p := range merged {
+		if last[p.Name] == i {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Validate 检查 Profile 是否可用（注册前与 Lookup 命中后各查一次）。

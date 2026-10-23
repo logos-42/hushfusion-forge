@@ -160,6 +160,26 @@ func TestModelWizardFullFlowAppliesKeyAndURL(t *testing.T) {
 	}
 }
 
+// model 留空时自动匹配：清空 model 走完 key/url，到确认步应回填 provider 默认模型。
+func TestModelWizardAutoMatchesEmptyModel(t *testing.T) {
+	m := openWizard(t)
+	m = pressEnter(t, m) // provider → model
+	if m.wiz == nil || m.wiz.step != wizStepModel {
+		t.Fatalf("应在 model 步, got %+v", m.wiz)
+	}
+	prof := m.wiz.provider
+	if prof == nil || prof.DefaultModel == "" {
+		t.Skip("当前 provider 无默认模型，跳过（避免触发真实 /models 网络请求）")
+	}
+	m.wiz.model.SetValue("") // 模拟用户不填 model
+	m = pressEnter(t, m)     // model → key
+	m = pressEnter(t, m)     // key → url
+	m = pressEnter(t, m)     // url → confirm（URL 步 Enter 触发自动匹配）
+	if got := m.wiz.model.Value(); got != prof.DefaultModel {
+		t.Fatalf("空 model 应自动匹配为 %q, got %q", prof.DefaultModel, got)
+	}
+}
+
 // Esc 在输入步是"上一步"，在 provider 步是"取消"。
 func TestModelWizardEscGoesBackThenCancels(t *testing.T) {
 	m := openWizard(t)

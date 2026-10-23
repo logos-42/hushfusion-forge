@@ -38,7 +38,8 @@ func mustLoad(t *testing.T, base string) *osview.Snapshot {
 	return s
 }
 
-// 状态机：面板 → (a) AI 表单 → 提交 → 思考态(异步 Cmd) → 结果 → 报告态 → q 退出。
+// 状态机：面板 → (a) AI 表单 → 提交 → 内联思考（busy=true，仍在面板态）→
+// 结果内联落展示框 → q 退出。不再切「思考中 / 报告」两个独立弹窗。
 func TestTUIStateMachine(t *testing.T) {
 	base := setupTempOS(t)
 	m := newOSModel(base, mustLoad(t, base))
@@ -49,26 +50,32 @@ func TestTUIStateMachine(t *testing.T) {
 		t.Fatalf("a 应打开 AI 表单, got state=%v kind=%v", m.state, m.form.kind)
 	}
 
-	// 填目标并回车提交 → 思考态 + 异步 tea.Cmd（spinner 异步的核心）。
+	// 填目标并回车提交 → 内联思考：仍在主控制台，busy=true + 异步 tea.Cmd。
 	m.form.inputs[0].SetValue("整理机会池")
 	m.form.focus = len(m.form.inputs) - 1 // 跳到最后一字段，一次回车即提交
 	nm, cmd := m.Update(keyCode(rune(tea.KeyEnter)))
 	m = nm.(*osModel)
-	if m.state != stateThinking {
-		t.Fatalf("提交 AI 目标后应进入思考态, got %v", m.state)
+	if m.state != statePanels {
+		t.Fatalf("提交 AI 目标后应留在主控制台（内联）, got %v", m.state)
+	}
+	if !m.busy {
+		t.Fatal("提交 AI 后 busy 应为 true（内联思考中）")
 	}
 	if cmd == nil {
 		t.Fatal("AI 提交应返回非 nil tea.Cmd（异步执行）")
 	}
 
-	// 收到结果 → 报告态。
+	// 收到结果 → 仍是面板态（结果内联落展示框），busy 解除。
 	nm, _ = m.Update(aiResultMsg{rep: &aios.Report{Goal: "g"}, err: nil})
 	m = nm.(*osModel)
-	if m.state != stateReport {
-		t.Fatalf("结果消息后应进入报告态, got %v", m.state)
+	if m.state != statePanels {
+		t.Fatalf("结果应内联在控制台（不切报告弹窗）, got %v", m.state)
+	}
+	if m.busy {
+		t.Fatal("收到结果后 busy 应解除")
 	}
 
-	// 报告态按 q → 退出 Cmd。
+	// 面板态按 q → 退出 Cmd。
 	_, cmd = m.Update(keyRune('q'))
 	if cmd == nil {
 		t.Fatal("q 应返回 tea.Quit")

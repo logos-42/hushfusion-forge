@@ -449,7 +449,7 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case spinner.TickMsg:
-		if m.state == stateThinking {
+		if m.busy {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -467,7 +467,7 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, loadTick()
 	case thinkTickMsg:
-		if m.state == stateThinking {
+		if m.busy {
 			m.thinkFrame++
 			return m, thinkTick()
 		}
@@ -484,7 +484,7 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	m.aiCancel = nil
-	m.state = stateReport
+	m.state = statePanels // 内联：结果直接落展示框，不切「AI 粘合报告」弹窗
 	m.report = msg.rep
 	m.reportErr = msg.err
 	if msg.err != nil {
@@ -529,6 +529,14 @@ func (m *osModel) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = m.styles.err.Render("⏹ 已中断 · 再按 Ctrl+C 退出")
 		} else {
 			m.status = "再按一次 Ctrl+C 退出（会话将落盘）"
+		}
+		return m, nil
+	}
+	// 忙时（AI 思考中）：结果内联在主控制台，仍然只允许 Ctrl+C 中断（上面已处理）
+	// 与 q 退出，其余键忽略 —— 与原来 stateThinking 态吞键行为一致。
+	if m.busy {
+		if key.Matches(msg, km.quit) && msg.String() == "q" {
+			return m.doQuit()
 		}
 		return m, nil
 	}
@@ -1026,7 +1034,7 @@ func (m *osModel) openModelWizard() (tea.Model, tea.Cmd) {
 			w.cursor = i
 		}
 	}
-	w.model = newWizInput("model（空 = provider 默认）")
+	w.model = newWizInput("model（空 = 自动匹配）")
 	w.key = newWizInput("API key（空 = 沿用环境变量）")
 	w.key.EchoMode = textinput.EchoPassword // 输入不显形
 	w.url = newWizInput("Base URL")
@@ -1106,6 +1114,7 @@ func (m *osModel) updateWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.String() == "enter" {
 			w.currentInput().Blur()
 			if w.step == wizStepURL {
+				m.resolveWizardModel() // 空则自动匹配（DefaultModel → /models 第一个）
 				w.step = wizStepConfirm
 				return m, nil
 			}
@@ -1149,6 +1158,12 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	model := orDefault(strings.TrimSpace(w.model.Value()), prof.DefaultModel)
+	if model == "" {
+		m.status = m.styles.err.Render("该 provider 未能自动匹配模型（无默认值且 /models 无返回）；请回到 model 步手填")
+		w.step = wizStepModel
+		w.focusStepInput()
+		return m, nil
+	}
 	key := strings.TrimSpace(w.key.Value())
 	url := strings.TrimSpace(w.url.Value())
 
@@ -1178,6 +1193,30 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 	m.status = m.styles.ok.Render(fmt.Sprintf("model → %s/%s", m.provider, m.model))
 	m.wiz, m.state = nil, statePanels
 	return m, nil
+}
+
+// resolveWizardModel 在 model 留空时自动匹配：先取 provider 默认模型，
+// 仍为空则用它自己的 /models 端点（带向导里填的 key / URL）取第一个模型。
+// 只对「model 与 DefaultModel 都为空」的 provider 发一次网络请求（短超时），
+// 失败不致命：确认页会明说需手填，apply 时再拦一道（fail-closed，不假装成功）。
+func (m *osModel) resolveWizardModel() {
+	w := m.wiz
+	if w == nil || w.provider == nil || strings.TrimSpace(w.model.Value()) != "" {
+		return
+	}
+	if w.provider.DefaultModel != "" {
+		w.model.SetValue(w.provider.DefaultModel)
+		return
+	}
+	key := strings.TrimSpace(w.key.Value())
+	url := strings.TrimSpace(w.url.Value())
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	models, err := ai.ListModels(ctx, w.provider.Name, ai.ClientOptions{APIKey: key, BaseURL: url})
+	if err == nil && len(models) > 0 {
+		w.model.SetValue(models[0])
+		m.status = m.styles.hint.Render(fmt.Sprintf("已自动匹配模型 → %s（来自 /models）", models[0]))
+	}
 }
 
 // wizardBody 渲染向导当前步骤（已完成的步骤打 ✓，当前步骤打 ▶）。
@@ -1232,7 +1271,11 @@ func (m *osModel) wizardBody() string {
 	if w.step == wizStepConfirm {
 		b.WriteString("\n" + m.styles.ok.Render("确认后立即生效：") + "\n")
 		b.WriteString(fmt.Sprintf("  provider : %s\n", w.provider.Name))
-		b.WriteString(fmt.Sprintf("  model    : %s\n", orDefault(strings.TrimSpace(w.model.Value()), w.provider.DefaultModel)))
+		modelLine := orDefault(strings.TrimSpace(w.model.Value()), w.provider.DefaultModel)
+		if modelLine == "" {
+			modelLine = "（空：确认时按所填 key 拉 /models 自动匹配；仍失败需手填）"
+		}
+		b.WriteString(fmt.Sprintf("  model    : %s\n", modelLine))
 		b.WriteString(fmt.Sprintf("  api key  : %s\n", keyPreview(strings.TrimSpace(w.key.Value()), w.provider)))
 		b.WriteString(fmt.Sprintf("  base url : %s\n", orDefault(strings.TrimSpace(w.url.Value()), "（空 = provider 默认）")))
 		b.WriteString("\n" + m.styles.hint.Render("Enter 应用 · Esc 返回修改"))
@@ -1334,7 +1377,7 @@ func (m *osModel) startThinking(goal, provider, model string) (tea.Model, tea.Cm
 	}
 	m.provider = provider
 	m.model = model
-	m.state = stateThinking
+	m.state = statePanels // 内联：留在控制台，仅用 busy+spinner 内联指示「思考中」
 	m.thinkingGoal = goal
 	m.lastGoal = goal
 	m.thinkFrame = 0
@@ -1776,6 +1819,9 @@ func (m *osModel) renderConsole(w int) string {
 	if m.focus {
 		chrome = 8
 	}
+	if m.busy {
+		chrome++ // 内联「AI 思考中」行占一行
+	}
 	outH := m.height - chrome - popupH
 	if outH < 4 {
 		outH = 4
@@ -1788,8 +1834,28 @@ func (m *osModel) renderConsole(w int) string {
 		b.WriteString(m.renderDashboard(w))
 	}
 	b.WriteString(popup)
+	if m.busy {
+		b.WriteString(m.renderThinkingLine(w))
+	}
 	b.WriteString(m.renderInput(w))
 	return b.String()
+}
+
+// renderThinkingLine 是内联的「AI 思考中」行：固定在输入框上方，不抢整屏。
+// 与旧的 stateThinking 弹窗二选一 —— 现在只用这一行，结果直接落展示框。
+func (m *osModel) renderThinkingLine(w int) string {
+	el := time.Since(m.aiStart).Round(time.Second)
+	var ind string
+	switch m.indicator {
+	case "spinner":
+		ind = m.spinner.View()
+	case "ascii":
+		ind = m.styles.title.Render(asciiSpin(m.thinkFrame))
+	default:
+		ind = m.styles.title.Render(kaomoji[m.thinkFrame%len(kaomoji)])
+	}
+	s := fmt.Sprintf("  %s AI 思考中… %s · ⏱ %s · Ctrl+C 中断", ind, m.thinkingGoal, el)
+	return truncateLine(s, w) + "\n"
 }
 
 func (m *osModel) renderHeader(w int) string {
