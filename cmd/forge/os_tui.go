@@ -97,8 +97,8 @@ type osModel struct {
 	base string
 	snap *osview.Snapshot
 
+	// 面板只读：没有 sel/选中态，所有键盘与鼠标事件都只作用于输入框。
 	panels []panel
-	sel    int
 	detail int
 	state  appState
 
@@ -428,6 +428,17 @@ func (m *osModel) runSlashByName(name string) (tea.Model, tea.Cmd) {
 func newOSModel(base string, snap *osview.Snapshot) *osModel {
 	// 先加载 workspace config 并注入环境变量，后面的 envOr 才能读到。
 	applyWorkspaceConfig(base)
+	// 型号不再写死 "default"：未显式设置时取 provider 的 DefaultModel
+	// （custom → custom-model），保证自定义端点启动即带出正确型号。
+	provName := envOr("HUSHFUSION_AI_PROVIDER", "zai")
+	defModel := "default"
+	if p := ai.Lookup(provName); p != nil {
+		provName = p.Name
+		if strings.TrimSpace(p.DefaultModel) != "" {
+			defModel = p.DefaultModel
+		}
+	}
+	modelName := envOr("HUSHFUSION_AI_MODEL", defModel)
 	m := &osModel{
 		base:         base,
 		snap:         snap,
@@ -438,8 +449,8 @@ func newOSModel(base string, snap *osview.Snapshot) *osModel {
 		sessionID:    fmt.Sprintf("sess-%s-%04d", time.Now().Format("0102-150405"), time.Now().UnixNano()%10000),
 		startTime:    time.Now(),
 		lastActivity: time.Now(),
-		provider:     envOr("HUSHFUSION_AI_PROVIDER", "zai"),
-		model:        envOr("HUSHFUSION_AI_MODEL", "default"),
+		provider:     provName,
+		model:        modelName,
 		cacheHit:     "–",
 	}
 	m.initStyles()
@@ -805,6 +816,10 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 			ans = msg.rep.Answer
 		}
 		m.evolveSkill(ans)
+		if strings.TrimSpace(ans) != "" {
+			// 跨会话长期记忆（向量库）：下次会话可召回。
+			addMemRecord(m.base, m.sessionID, m.lastGoal, ans)
+		}
 	}
 	if msg.err != nil {
 		m.out = append(m.out, m.styles.err.Render("✗ "+msg.err.Error()))
@@ -1017,20 +1032,6 @@ func (m *osModel) updatePanels(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cmdInput, cmd = m.cmdInput.Update(msg)
 		m.refreshSlash()
 		return m, cmd
-	}
-}
-
-func (m *osModel) moveSel(delta int) {
-	n := len(m.panels)
-	if n == 0 {
-		return
-	}
-	m.sel += delta
-	if m.sel < 0 {
-		m.sel = 0
-	}
-	if m.sel > n-1 {
-		m.sel = n - 1
 	}
 }
 
@@ -1525,6 +1526,23 @@ func (m *osModel) applyModelFilter() {
 	}
 }
 
+// pickWizardModel 决定模型步 Enter 选中的 id：
+//   - custom/local：输入框内容即模型 id（列表只是建议，支持任意名字/型号）；
+//   - 其它 provider：以列表选中项为准，无匹配时才把关键词当 id。
+func pickWizardModel(w *modelWizard) string {
+	if w == nil {
+		return ""
+	}
+	f := strings.TrimSpace(w.filter.Value())
+	if (w.provider != nil && (w.provider.Name == "custom" || w.provider.Name == "local")) && f != "" {
+		return f
+	}
+	if len(w.modelShown) > 0 {
+		return w.modelShown[w.modelSel]
+	}
+	return f
+}
+
 // wizardKeyValue 返回向导里「显式」的 key（仅 replace 且已输入时）；否则空串
 // 交给 ListModels / 调用方按环境变量解析。
 func (m *osModel) wizardKeyValue() string {
@@ -1683,11 +1701,7 @@ func (m *osModel) updateWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "enter":
-			if len(w.modelShown) > 0 {
-				w.model = w.modelShown[w.modelSel]
-			} else if f := strings.TrimSpace(w.filter.Value()); f != "" {
-				w.model = f // 无匹配时允许把关键词本身当自定义模型 id
-			}
+			w.model = pickWizardModel(w)
 			if w.model == "" {
 				m.status = m.styles.err.Render("请先选择模型（↑↓ 或输入关键词）")
 				return m, nil
@@ -2325,6 +2339,10 @@ func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem stri
 				}
 				sys += "\n\n## 历史经验（本工作区自动积累，仅供参考，不要盲信）\n" + body
 			}
+			// 跨会话长期记忆：按当前目标向量召回 top5（不限 session）。
+			if recs := recallMemories(base, goal, 5); len(recs) > 0 {
+				sys += "\n\n## 长期记忆（跨会话向量召回，仅供参考，不要盲信）\n" + formatRecalledMemories(recs)
+			}
 			s := agent.NewSession(cfg, chat, agent.NewRegistry(), sys)
 			skills := agent.NewSkills([]string{filepath.Join(base, "skills")}, agent.NewKeywordMatcher())
 			s.Skills = skills
@@ -2350,9 +2368,6 @@ func (m *osModel) reload() {
 		m.panels = buildPanels(s)
 		if m.detail >= len(m.panels) {
 			m.detail = 0
-		}
-		if m.sel >= len(m.panels) {
-			m.sel = len(m.panels) - 1
 		}
 	}
 }

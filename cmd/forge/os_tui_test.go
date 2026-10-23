@@ -180,7 +180,6 @@ func TestKeyMapBindings(t *testing.T) {
 func TestTUIInputOnlyNoPanelShortcuts(t *testing.T) {
 	base := setupTempOS(t)
 	m := newOSModel(base, mustLoad(t, base))
-	sel := m.sel
 
 	nm, _ := m.Update(keyText('a'))
 	m = nm.(*osModel)
@@ -193,8 +192,8 @@ func TestTUIInputOnlyNoPanelShortcuts(t *testing.T) {
 
 	nm, _ = m.Update(keyCode(rune(tea.KeyLeft)))
 	m = nm.(*osModel)
-	if m.sel != sel {
-		t.Fatalf("方向键不应切换面板 (%d → %d)", sel, m.sel)
+	if m.state != statePanels || m.detail != 0 {
+		t.Fatalf("方向键不应切换/打开面板, state=%v detail=%d", m.state, m.detail)
 	}
 
 	m.cmdInput.SetValue("")
@@ -474,6 +473,48 @@ func TestAIResultShowsAnswer(t *testing.T) {
 	}
 	if strings.Contains(joined, "AI 回合") {
 		t.Fatalf("纯对话不应再追加空 AI 回合: %q", joined)
+	}
+}
+
+// custom 启动即带出 provider 默认型号（不再写死 default）。
+func TestNewOSModelUsesProviderDefaultModel(t *testing.T) {
+	base := setupTempOS(t)
+	t.Setenv("HUSHFUSION_AI_PROVIDER", "custom")
+	t.Setenv("HUSHFUSION_AI_MODEL", "")
+	m := newOSModel(base, mustLoad(t, base))
+	if m.provider != "custom" {
+		t.Fatalf("provider = %q", m.provider)
+	}
+	if m.model != "custom-model" {
+		t.Fatalf("custom 未自动带出默认型号: %q", m.model)
+	}
+}
+
+// custom/local 向导：输入框里的型号优先于列表选中项。
+func TestPickWizardModelCustom(t *testing.T) {
+	w := &modelWizard{provider: &ai.Profile{Name: "custom"}, step: wizStepModel, modelShown: []string{"custom-model"}, modelSel: 0}
+	w.filter = newWizInput("搜索模型…")
+	w.filter.SetValue("my-model")
+	if got := pickWizardModel(w); got != "my-model" {
+		t.Fatalf("custom 应接受输入的型号, got %q", got)
+	}
+	w.provider.Name = "zai"
+	if got := pickWizardModel(w); got != "custom-model" {
+		t.Fatalf("普通 provider 应以列表选中项为准, got %q", got)
+	}
+}
+
+// 长期记忆：向量召回跨会话命中，且记录持久化到文件。
+func TestLongTermMemoryRecall(t *testing.T) {
+	base := t.TempDir()
+	addMemRecord(base, "s1", "核聚变 线圈 设计", "D9857 的最优线圈配置与电磁场结构")
+	addMemRecord(base, "s2", "前端 CSS 布局", "Flexbox 与 Grid 的对比")
+	recs := recallMemories(base, "核聚变 磁体 线圈", 2)
+	if len(recs) == 0 || !strings.Contains(recs[0].Goal, "核聚变") {
+		t.Fatalf("召回结果不对: %+v", recs)
+	}
+	if got := loadMemRecords(base); len(got) != 2 {
+		t.Fatalf("记录未持久化: %d", len(got))
 	}
 }
 
