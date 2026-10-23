@@ -205,18 +205,38 @@ type modelWizard struct {
 	providers []*ai.Profile
 	cursor    int
 	provider  *ai.Profile
-	model     textinput.Model
-	key       textinput.Model
-	url       textinput.Model
+
+	// API key 步：keep / replace / clear
+	keyAction  string // "keep" | "replace" | "clear"
+	keyEditing bool   // replace 子态：正在输入新 key
+	key        textinput.Model
+
+	// 模型步：内置型号 + 关键词筛选 + 上下选择
+	filter     textinput.Model
+	modelAll   []string // 最近/常用/已解析/默认（去重保序）
+	modelShown []string // 按 filter 过滤后的视图
+	modelSel   int
+	model      string   // 最终选定
+	recent     []string // 最近使用（缓存，渲染标记用）
+	resolved   []string // /models 异步拉回的模型
+	modelsBusy bool
+
+	url textinput.Model
 }
 
 const (
 	wizStepProvider = iota // 上下选 provider
-	wizStepModel           // 填模型
-	wizStepKey             // 填 API key（掩码输入）
+	wizStepKey             // API key：keep / replace / clear
+	wizStepModel           // 上下选模型（可筛选）
 	wizStepURL             // 填 Base URL
 	wizStepConfirm         // 汇总确认
 )
+
+type wizModelsMsg struct {
+	provider string
+	models   []string
+	err      error
+}
 
 type aiResultMsg struct {
 	rep *aios.Report
@@ -289,7 +309,7 @@ type slashCmd struct {
 
 // slashCommands 是全部 / 命令（命令面板 + /help 共用）。
 var slashCommands = []slashCmd{
-	{"model", "模型设置向导（provider/model/key/URL 分步填；/model list 看列表）", ""},
+	{"model", "模型设置向导（provider→API key→模型→URL；key 支持 keep/replace/clear，模型可筛选）", ""},
 	{"task", "新任务表单", ""},
 	{"opp", "新机会表单", ""},
 	{"decide", "新决策表单", ""},
@@ -474,6 +494,8 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case aiResultMsg:
 		return m.onAIResult(msg)
+	case wizModelsMsg:
+		return m.onWizModels(msg)
 	case tea.KeyPressMsg:
 		return m.updateKey(msg)
 	}
@@ -974,7 +996,7 @@ func (m *osModel) slashModel(cmd, head string) (tea.Model, tea.Cmd) {
 	_ = ai.RegisterBuiltins()
 	rest := strings.TrimSpace(strings.TrimPrefix(cmd, head))
 	if rest == "" {
-		// 无参：打开分步向导（provider → model → key → URL → 确认）。
+		// 无参：打开分步向导（provider → API key → 模型 → URL → 确认）。
 		return m.openModelWizard()
 	}
 	if rest == "list" {
@@ -1014,9 +1036,10 @@ func (m *osModel) slashModel(cmd, head string) (tea.Model, tea.Cmd) {
 }
 
 // openModelWizard 打开分步设置向导（只列已实现 chat_completions 的 provider）。
+// 顺序：provider → API key（keep/replace/clear）→ 模型（可筛选选择）→ URL → 确认。
 func (m *osModel) openModelWizard() (tea.Model, tea.Cmd) {
 	_ = ai.RegisterBuiltins() // 幂等兜底（直接调用本方法也不至于拿到空列表）
-	w := &modelWizard{}
+	w := &modelWizard{keyAction: "keep"}
 	for _, p := range ai.Builtins() {
 		// Builtins() 是原始字面量，空 APIMode 由 Validate() 补成 chat_completions ——
 		// 这里必须先归一化再判断，否则会把「没写 APIMode」的 provider 全筛掉。
@@ -1034,9 +1057,9 @@ func (m *osModel) openModelWizard() (tea.Model, tea.Cmd) {
 			w.cursor = i
 		}
 	}
-	w.model = newWizInput("model（空 = 自动匹配）")
-	w.key = newWizInput("API key（空 = 沿用环境变量）")
+	w.key = newWizInput("输入新 API key（掩码，不落盘）")
 	w.key.EchoMode = textinput.EchoPassword // 输入不显形
+	w.filter = newWizInput("输入关键词筛选模型…")
 	w.url = newWizInput("Base URL")
 	m.wiz = w
 	m.state = stateModelWizard
@@ -1051,30 +1074,88 @@ func newWizInput(placeholder string) textinput.Model {
 	return ti
 }
 
-// currentInput / focusStepInput 把「当前步骤 ↔ 输入框」的映射收在一处。
-func (w *modelWizard) currentInput() *textinput.Model {
-	switch w.step {
-	case wizStepModel:
-		return &w.model
-	case wizStepKey:
-		return &w.key
-	default:
-		return &w.url
+// enterModelStep 进入模型步：组装列表（最近→常用→已解析→默认），默认选中
+// DefaultModel，并异步拉 /models 补全「解析」分组。
+func (m *osModel) enterModelStep() (tea.Model, tea.Cmd) {
+	w := m.wiz
+	w.step = wizStepModel
+	w.filter.SetValue("")
+	w.filter.Focus()
+	w.modelSel = 0
+	w.resolved = nil
+	w.modelsBusy = true
+	w.recent = loadRecentModels(m.base)[w.provider.Name]
+	w.modelAll = buildWizardModelList(m.base, w.provider, nil)
+	w.model = w.provider.DefaultModel
+	if w.model != "" {
+		for i, id := range w.modelAll {
+			if id == w.provider.DefaultModel {
+				w.modelSel = i
+				break
+			}
+		}
+	}
+	m.applyModelFilter()
+	return m, m.fetchModelsCmd(w.provider, m.wizardKeyValue(), w.url.Value())
+}
+
+// onWizModels 收 /models 异步结果：合并进「解析」并重排，不打断用户输入。
+func (m *osModel) onWizModels(msg wizModelsMsg) (tea.Model, tea.Cmd) {
+	if m.wiz == nil || m.wiz.provider == nil || m.wiz.step != wizStepModel || m.wiz.provider.Name != msg.provider {
+		return m, nil
+	}
+	w := m.wiz
+	w.modelsBusy = false
+	if len(msg.models) > 0 {
+		w.resolved = msg.models
+	}
+	w.modelAll = buildWizardModelList(m.base, w.provider, w.resolved)
+	m.applyModelFilter()
+	return m, nil
+}
+
+// applyModelFilter 按筛选框内容过滤 modelAll → modelShown，并收敛 selection。
+func (m *osModel) applyModelFilter() {
+	w := m.wiz
+	q := strings.ToLower(strings.TrimSpace(w.filter.Value()))
+	shown := make([]string, 0, len(w.modelAll))
+	for _, id := range w.modelAll {
+		if q == "" || strings.Contains(strings.ToLower(id), q) {
+			shown = append(shown, id)
+		}
+	}
+	w.modelShown = shown
+	if w.modelSel >= len(shown) {
+		w.modelSel = len(shown) - 1
+	}
+	if w.modelSel < 0 {
+		w.modelSel = 0
 	}
 }
 
-func (w *modelWizard) focusStepInput() {
-	switch w.step {
-	case wizStepModel:
-		w.model.Focus()
-	case wizStepKey:
-		w.key.Focus()
-	case wizStepURL:
-		w.url.Focus()
+// wizardKeyValue 返回向导里「显式」的 key（仅 replace 且已输入时）；否则空串
+// 交给 ListModels / 调用方按环境变量解析。
+func (m *osModel) wizardKeyValue() string {
+	if m.wiz == nil || m.wiz.keyAction != "replace" {
+		return ""
+	}
+	return strings.TrimSpace(m.wiz.key.Value())
+}
+
+// fetchModelsCmd 异步拉 provider 的 /models（短超时，失败静默 —— 内置目录仍在）。
+func (m *osModel) fetchModelsCmd(p *ai.Profile, key, url string) tea.Cmd {
+	if p == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		ids, err := ai.ListModels(ctx, p.Name, ai.ClientOptions{APIKey: key, BaseURL: url})
+		return wizModelsMsg{provider: p.Name, models: ids, err: err}
 	}
 }
 
-// updateWizard 处理向导按键：provider 步用 ↑↓，其余步骤是文本输入 + Enter。
+// updateWizard 处理向导按键。
 func (m *osModel) updateWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	w := m.wiz
 	switch w.step {
@@ -1097,47 +1178,135 @@ func (m *osModel) updateWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			w.provider = w.providers[w.cursor]
-			w.model.SetValue(w.provider.DefaultModel)
 			w.url.SetValue(w.provider.BaseURL) // 预填 profile 默认，可改成内网网关
-			w.step = wizStepModel
-			w.focusStepInput()
+			w.keyAction, w.keyEditing = "keep", false
+			w.key.SetValue("")
+			w.step = wizStepKey // 先填 API，后选模型和 URL
 		}
 		return m, nil
 
-	case wizStepModel, wizStepKey, wizStepURL:
-		if msg.String() == "esc" { // 上一步（可回退修改）
-			w.currentInput().Blur()
-			w.step--
-			w.focusStepInput()
+	case wizStepKey:
+		if w.keyEditing { // replace 子态：输入新 key
+			switch msg.String() {
+			case "esc":
+				w.keyEditing = false
+				w.key.Blur()
+				w.key.SetValue("")
+			case "enter":
+				if strings.TrimSpace(w.key.Value()) == "" {
+					m.status = m.styles.err.Render("key 为空：继续输入，或 Esc 返回选 keep/clear")
+					return m, nil
+				}
+				w.keyEditing = false
+				w.key.Blur()
+				return m.enterModelStep()
+			default:
+				var cmd tea.Cmd
+				w.key, cmd = w.key.Update(msg)
+				return m, cmd
+			}
 			return m, nil
 		}
-		if msg.String() == "enter" {
-			w.currentInput().Blur()
-			if w.step == wizStepURL {
-				m.resolveWizardModel() // 空则自动匹配（DefaultModel → /models 第一个）
-				w.step = wizStepConfirm
+		switch msg.String() {
+		case "esc":
+			w.step = wizStepProvider
+		case "k", "enter":
+			w.keyAction = "keep"
+			return m.enterModelStep()
+		case "r":
+			w.keyAction = "replace"
+			w.keyEditing = true
+			w.key.SetValue("")
+			w.key.Focus()
+		case "c":
+			w.keyAction = "clear"
+			return m.enterModelStep()
+		}
+		return m, nil
+
+	case wizStepModel:
+		switch msg.String() {
+		case "esc":
+			w.filter.Blur()
+			w.step = wizStepKey
+			return m, nil
+		case "up":
+			if w.modelSel > 0 {
+				w.modelSel--
+			}
+			return m, nil
+		case "down":
+			if w.modelSel < len(w.modelShown)-1 {
+				w.modelSel++
+			}
+			return m, nil
+		case "pgup":
+			w.modelSel -= m.wizListRows()
+			if w.modelSel < 0 {
+				w.modelSel = 0
+			}
+			return m, nil
+		case "pgdown":
+			w.modelSel += m.wizListRows()
+			if w.modelSel >= len(w.modelShown) {
+				w.modelSel = len(w.modelShown) - 1
+			}
+			if w.modelSel < 0 {
+				w.modelSel = 0
+			}
+			return m, nil
+		case "home":
+			w.modelSel = 0
+			return m, nil
+		case "end":
+			w.modelSel = len(w.modelShown) - 1
+			if w.modelSel < 0 {
+				w.modelSel = 0
+			}
+			return m, nil
+		case "enter":
+			if len(w.modelShown) > 0 {
+				w.model = w.modelShown[w.modelSel]
+			} else if f := strings.TrimSpace(w.filter.Value()); f != "" {
+				w.model = f // 无匹配时允许把关键词本身当自定义模型 id
+			}
+			if w.model == "" {
+				m.status = m.styles.err.Render("请先选择模型（↑↓ 或输入关键词）")
 				return m, nil
 			}
-			w.step++
-			w.focusStepInput()
+			w.filter.Blur()
+			w.step = wizStepURL
+			w.url.Focus()
 			return m, nil
+		default:
+			var cmd tea.Cmd
+			w.filter, cmd = w.filter.Update(msg)
+			m.applyModelFilter()
+			return m, cmd
 		}
-		var cmd tea.Cmd
-		switch w.step {
-		case wizStepModel:
-			w.model, cmd = w.model.Update(msg)
-		case wizStepKey:
-			w.key, cmd = w.key.Update(msg)
-		case wizStepURL:
+
+	case wizStepURL:
+		switch msg.String() {
+		case "esc":
+			w.url.Blur()
+			w.step = wizStepModel
+			w.filter.Focus()
+			return m, nil
+		case "enter":
+			w.url.Blur()
+			w.step = wizStepConfirm
+			return m, nil
+		default:
+			var cmd tea.Cmd
 			w.url, cmd = w.url.Update(msg)
+			return m, cmd
 		}
-		return m, cmd
 
 	case wizStepConfirm:
 		switch msg.String() {
 		case "esc":
 			w.step = wizStepURL
-			w.focusStepInput()
+			w.url.Focus()
 		case "enter":
 			return m.applyWizard()
 		}
@@ -1145,7 +1314,7 @@ func (m *osModel) updateWizard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// applyWizard 应用向导结果：切模型 + 把 key/URL 写进**本进程**环境。
+// applyWizard 应用向导结果：切模型 + 按 keep/replace/clear 处理 key + 设 URL。
 //
 // 为什么写 env 而不是配置文件：本仓纪律是密钥只经环境变量/受控注入，不落盘、
 // 不进日志、不进会话文件。代价是只对本进程有效 —— 这一点在输出里明说。
@@ -1157,19 +1326,40 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 		m.status = m.styles.err.Render("未选择 provider")
 		return m, nil
 	}
-	model := orDefault(strings.TrimSpace(w.model.Value()), prof.DefaultModel)
+	model := orDefault(strings.TrimSpace(w.model), prof.DefaultModel)
 	if model == "" {
-		m.status = m.styles.err.Render("该 provider 未能自动匹配模型（无默认值且 /models 无返回）；请回到 model 步手填")
+		m.status = m.styles.err.Render("尚未选定模型；请回到 model 步选择")
 		w.step = wizStepModel
-		w.focusStepInput()
+		w.filter.Focus()
 		return m, nil
 	}
-	key := strings.TrimSpace(w.key.Value())
 	url := strings.TrimSpace(w.url.Value())
 
 	m.provider, m.model = prof.Name, model
-	if key != "" && len(prof.EnvVars) > 0 {
-		_ = os.Setenv(prof.EnvVars[0], key)
+	keyNote := ""
+	switch w.keyAction {
+	case "replace":
+		k := strings.TrimSpace(w.key.Value())
+		if k == "" {
+			m.status = m.styles.err.Render("replace 但 key 为空；请重填或改选 keep")
+			w.step = wizStepKey
+			w.keyEditing = true
+			w.key.Focus()
+			return m, nil
+		}
+		if len(prof.EnvVars) > 0 {
+			_ = os.Setenv(prof.EnvVars[0], k)
+			keyNote = fmt.Sprintf("  key 已替换并写入本进程环境（%s），不落盘、不进日志", prof.EnvVars[0])
+		}
+	case "clear":
+		for _, e := range prof.EnvVars {
+			_ = os.Unsetenv(e)
+		}
+		keyNote = fmt.Sprintf("  key 已清除（%s）；如仍需调用请重新配置", strings.Join(prof.EnvVars, "/"))
+	default: // keep
+		if modelKeySet(prof) {
+			keyNote = "  key 沿用现有环境变量（keep）"
+		}
 	}
 	// Base URL 总是显式设定（空则清掉），避免沿用上一个 provider 的残留覆盖。
 	if url != "" {
@@ -1177,14 +1367,14 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 	} else {
 		_ = os.Unsetenv("HUSHFUSION_AI_BASE_URL")
 	}
+	recordRecentModel(m.base, prof.Name, model) // 最近使用落盘（best-effort）
 
 	m.out = append(m.out, m.styles.ok.Render(fmt.Sprintf("✓ 模型 → %s / %s", m.provider, m.model)))
 	if url != "" {
 		m.out = append(m.out, m.styles.hint.Render("  base-url: "+url))
 	}
-	if key != "" {
-		m.out = append(m.out, m.styles.hint.Render("  key 已写入本进程环境（"+
-			strings.Join(prof.EnvVars, "/")+"），不落盘、不进日志"))
+	if keyNote != "" {
+		m.out = append(m.out, m.styles.hint.Render(keyNote))
 	}
 	if !modelKeySet(prof) {
 		m.out = append(m.out, m.styles.err.Render(fmt.Sprintf("⚠ 该 provider 仍未配 key（env: %s）",
@@ -1195,31 +1385,7 @@ func (m *osModel) applyWizard() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// resolveWizardModel 在 model 留空时自动匹配：先取 provider 默认模型，
-// 仍为空则用它自己的 /models 端点（带向导里填的 key / URL）取第一个模型。
-// 只对「model 与 DefaultModel 都为空」的 provider 发一次网络请求（短超时），
-// 失败不致命：确认页会明说需手填，apply 时再拦一道（fail-closed，不假装成功）。
-func (m *osModel) resolveWizardModel() {
-	w := m.wiz
-	if w == nil || w.provider == nil || strings.TrimSpace(w.model.Value()) != "" {
-		return
-	}
-	if w.provider.DefaultModel != "" {
-		w.model.SetValue(w.provider.DefaultModel)
-		return
-	}
-	key := strings.TrimSpace(w.key.Value())
-	url := strings.TrimSpace(w.url.Value())
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-	defer cancel()
-	models, err := ai.ListModels(ctx, w.provider.Name, ai.ClientOptions{APIKey: key, BaseURL: url})
-	if err == nil && len(models) > 0 {
-		w.model.SetValue(models[0])
-		m.status = m.styles.hint.Render(fmt.Sprintf("已自动匹配模型 → %s（来自 /models）", models[0]))
-	}
-}
-
-// wizardBody 渲染向导当前步骤（已完成的步骤打 ✓，当前步骤打 ▶）。
+// wizardBody 渲染向导当前步骤（已完成步骤打 ✓，当前步骤打 ▶）。
 func (m *osModel) wizardBody() string {
 	w := m.wiz
 	if w == nil {
@@ -1236,11 +1402,14 @@ func (m *osModel) wizardBody() string {
 			return "  "
 		}
 	}
-	stepName := []string{"provider", "model", "api key", "base url", "确认"}
+	stepName := []string{"provider", "api key", "模型", "base url", "确认"}
 	b.WriteString(m.styles.label.Render(fmt.Sprintf("步骤 %d/5 · %s", w.step+1, stepName[w.step])) + "\n\n")
 
 	if w.step == wizStepProvider {
-		for i, p := range w.providers {
+		rows := m.wizListRows()
+		start, end := windowAround(w.cursor, len(w.providers), rows)
+		for i := start; i < end; i++ {
+			p := w.providers[i]
 			cursor := "  "
 			if i == w.cursor {
 				cursor = "❯ "
@@ -1249,40 +1418,212 @@ func (m *osModel) wizardBody() string {
 			if modelKeySet(p) {
 				keyState = "key ✓"
 			}
-			line := fmt.Sprintf("%s%-12s %-30s 默认 %-24s %s", cursor, p.Name, p.DisplayName, p.DefaultModel, keyState)
+			line := fmt.Sprintf("%s%-14s %-24s 默认 %-20s %s", cursor, p.Name, p.DisplayName, p.DefaultModel, keyState)
 			if i == w.cursor {
-				b.WriteString(m.styles.ok.Render(line) + "\n")
+				b.WriteString(m.styles.ok.Render(clipWizLine(line, 76)) + "\n")
 			} else {
-				b.WriteString(m.styles.hint.Render(line) + "\n")
+				b.WriteString(m.styles.hint.Render(clipWizLine(line, 76)) + "\n")
 			}
 		}
+		b.WriteString(m.scrollHint(w.cursor, len(w.providers), rows))
 	} else {
 		b.WriteString(m.styles.hint.Render(fmt.Sprintf("  provider: %s（%s）", w.provider.Name, w.provider.DisplayName)) + "\n\n")
 	}
-	if w.step >= wizStepModel {
-		b.WriteString(mark(wizStepModel) + "model    : " + w.model.View() + "\n")
+
+	if w.step == wizStepKey {
+		b.WriteString(m.renderKeyStep())
+	} else if w.step > wizStepKey {
+		b.WriteString(mark(wizStepKey) + "api key  : " + w.keyActionLabel() + "\n")
 	}
-	if w.step >= wizStepKey {
-		b.WriteString(mark(wizStepKey) + "api key  : " + w.key.View() + "\n")
+
+	if w.step == wizStepModel {
+		b.WriteString(m.renderModelStep())
+	} else if w.step > wizStepModel {
+		b.WriteString(mark(wizStepModel) + "model    : " + orDefault(w.model, w.provider.DefaultModel) + "\n")
 	}
-	if w.step >= wizStepURL {
-		b.WriteString(mark(wizStepURL) + "base url : " + w.url.View() + "\n")
+
+	if w.step == wizStepURL {
+		b.WriteString(m.styles.label.Render("Base URL：") + "\n" + w.url.View() + "\n")
+	} else if w.step > wizStepURL {
+		b.WriteString(mark(wizStepURL) + "base url : " + orDefault(strings.TrimSpace(w.url.Value()), "（空 = provider 默认）") + "\n")
 	}
+
 	if w.step == wizStepConfirm {
 		b.WriteString("\n" + m.styles.ok.Render("确认后立即生效：") + "\n")
 		b.WriteString(fmt.Sprintf("  provider : %s\n", w.provider.Name))
-		modelLine := orDefault(strings.TrimSpace(w.model.Value()), w.provider.DefaultModel)
-		if modelLine == "" {
-			modelLine = "（空：确认时按所填 key 拉 /models 自动匹配；仍失败需手填）"
-		}
-		b.WriteString(fmt.Sprintf("  model    : %s\n", modelLine))
-		b.WriteString(fmt.Sprintf("  api key  : %s\n", keyPreview(strings.TrimSpace(w.key.Value()), w.provider)))
+		b.WriteString(fmt.Sprintf("  model    : %s\n", orDefault(w.model, w.provider.DefaultModel)))
+		b.WriteString(fmt.Sprintf("  api key  : %s\n", w.keyActionLabel()))
 		b.WriteString(fmt.Sprintf("  base url : %s\n", orDefault(strings.TrimSpace(w.url.Value()), "（空 = provider 默认）")))
 		b.WriteString("\n" + m.styles.hint.Render("Enter 应用 · Esc 返回修改"))
 	} else {
 		b.WriteString("\n" + m.styles.hint.Render("Enter 下一步 · Esc 上一步 · Ctrl+C 中断"))
 	}
 	return b.String()
+}
+
+// renderKeyStep 渲染 API key 步（keep / replace / clear 三选一，或 replace 输入态）。
+func (m *osModel) renderKeyStep() string {
+	w := m.wiz
+	var b strings.Builder
+	envs := strings.Join(w.provider.EnvVars, "/")
+	state := "无 key"
+	if modelKeySet(w.provider) {
+		state = "已有 key（env: " + envs + "）"
+	}
+	b.WriteString(m.styles.hint.Render("  当前: "+state) + "\n\n")
+	if w.keyEditing {
+		b.WriteString(m.styles.label.Render("新 API key（掩码，不落盘）：") + "\n" + w.key.View() + "\n")
+		b.WriteString(m.styles.hint.Render("Enter 确认 · Esc 返回"))
+		return b.String()
+	}
+	for _, o := range []struct{ k, label string }{
+		{"k", "keep（沿用现有环境变量；无则保持不变）"},
+		{"r", "replace（输入新 key）"},
+		{"c", "clear（清除该 provider 的 key）"},
+	} {
+		b.WriteString(fmt.Sprintf("  [%s] %s\n", o.k, o.label))
+	}
+	b.WriteString("\n" + m.styles.hint.Render("按 k / r / c 选择 · Esc 上一步"))
+	return b.String()
+}
+
+// renderModelStep 渲染模型步：筛选框 + 可滚动列表（置顶分组带标记）。
+// 列表行数随终端高度自适应；↑↓ 逐条移动，PgUp/PgDn 翻页，Home/End 首尾。
+func (m *osModel) renderModelStep() string {
+	w := m.wiz
+	var b strings.Builder
+	b.WriteString(m.styles.label.Render("筛选：") + w.filter.View() + "\n")
+	busy := ""
+	if w.modelsBusy {
+		busy = "  · 解析 /models 中…"
+	}
+	rows := m.wizListRows()
+	b.WriteString(m.styles.hint.Render(fmt.Sprintf("  %d 个候选%s", len(w.modelShown), busy)) + "\n")
+	if len(w.modelShown) == 0 {
+		if strings.TrimSpace(w.filter.Value()) != "" {
+			b.WriteString(m.styles.hint.Render("  无匹配 —— Enter 可把关键词作为自定义模型 id\n"))
+		} else {
+			b.WriteString(m.styles.hint.Render("  无内置候选；输入关键词可直接指定模型 id\n"))
+		}
+	}
+	start, end := windowAround(w.modelSel, len(w.modelShown), rows)
+	for i := start; i < end; i++ {
+		id := w.modelShown[i]
+		cursor := "  "
+		if i == w.modelSel {
+			cursor = "❯ "
+		}
+		line := fmt.Sprintf("%s%-42s %s", cursor, id, m.modelTag(id))
+		if i == w.modelSel {
+			b.WriteString(m.styles.ok.Render(clipWizLine(line, 76)) + "\n")
+		} else {
+			b.WriteString(m.styles.hint.Render(clipWizLine(line, 76)) + "\n")
+		}
+	}
+	b.WriteString(m.scrollHint(w.modelSel, len(w.modelShown), rows))
+	b.WriteString("\n" + m.styles.hint.Render("↑↓ 选择 · PgUp/PgDn 翻页 · 输入筛选 · Enter 确认 · Esc 返回"))
+	return b.String()
+}
+
+// scrollHint 渲染「当前区间/总数」的滚动指示（只有溢出时才显示）。
+func (m *osModel) scrollHint(sel, total, rows int) string {
+	if total <= rows {
+		return ""
+	}
+	start, end := windowAround(sel, total, rows)
+	return m.styles.hint.Render(fmt.Sprintf("  …（%d–%d / %d，PgUp/PgDn 翻页）…\n", start+1, end, total))
+}
+
+// wizListRows 是向导列表可用的行数（随终端高度自适应，给弹窗留足空间）。
+// 对话框样式 = DoubleBorder(2 行) + Padding(1,2)(2 行) + 标题/筛选/计数/滚动/提示
+// 等固定行 —— 这里按 contentH - 14 预留，确保列表完整可见、不靠终端裁切。
+func (m *osModel) wizListRows() int {
+	contentH := m.height - (strings.Count(logoBanner, "\n") + 1) - 4
+	if contentH < 6 {
+		contentH = 6
+	}
+	rows := contentH - 14
+	if rows < 3 {
+		rows = 3
+	}
+	if rows > 40 {
+		rows = 40
+	}
+	return rows
+}
+
+// modelTag 给模型打来源标记（最近 / 默认 / 常用 / 解析）。
+func (m *osModel) modelTag(id string) string {
+	w := m.wiz
+	if w == nil || w.provider == nil {
+		return ""
+	}
+	for _, x := range w.recent {
+		if x == id {
+			return "[最近]"
+		}
+	}
+	if id == w.provider.DefaultModel {
+		return "[默认]"
+	}
+	for _, x := range commonModels[w.provider.Name] {
+		if x == id {
+			return "[常用]"
+		}
+	}
+	for _, x := range w.resolved {
+		if x == id {
+			return "[解析]"
+		}
+	}
+	return ""
+}
+
+// keyActionLabel 是 key 步的小结文本（keep/replace/clear）。
+func (w *modelWizard) keyActionLabel() string {
+	switch w.keyAction {
+	case "replace":
+		return keyPreview(strings.TrimSpace(w.key.Value()), w.provider)
+	case "clear":
+		return "clear（已选清除）"
+	default:
+		if modelKeySet(w.provider) {
+			return "keep（沿用环境变量）"
+		}
+		return "keep（当前无 key）"
+	}
+}
+
+// windowAround 返回 [start,end) 窗口，长度约 size，尽量让 sel 居中。
+func windowAround(sel, n, size int) (int, int) {
+	if size <= 0 {
+		size = 1
+	}
+	if n <= size {
+		return 0, n
+	}
+	start := sel - size/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + size
+	if end > n {
+		end = n
+		start = end - size
+	}
+	if start < 0 {
+		start = 0
+	}
+	return start, end
+}
+
+// clipWizLine 按 rune 裁剪到 n 列（保留前导缩进，不 TrimSpace）。
+func clipWizLine(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // keyPreview 把 key 变成可展示的摘要：永远不打印明文。
