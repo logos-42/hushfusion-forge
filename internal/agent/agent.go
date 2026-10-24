@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/logos-42/hushfusion-forge/internal/ai"
@@ -65,6 +66,11 @@ type Config struct {
 	// GlobalRoot 是智能体的全局专属目录（记忆/跨项目资料）。
 	// read/ls 允许绝对路径访问该目录；shell 仍以 Root 为 cwd。
 	GlobalRoot string
+	// WorkspaceLock 是同一 workspace 的写工具互斥锁；多个会话并发时
+	// shell 串行执行，避免互相踩目录。nil = 不锁（CLI/测试默认）。
+	WorkspaceLock *sync.Mutex
+	// ShellTimeout 是单条 shell 命令超时（0 = 默认 60s）。
+	ShellTimeout time.Duration
 	// Tokenizer 是可注入的 token 计数器（nil = 默认 len/4 估算，见 tokenizer.go）。
 	// 注入精确实现后，预算判断与压缩触发都按真实 token 数走。
 	Tokenizer Tokenizer
@@ -79,6 +85,7 @@ func DefaultConfig() Config {
 		ModelTimeout:    120 * time.Second,
 		ModelRetries:    1,
 		Root:            ".",
+		ShellTimeout:    60 * time.Second,
 	}
 }
 
@@ -95,6 +102,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ModelTimeout <= 0 {
 		c.ModelTimeout = 120 * time.Second
+	}
+	if c.ShellTimeout <= 0 {
+		c.ShellTimeout = 60 * time.Second
 	}
 	if c.ModelRetries < 0 {
 		c.ModelRetries = 0

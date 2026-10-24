@@ -215,7 +215,6 @@ func TestChatRunStatusAndStop(t *testing.T) {
 		t.Fatal("beginRun 失败")
 	}
 	run.append("partial")
-	defer s.endRun("sess-run", run)
 
 	resp, err := http.Get(ts.URL + "/api/chat/status?session_id=sess-run")
 	if err != nil {

@@ -20,8 +20,7 @@ import (
 )
 
 const (
-	fsReadLimit  = 32 * 1024
-	shellTimeout = 60 * time.Second
+	fsReadLimit = 32 * 1024
 )
 
 func (s *Session) workspaceRoot() string {
@@ -149,8 +148,16 @@ func registerFSTools(r *ToolRegistry, s *Session) error {
 			if strings.TrimSpace(cmdStr) == "" {
 				return "", fmt.Errorf("shell: cmd 为空")
 			}
-			cctx, cancel := context.WithTimeout(ctx, shellTimeout)
+			timeout := s.cfg.ShellTimeout
+			if timeout <= 0 {
+				timeout = 60 * time.Second
+			}
+			cctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
+			if s.cfg.WorkspaceLock != nil {
+				s.cfg.WorkspaceLock.Lock()
+				defer s.cfg.WorkspaceLock.Unlock()
+			}
 			cmd := exec.CommandContext(cctx, "sh", "-c", cmdStr)
 			cmd.Dir = s.workspaceRoot()
 			out, err := cmd.CombinedOutput()

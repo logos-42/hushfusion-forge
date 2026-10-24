@@ -80,12 +80,25 @@ type Settings struct {
 
 // State 是落盘状态（~/.forge/web/state.json）。
 type State struct {
-	Profile         Profile   `json:"profile"`
-	Agents          []Agent   `json:"agents"`
-	Sessions        []Session `json:"sessions"`
-	ActiveAgentID   string    `json:"active_agent_id"`
-	ActiveSessionID string    `json:"active_session_id"`
-	Settings        Settings  `json:"settings"`
+	Profile         Profile       `json:"profile"`
+	Agents          []Agent       `json:"agents"`
+	Sessions        []Session     `json:"sessions"`
+	ActiveAgentID   string        `json:"active_agent_id"`
+	ActiveSessionID string        `json:"active_session_id"`
+	Settings        Settings      `json:"settings"`
+	Room            []RoomMessage `json:"room,omitempty"`
+}
+
+// RoomMessage 是智能体内部商议频道的一条消息（仅 Web 内部使用）。
+type RoomMessage struct {
+	ID        string    `json:"id"`
+	AgentID   string    `json:"agent_id,omitempty"`
+	AgentName string    `json:"agent_name,omitempty"`
+	SessionID string    `json:"session_id,omitempty"`
+	Title     string    `json:"title,omitempty"`
+	Kind      string    `json:"kind"` // report / discuss / invite
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Secret 是按 provider 保存的密钥/端点（单独文件 0600，绝不随 state 返回）。
@@ -119,12 +132,19 @@ type Server struct {
 	// runMu/runs 管理服务端后台对话任务：任务不绑浏览器请求生命周期。
 	runMu sync.Mutex
 	runs  map[string]*chatRun
+
+	// workspaceLocks 按 workspace 串行化 shell，避免并发会话互相踩目录。
+	workspaceMu    sync.Mutex
+	workspaceLocks map[string]*sync.Mutex
+
+	kernel *dualKernel
 }
 
 // chatRun 是一轮后台对话的共享状态（部分文本 + 取消）。
 type chatRun struct {
 	cancel  context.CancelFunc
 	started time.Time
+	lane    *kernelLane
 
 	mu   sync.Mutex
 	text string
@@ -143,12 +163,17 @@ func (r *chatRun) snapshot() (string, time.Time) {
 }
 
 func (s *Server) beginRun(sessionID string) (*chatRun, context.Context, bool) {
+	lane, ok := s.kernel.acquire()
+	if !ok {
+		return nil, nil, false
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	run := &chatRun{cancel: cancel, started: time.Now()}
+	run := &chatRun{cancel: cancel, started: time.Now(), lane: lane}
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	if _, exists := s.runs[sessionID]; exists {
 		cancel()
+		s.kernel.release(lane)
 		return nil, nil, false
 	}
 	s.runs[sessionID] = run
@@ -162,6 +187,7 @@ func (s *Server) endRun(sessionID string, run *chatRun) {
 		delete(s.runs, sessionID)
 	}
 	s.runMu.Unlock()
+	s.kernel.release(run.lane)
 }
 
 func (s *Server) currentRun(sessionID string) *chatRun {
@@ -195,6 +221,89 @@ func (s *Server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 	}
 	run.cancel()
 	s.writeJSON(w, map[string]any{"stopped": true})
+}
+
+func (s *Server) handleKernel(w http.ResponseWriter, r *http.Request) {
+	s.runMu.Lock()
+	runs := make([]KernelRunInfo, 0, len(s.runs))
+	for id, run := range s.runs {
+		text, _ := run.snapshot()
+		lane := ""
+		if run.lane != nil {
+			lane = run.lane.role
+		}
+		runs = append(runs, KernelRunInfo{SessionID: id, Lane: lane, StartedAt: run.started.UnixMilli(), TextLen: len([]rune(text))})
+	}
+	s.runMu.Unlock()
+	s.writeJSON(w, s.kernel.snapshot(runs))
+}
+
+func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	msgs := make([]RoomMessage, 0, len(s.st.Room))
+	msgs = append(msgs, s.st.Room...)
+	s.mu.Unlock()
+	s.writeJSON(w, map[string]any{"messages": msgs})
+}
+
+// handleRoomPost 仅供本地 UI 调试/邀请；智能体走 room_post 工具。
+func (s *Server) handleRoomPost(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AgentID   string `json:"agent_id"`
+		SessionID string `json:"session_id"`
+		Text      string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		http.Error(w, "消息不能为空", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	ag := s.findAgent(strings.TrimSpace(req.AgentID))
+	sess := s.findSession(strings.TrimSpace(req.SessionID))
+	var a Agent
+	var title string
+	if ag != nil {
+		a = *ag
+	}
+	if sess != nil {
+		title = sess.Title
+	}
+	s.mu.Unlock()
+	s.postRoom(a, title, req.SessionID, "discuss", text)
+	s.writeJSON(w, map[string]any{"ok": true})
+}
+
+// postRoom 追加一条内部商议消息；最多保留最近 300 条。
+func (s *Server) postRoom(ag Agent, sessionTitle, sessionID, kind, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if len([]rune(text)) > 4000 {
+		text = string([]rune(text)[:4000]) + "\n…(截断)"
+	}
+	msg := RoomMessage{
+		ID:        fmt.Sprintf("room-%d", time.Now().UnixNano()),
+		AgentID:   ag.ID,
+		AgentName: ag.Name,
+		SessionID: sessionID,
+		Title:     sessionTitle,
+		Kind:      kind,
+		Text:      text,
+		CreatedAt: time.Now(),
+	}
+	s.mu.Lock()
+	s.st.Room = append(s.st.Room, msg)
+	if len(s.st.Room) > 300 {
+		s.st.Room = s.st.Room[len(s.st.Room)-300:]
+	}
+	_ = s.save()
+	s.mu.Unlock()
 }
 
 const (
@@ -235,7 +344,8 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	}
 	s := &Server{addr: addr, dir: dir, root: root, osDir: osDir,
 		agentSesses: map[string]*agent.Session{}, secrets: map[string]Secret{},
-		runs: map[string]*chatRun{}}
+		runs: map[string]*chatRun{}, workspaceLocks: map[string]*sync.Mutex{},
+		kernel: newDualKernel(dir, 4)}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
@@ -261,6 +371,9 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
 	mux.HandleFunc("GET /api/chat/status", s.handleChatStatus)
 	mux.HandleFunc("POST /api/chat/stop", s.handleChatStop)
+	mux.HandleFunc("GET /api/room", s.handleRoom)
+	mux.HandleFunc("POST /api/room", s.handleRoomPost)
+	mux.HandleFunc("GET /api/kernel", s.handleKernel)
 	mux.HandleFunc("POST /api/profile", s.handleProfile)
 	mux.HandleFunc("GET /api/update", s.handleUpdate)
 	mux.HandleFunc("GET /api/version", s.handleVersion)
@@ -275,6 +388,7 @@ func (s *Server) Addr() string { return s.addr }
 
 // ListenAndServe 启动服务（阻塞）。
 func (s *Server) ListenAndServe() error {
+	s.kernel.startHeartbeat()
 	// 自更新时新进程可能比旧进程早几百毫秒起来；端口被占时短暂重试，
 	// 避免出现“新二进制已替换，但新进程 bind 失败退出”。
 	var ln net.Listener
@@ -293,7 +407,10 @@ func (s *Server) ListenAndServe() error {
 }
 
 // Shutdown 优雅停止。
-func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.kernel.close()
+	return s.http.Shutdown(ctx)
+}
 
 func security(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -373,6 +490,21 @@ func (s *Server) normalize() {
 		_ = os.MkdirAll(s.st.Agents[i].GlobalDir, 0o700)
 	}
 	_ = s.save()
+}
+
+func (s *Server) workspaceLock(root string) *sync.Mutex {
+	key, err := filepath.Abs(root)
+	if err != nil {
+		key = root
+	}
+	s.workspaceMu.Lock()
+	defer s.workspaceMu.Unlock()
+	if l := s.workspaceLocks[key]; l != nil {
+		return l
+	}
+	l := &sync.Mutex{}
+	s.workspaceLocks[key] = l
+	return l
 }
 
 // globalDirFor 返回智能体在用户级 Forge 数据目录下的专属目录。
@@ -1101,8 +1233,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	sess.Messages = append(sess.Messages, Message{Role: "assistant", Text: reply, Time: time.Now()})
+	title := sess.Title
 	_ = s.save()
 	s.mu.Unlock()
+	s.postRoom(*agent, title, sess.ID, "report", reply)
 	s.writeJSON(w, map[string]any{"reply": reply})
 }
 
@@ -1222,20 +1356,69 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Lock()
 		sess.Messages = append(sess.Messages, Message{Role: "assistant", Text: partial, Time: time.Now()})
+		title := sess.Title
 		_ = s.save()
 		s.mu.Unlock()
+		s.postRoom(*ag, title, sess.ID, "report", "任务中断："+err.Error())
 		send("error", map[string]string{"error": err.Error()})
 		return
 	}
 	s.mu.Lock()
 	sess.Messages = append(sess.Messages, Message{Role: "assistant", Text: reply, Time: time.Now()})
+	title := sess.Title
 	_ = s.save()
 	s.mu.Unlock()
+	s.postRoom(*ag, title, sess.ID, "report", reply)
 	send("done", map[string]string{"reply": reply})
 }
 
 // agentSession 为 Web 会话构造/复用 agent Runtime（带工具；写工具按设置放行）。
 // history 是「本轮 user 之前」的历史，避免 Turn/TurnStream 再追加时重复。
+// registerRoomTools 给智能体内部商议频道入口；自动汇报由任务结束时投递。
+func (s *Server) registerRoomTools(as *agent.Session, sess *Session, ag Agent) error {
+	readSpec := ai.ToolSpec{Type: "function"}
+	readSpec.Function.Name = "room.read"
+	readSpec.Function.Description = "读取智能体内部商议频道最近的消息（只读，用于了解其它智能体的汇报/讨论）"
+	if err := as.RegisterTool(agent.Tool{Spec: readSpec, Executor: func(_ context.Context, _ string, _ map[string]any) (string, error) {
+		s.mu.Lock()
+		msgs := append([]RoomMessage(nil), s.st.Room...)
+		s.mu.Unlock()
+		if len(msgs) == 0 {
+			return "（内部商议暂无消息）", nil
+		}
+		if len(msgs) > 80 {
+			msgs = msgs[len(msgs)-80:]
+		}
+		var b strings.Builder
+		for _, m := range msgs {
+			who := m.AgentName
+			if who == "" {
+				who = m.AgentID
+			}
+			fmt.Fprintf(&b, "[%s] %s · %s\n%s\n\n", m.Kind, who, m.CreatedAt.Format("15:04:05"), m.Text)
+		}
+		return b.String(), nil
+	}}); err != nil {
+		return err
+	}
+	postSpec := ai.ToolSpec{Type: "function"}
+	postSpec.Function.Name = "room.post"
+	postSpec.Function.Description = "向智能体内部商议频道发一条消息（仅内部使用；不要用它代替给用户的最终回复）"
+	postSpec.Function.Parameters = map[string]any{
+		"type": "object", "properties": map[string]any{
+			"text": map[string]any{"type": "string", "description": "要发给其它智能体的消息"},
+		}, "required": []string{"text"},
+	}
+	return as.RegisterTool(agent.Tool{Spec: postSpec, Executor: func(_ context.Context, _ string, args map[string]any) (string, error) {
+		text, _ := args["text"].(string)
+		if strings.TrimSpace(text) == "" {
+			return "", fmt.Errorf("room.post: text 为空")
+		}
+		s.postRoom(ag, sess.Title, sess.ID, "discuss", text)
+		return "已发送到内部商议频道", nil
+	}})
+}
+
 func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, history []Message) (*agent.Session, error) {
 	if s.agentSesses == nil {
 		s.agentSesses = map[string]*agent.Session{}
@@ -1262,8 +1445,10 @@ func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, histor
 	cfg.MaxBudgetTokens = agent.BudgetFromEnv(agent.BudgetForModel(settings.Model, 0.6))
 	// Web 任务在后台运行，单次模型调用给更长窗口；仍保留上限避免挂死。
 	cfg.ModelTimeout = 10 * time.Minute
+	cfg.ShellTimeout = 10 * time.Minute
 	cfg.Root = root
 	cfg.GlobalRoot = globalDir
+	cfg.WorkspaceLock = s.workspaceLock(root)
 	opts := func() ai.ClientOptions {
 		sec := s.secretFor(settings.Provider)
 		base := firstNonEmpty(sec.BaseURL, os.Getenv("HUSHFUSION_AI_BASE_URL"))
@@ -1285,6 +1470,7 @@ func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, histor
 		return ai.ChatStream(ctx, settings.Provider, req, on, opts())
 	})
 	_ = as.RegisterBuiltinTools(nil) // read/ls/shell/mem/tasks；skill.view 无技能目录不注册
+	_ = s.registerRoomTools(as, sess, ag)
 	as.AllowWrites = map[string]bool{}
 	for _, t := range settings.Tools {
 		as.AllowWrites[t] = true
@@ -1336,6 +1522,7 @@ Workspace：%s（read/ls 的相对路径从这里解析；shell 的 cwd）
 全局专属目录：%s（跨项目的记忆/资料；read/ls 允许访问这里的绝对路径）
 记忆文件：%s（mem.set 会写入这里；跨会话保留）
 路径规则：以上路径由系统自动注入，不需要问用户；不确定时调用 agent_paths 自查。不要声称存在未经验证的文件。
+内部商议：任务结束后系统会自动把结果投递到内部商议频道；需要与其它智能体讨论时用 room_read 读取、room_post 发言。内部商议不能替代给用户的最终回复。
 核心特质（内在持有，不表演）：去成长、去爱；去合作、去分享、去探索；极致专注，在矛盾中找平衡，在混沌中找秩序。
 诚实纪律：不知道就说不知道；完成只能被证据证明。`, a.Name, a.DID, a.Persona, a.Workspace, a.GlobalDir, memFile)
 }

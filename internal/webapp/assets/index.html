@@ -28,6 +28,28 @@
   body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;overflow:hidden}
   #app{display:grid;grid-template-columns:284px 1fr;height:100vh;overflow:hidden;transition:grid-template-columns .18s ease}
   #app.collapsed{grid-template-columns:66px 1fr}
+  #app.room-open{grid-template-columns:284px minmax(0,1fr) 360px}
+  #app.collapsed.room-open{grid-template-columns:66px minmax(0,1fr) 360px}
+  .room-panel{display:none;background:var(--panel);border-left:1px solid var(--line);flex-direction:column;min-width:0;overflow:hidden}
+  #app.room-open .room-panel{display:flex}
+  .room-head{height:54px;flex:none;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line)}
+  .room-head b{font-size:13px}
+  .room-head .tag{font-size:10px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:1px 6px}
+  .room-head .grow{flex:1}
+  .room-head button{width:28px;height:28px;padding:0;border-radius:8px}
+  .room-messages{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:12px;display:flex;flex-direction:column;gap:9px}
+  .room-msg{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  .room-msg .meta{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted);margin-bottom:4px}
+  .room-msg .meta b{color:var(--text);font-size:12px}
+  .room-msg .body{font-size:12px;line-height:1.55;color:var(--text);word-break:break-word}
+  .room-msg .body p{margin:0 0 6px}
+  .room-msg .body p:last-child{margin-bottom:0}
+  .room-foot{flex:none;padding:10px 12px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+  @media(max-width:900px){
+    #app.room-open{grid-template-columns:284px 1fr}
+    #app.collapsed.room-open{grid-template-columns:66px 1fr}
+    .room-panel{position:fixed;right:0;top:0;bottom:0;width:min(360px,88vw);z-index:60;box-shadow:-12px 0 30px rgba(0,0,0,.35)}
+  }
   aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;overflow:hidden}
   .brand{display:flex;align-items:center;gap:8px;padding:14px 12px 10px;font-weight:600;white-space:nowrap}
   #collapseBtn{display:grid;place-items:center;width:32px;height:28px;padding:0;border-radius:8px;margin-left:auto;flex:none}
@@ -189,6 +211,7 @@
       <b id="agentName">智能体</b>
       <span id="agentDid" style="color:var(--muted)"></span>
       <span class="grow"></span>
+      <button id="roomBtn" class="mini" title="打开内部商议">内部商议</button>
     </header>
     <div id="chat"><div class="empty"><h1>我们要做什么？</h1></div></div>
     <div id="imgPreview"></div>
@@ -207,6 +230,14 @@
       <button id="modelBtn" class="mini" title="选择模型">⚙ 模型：<span id="modelLabel">…</span></button>
     </div>
   </main>
+  <aside id="roomPanel" class="room-panel">
+    <div class="room-head">
+      <b>内部商议</b><span class="tag">仅智能体</span><span class="grow"></span>
+      <button id="roomClose" title="关闭">×</button>
+    </div>
+    <div id="roomMessages" class="room-messages"></div>
+    <div class="room-foot">任务结束自动汇报；智能体可用 room_read / room_post 商议。此面板默认关闭。</div>
+  </aside>
 </div>
 
 <dialog id="agentDlg">
@@ -256,7 +287,10 @@
 </dialog>
 
 <script>
-let state=null, update=null, models=null, busy=false, pendingImages=[], editingAgentId='', menuSessionId='', editingMessageIndex=null, editingSessionId='', currentAbort=null, resumeTimer=null;
+let state=null, update=null, models=null, pendingImages=[], editingAgentId='', menuSessionId='', editingMessageIndex=null, editingSessionId='';
+const busySessions=new Set(), aborts=new Map(), resumeTimers=new Map();
+const isBusy=(id)=>{const sid=id||(state&&state.active_session_id);return !!(sid&&busySessions.has(sid));};
+function setBusy(id,on){if(!id)return;if(on)busySessions.add(id);else busySessions.delete(id);renderSendState();}
 
 const $=(id)=>document.getElementById(id);
 const escapeHTML=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -325,6 +359,35 @@ async function boot(){
 
 function renderAll(){ renderUpdate(); renderSidebar(); renderHeader(); renderChat(); renderModel(); }
 
+let roomTimer=null;
+function renderRoom(msgs){
+  const box=$('roomMessages');
+  if(!box)return;
+  const rows=(msgs||[]).slice(-120);
+  if(!rows.length){box.innerHTML='<div class="hint">还没有内部汇报。智能体完成任务后会自动出现在这里。</div>';return;}
+  const stick=nearBottom(box);
+  const labels={report:'汇报',discuss:'商议',invite:'邀请'};
+  box.innerHTML=rows.map(m=>{
+    const who=m.agent_name||m.agent_id||'系统';
+    const kind=labels[m.kind]||m.kind||'消息';
+    const time=m.created_at?new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'';
+    const title=m.title?` · ${escapeHTML(m.title)}`:'';
+    return `<div class="room-msg"><div class="meta"><b>${escapeHTML(who)}</b><span>${kind}${title}</span><span style="margin-left:auto">${time}</span></div><div class="body">${mdToHTML(m.text||'')}</div></div>`;
+  }).join('');
+  if(stick)box.scrollTop=box.scrollHeight;
+}
+async function loadRoom(){
+  try{const j=await api('/api/room');renderRoom(j.messages||[]);}catch(_){}
+}
+function setRoomOpen(open){
+  const app=$('app');
+  app.classList.toggle('room-open',open);
+  if(open){loadRoom();if(!roomTimer)roomTimer=setInterval(loadRoom,4000);}
+  else if(roomTimer){clearInterval(roomTimer);roomTimer=null;}
+}
+$('roomBtn').onclick=()=>setRoomOpen(!$('app').classList.contains('room-open'));
+$('roomClose').onclick=()=>setRoomOpen(false);
+
 function renderSettingsUpdate(){
   const el=$('settingsUpdateStatus');
   if(!el||!update)return;
@@ -367,7 +430,7 @@ function renderSidebar(){
   $('sessions').innerHTML=sess.map(s=>`
     <div class="item ${s.id===state.active_session_id?'active':''}" onclick="pickSession('${s.id}')">
       <div class="ava">${iconChat()}</div>
-      <div class="txt"><b>${s.pinned?'<span class="pin">置顶</span>':''}${escapeHTML(s.title||'新对话')}</b><small>${(s.messages||[]).length} 条</small></div>
+      <div class="txt"><b>${s.pinned?'<span class="pin">置顶</span>':''}${escapeHTML(s.title||'新对话')}</b><small>${(s.messages||[]).length} 条${busySessions.has(s.id)?' · <span style="color:var(--glow)">运行中</span>':''}</small></div>
       <button class="dots" title="会话设置" onclick="openSessionMenu(event,'${s.id}')">⋯</button>
     </div>`).join('');
   $('accountName').textContent=state.profile.name;
@@ -449,18 +512,14 @@ function renderTools(){
 function cancelEdit(){editingMessageIndex=null;editingSessionId='';}
 async function pickAgent(id){
   cancelEdit();
-  if(resumeTimer){clearInterval(resumeTimer);resumeTimer=null;}
-  busy=false;renderSendState();
   state.active_agent_id=id;
   let s=state.sessions.find(x=>x.agent_id===id);
   if(!s){s=await api('/api/sessions',{method:'POST',body:JSON.stringify({agent_id:id})});state.sessions.push(s);}
-  state.active_session_id=s.id;renderSidebar();renderHeader();renderChat();resumeRunning();
+  state.active_session_id=s.id;renderSidebar();renderHeader();renderChat();renderSendState();resumeRunning();
 }
 function pickSession(id){
   cancelEdit();
-  if(resumeTimer){clearInterval(resumeTimer);resumeTimer=null;}
-  busy=false;renderSendState();
-  state.active_session_id=id;renderSidebar();renderChat();resumeRunning();
+  state.active_session_id=id;renderSidebar();renderChat();renderSendState();resumeRunning();
 }
 
 async function copyText(text){
@@ -509,13 +568,13 @@ async function shareMessage(i){
 }
 async function resumeRunning(){
   if(!state)return;
-  if(resumeTimer){clearInterval(resumeTimer);resumeTimer=null;}
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   if(!s)return;
+  if(resumeTimers.has(s.id)){clearInterval(resumeTimers.get(s.id));resumeTimers.delete(s.id);}
   let st;
   try{st=await api('/api/chat/status?session_id='+encodeURIComponent(s.id));}catch(_){return;}
-  if(!st.running){busy=false;renderSendState();return;}
-  busy=true;renderSendState();
+  if(!st.running){setBusy(s.id,false);renderSidebar();return;}
+  setBusy(s.id,true);renderSidebar();
   let a=s.messages&&s.messages[s.messages.length-1];
   if(!a||a.role!=='assistant'||!a.streaming){
     a={role:'assistant',text:st.text||'',streaming:true};
@@ -524,19 +583,23 @@ async function resumeRunning(){
     a.text=st.text||a.text;
   }
   renderChat();
-  resumeTimer=setInterval(async()=>{
-    if(!state||state.active_session_id!==s.id)return;
+  const timer=setInterval(async()=>{
     try{
       const q=await api('/api/chat/status?session_id='+encodeURIComponent(s.id));
-      a.text=q.text||a.text;a.streaming=!!q.running;renderChat();
+      a.text=q.text||a.text;a.streaming=!!q.running;
+      if(state&&state.active_session_id===s.id)renderChat();
       if(!q.running){
-        clearInterval(resumeTimer);resumeTimer=null;
-        a.streaming=false;busy=false;renderSendState();
+        clearInterval(timer);resumeTimers.delete(s.id);
+        a.streaming=false;setBusy(s.id,false);
+        const active=state&&state.active_session_id;
         const j=await api('/api/bootstrap');
-        state=j.state;update=j.update;renderAll();
+        state=j.state;update=j.update;
+        if(active)state.active_session_id=active;
+        renderAll();
       }
     }catch(_){}
   },1000);
+  resumeTimers.set(s.id,timer);
 }
 async function retryMessage(i){
   const s=state.sessions.find(x=>x.id===state.active_session_id);
@@ -803,7 +866,7 @@ async function streamChat(payload,onDelta,signal){
 
 function renderSendState(){
   const b=$('send');
-  if(busy){
+  if(isBusy()){
     b.classList.add('stop');b.title='停止生成';
     b.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
   }else{
@@ -811,17 +874,19 @@ function renderSendState(){
   }
 }
 async function stopStreaming(){
-  if(currentAbort){currentAbort.abort();currentAbort=null;}
   const s=state&&state.sessions.find(x=>x.id===state.active_session_id);
-  if(s){try{await api('/api/chat/stop',{method:'POST',body:JSON.stringify({session_id:s.id})});}catch(_){}}
+  if(!s)return;
+  const a=aborts.get(s.id);
+  if(a){a.abort();aborts.delete(s.id);}
+  try{await api('/api/chat/stop',{method:'POST',body:JSON.stringify({session_id:s.id})});}catch(_){}
 }
 async function submitMessage(text,images){
-  if(busy)return;
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   if(!s){alert('先创建一个会话');return;}
+  if(isBusy(s.id))return;
   const controller=new AbortController();
-  currentAbort=controller;
-  busy=true;renderSendState();
+  aborts.set(s.id,controller);
+  setBusy(s.id,true);renderSidebar();
   s.messages=s.messages||[];
   s.messages.push({role:'user',text,images,time:new Date().toISOString()});
   const assistant={role:'assistant',text:'',streaming:true,time:new Date().toISOString()};
@@ -852,12 +917,12 @@ async function submitMessage(text,images){
       }
     }
   }finally{
-    currentAbort=null;assistant.streaming=false;busy=false;
-    renderSendState();renderSidebar();renderChat();
+    aborts.delete(s.id);assistant.streaming=false;setBusy(s.id,false);
+    renderSidebar();renderChat();
   }
 }
 async function send(){
-  if(busy)return;
+  if(isBusy())return;
   const text=$('input').value.trim();
   if(!text&&pendingImages.length===0)return;
   const s=state.sessions.find(x=>x.id===state.active_session_id);
@@ -883,7 +948,7 @@ $('editBtn').onclick=()=>{
   }
   t.focus();
 };
-$('send').onclick=()=>{if(busy)stopStreaming();else send();};
+$('send').onclick=()=>{if(isBusy())stopStreaming();else send();};
 $('input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
 
 boot().finally(()=>{

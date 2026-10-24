@@ -9,6 +9,15 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 
 ---
 
+## 0.3.0 — 2026-10-25（MINOR：双内核调度 + 多会话并发 + 内部商议）
+
+- Web 执行层改为双 lane 内核：`primary` / `secondary` 各自有容量与心跳，按占用把新会话分到较空的 lane；满载时返回明确繁忙，不互相覆盖。
+- 每 lane 每秒写 `~/.forge/web/kernel/<role>.json` 心跳；`GET /api/kernel` 返回 role、active/capacity、run 列表、Go heap/goroutine 占用。
+- 前端运行态从全局 `busy` 改为按 session 的 `busySessions/aborts`：会话 A 生成时可切到会话 B 继续发送，两个 session 的停止按钮互不影响。
+- 同一 workspace 的 `shell` 通过内核锁串行执行，避免两个会话同时写同一目录；Web shell 超时放宽到 10 分钟。
+- 新增内部商议频道：右侧面板默认关闭，顶部“内部商议”打开；任务结束后自动汇报，智能体可用 `room_read` / `room_post` 讨论；面板只展示内部消息。
+- `GET /api/room`、`POST /api/room`、`GET /api/kernel`；room 持久化在 `state.json`，最多保留 300 条。
+
 ## 0.2.10 — 2026-10-25（PATCH：更新检查改走 npm，绕开 GitHub API 限流）
 
 - 检查更新优先请求 npm registry 的 `@hibs/forge/latest`，不再依赖 GitHub 未认证 API 的 60 次/小时额度。

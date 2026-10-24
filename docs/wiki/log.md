@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-25 | HUSHFUSION Forge Desktop | **双内核 / 多会话并发 / 内部商议（0.3.0）** | 两条 kernel lane（primary/secondary，各容量 4）按 active 负载分配会话，1s 心跳落 `kernel/<role>.json`；`/api/kernel` 暴露占用；前端 `busy` 改 busySessions/aborts 按 session 管理；workspace shell 锁串行；右侧内部商议面板默认关闭，任务结束自动汇报，`room_read/room_post` 智能体讨论。 | `go test ./internal/agent ./internal/webapp` 通过；本机两会话并发实测 lane 分别为 primary/secondary，`A2/B2` 均完成且 room 自动出现两条汇报；`room_post/room_read` 实测成功。 |
 | 2026-10-25 | HUSHFUSION Forge Desktop | **更新检查走 npm（0.2.10）** | `checkUpdate` 先查 `registry.npmjs.org/@hibs%2fforge/latest`；失败回退 GitHub API，再回退 `releases/latest` 302；资产 URL 按 tag + GOOS/GOARCH 构造。 | `go test ./internal/webapp` 通过；本机 `/api/update` 在 GitHub API 403 时仍返回 npm 最新版；发布 0.2.10 后 0.2.9 页面出现更新按钮。 |
 | 2026-10-25 | HUSHFUSION Forge Agent | **全量工具名安全化（0.2.9）** | `Specs()` 把内部名 sanitize 成下划线安全名；`Execute`/文本 invoke 反向解析；写白名单按原名；注册时检测安全名碰撞。覆盖 `mem.*`、`tasks.*`、`skill.view`。 | `go test ./internal/agent ./internal/webapp` 通过；本机 custom provider 原生 `mem_set` 调用成功，`memory.json` 写入 `smoke_test=ok`；普通对话与 shell 调用正常。 |
 | 2026-10-24 | HUSHFUSION Forge Agent | **修复工具名非法（0.2.8）** | `agent.paths` → `agent_paths`；部分 OpenAI-compatible 端点拒绝双点 function name，导致 `400 invalid function name`；系统提示与测试同步。 | `go test ./internal/agent ./internal/webapp` 通过；本机实测普通对话 `ok`、`shell` 工具调用输出 `HELLO`。 |
