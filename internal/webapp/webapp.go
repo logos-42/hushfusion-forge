@@ -159,6 +159,7 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	mux.HandleFunc("GET /api/models", s.handleModels)
 	mux.HandleFunc("POST /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/agents", s.handleCreateAgent)
+	mux.HandleFunc("POST /api/agents/update", s.handleUpdateAgent)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
@@ -502,6 +503,50 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, map[string]any{"agent": agent, "session": sess})
+}
+
+type updateAgentReq struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Avatar  string `json:"avatar"`
+	Persona string `json:"persona"`
+}
+
+func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
+	var req updateAgentReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		http.Error(w, "智能体名字不能为空", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ag := s.findAgent(strings.TrimSpace(req.ID))
+	if ag == nil {
+		http.Error(w, "智能体不存在", http.StatusNotFound)
+		return
+	}
+	avatar := strings.TrimSpace(req.Avatar)
+	if avatar == "" {
+		avatar = ag.Avatar
+	}
+	if !avatarOK(avatar) {
+		http.Error(w, "头像非法（data:image，≤128KB）", http.StatusBadRequest)
+		return
+	}
+	ag.Name = name
+	ag.Avatar = avatar
+	ag.Persona = strings.TrimSpace(req.Persona)
+	s.agentSesses = map[string]*agent.Session{} // 人格/名字变更 → 下轮重建系统提示
+	if err := s.save(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.writeJSON(w, *ag)
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {

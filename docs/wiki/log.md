@@ -2,6 +2,8 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-24 | HUSHFUSION Forge Desktop | **Web：Markdown 渲染 / 同主题配色 / 新会话位置 / 智能体头像编辑** | AI 气泡改用内置 Markdown 渲染（标题、列表、代码块、行内代码、粗斜体、引用、链接、图片，先转义再渲染）；按钮/气泡按主题同色系（深色全深、浅色全浅，`prefers-color-scheme`）；新会话按钮移到聊天区左上角 header；侧边栏/聊天 header 的智能体头像点击打开编辑弹窗，可改名字、人格、头像，新增 `POST /api/agents/update`（保留 ID/DID，清空旧 agent session 以重建提示词）。 | `go build/vet/gofmt/test ./...` 全绿；`node --check` 通过；Markdown 渲染样例输出标题/列表/代码块/引用/链接；新增 `TestUpdateAgentNameAndAvatar`。 |
+|---|---|---|---|---|
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web UI：新会话/图标头像/浅色按钮/设置弹窗** | 输入框内新增「新会话」按钮（当前智能体新建 session 并切过去）；默认头像改为无文字抽象 SVG（渐变球+光环+眼睛），旧 `<text>` 头像启动时自动迁移；品牌区 `HUSHFUSION Forge` 文本替换为 app icon，AI 回复气泡左侧加同款圆角 icon；按钮统一浅色系，深色纯黑/浅色跟随系统 (`prefers-color-scheme`)；账号头像叠加设置齿轮，点击打开设置弹窗（昵称/头像 + 模型/工具入口）。 | `go build/vet/gofmt/test ./...` 全绿；`/icons/apple-touch-icon.png` 200；bootstrap 头像无 `<text>`；`POST /api/sessions` 建新会话成功。 |
 |---|---|---|---|---|
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web/App/CLI/TUI/SDK 共用模型通道 + SSE + 前端修复** | 根因：Web 进程只读自己的 `~/.forge/web/state.json`，没有加载 `<os>/forge.config.json`/`.env`，导致 CLI/TUI 有 key 而 Web 用旧 provider 发不出。现在 `forge web` 先 `applyWorkspaceConfig` + `envload.Load`，`webapp.NewWithRoot` 读共享配置（provider/model/base_url/api_key）并在 Web 改模型时写回共享配置；新增 `POST /api/chat/stream` SSE（delta/done/error），前端改为流式渲染并带非流式回退；修复 `messages:null` 导致脚本中断；图片入口并入输入框 `＋`；头像支持本地上传并修 FileReader 绑定。 | `go build/vet/gofmt/test ./...` 全绿；`TestSharedWorkspaceConfig` 验证读/写共享配置；本机实测 `custom / glm-5.3-flash` SSE 返回 `delta: 在线` + `done`。 |

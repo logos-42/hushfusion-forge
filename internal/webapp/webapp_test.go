@@ -13,7 +13,8 @@ import (
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	s, err := New("", t.TempDir())
+	root := t.TempDir()
+	s, err := NewWithRoot("", t.TempDir(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,6 +70,41 @@ func TestCreateAgentAndProfile(t *testing.T) {
 	defer resp3.Body.Close()
 	if resp3.StatusCode == http.StatusOK {
 		t.Fatal("超长头像应被拒绝")
+	}
+}
+
+func TestUpdateAgentNameAndAvatar(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Post(ts.URL+"/api/agents", "application/json",
+		strings.NewReader(`{"name":"旧名字","persona":"旧职责"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var created struct {
+		Agent Agent `json:"agent"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"id":"` + created.Agent.ID + `","name":"新名字","persona":"新职责","avatar":"data:image/png;base64,AAAA"}`
+	resp2, err := http.Post(ts.URL+"/api/agents/update", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("更新智能体 HTTP %d", resp2.StatusCode)
+	}
+	var updated Agent
+	if err := json.NewDecoder(resp2.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "新名字" || updated.Persona != "新职责" || updated.Avatar != "data:image/png;base64,AAAA" {
+		t.Fatalf("更新结果 = %+v", updated)
+	}
+	if updated.DID == "" || updated.ID != created.Agent.ID {
+		t.Fatal("更新不应改变 ID/DID")
 	}
 }
 
