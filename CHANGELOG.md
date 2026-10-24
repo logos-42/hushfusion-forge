@@ -9,6 +9,13 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 
 ---
 
+## 0.2.3 — 2026-10-24（PATCH：文本工具调用兜底，不改判据）
+
+- 部分 OpenAI-compatible 端点把工具调用写成 `<invoke name="mem.get">…</invoke>` 文本，运行时之前会把它当普通回复显示。
+- `Turn` / `TurnStream` 现在识别已注册工具的文本调用块，转成标准 `tool_calls` 执行并回填；未知工具/代码示例不执行。
+- 同一响应内重复调用去重；SSE 增量阶段隐藏原始 `<invoke>` 块，避免用户看到一屏调用文本。
+- 新增 `TestParseTextToolCalls`、`TestTurnExecutesTextToolInvoke`、`TestTextToolStreamFilter`。
+
 ## 0.2.2 — 2026-10-24（PATCH：Web 外壳交互修复，不改判据）
 
 - 生成中发送按钮变为终止按钮，可中断 SSE 并保留已生成内容。

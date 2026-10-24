@@ -589,8 +589,10 @@ func (s *Session) Turn(ctx context.Context, userMsg string) (string, error) {
 		if resp == nil {
 			return failTurn(errors.New("模型返回 nil 响应"))
 		}
+		s.adoptTextToolCalls(resp)
 		assistantMsg := Message{Role: RoleAssistant, Content: resp.Content}
-		// tool_calls 直接读响应字段（ai.Chat 扩展后，OpenAI 协议）。
+		// tool_calls 直接读响应字段（ai.Chat 扩展后，OpenAI 协议）；
+		// 不支持原生 tool_calls 的端点由 adoptTextToolCalls 兜底解析。
 		toolCalls := resp.ToolCalls
 		if len(toolCalls) == 0 {
 			// 最终回复：落栈返回。
@@ -658,13 +660,23 @@ func (s *Session) TurnStream(ctx context.Context, userMsg string, onDelta func(a
 		if err := ctx.Err(); err != nil {
 			return failTurn(errors.New("回合被 context 中断: " + err.Error()))
 		}
-		resp, err := s.streamOnce(ctx, onDelta)
+		var filter *textToolStreamFilter
+		on := onDelta
+		if onDelta != nil {
+			filter = newTextToolStreamFilter(onDelta)
+			on = filter.handle
+		}
+		resp, err := s.streamOnce(ctx, on)
+		if filter != nil {
+			filter.flush()
+		}
 		if err != nil {
 			return failTurn(errors.New("模型调用失败: " + err.Error()))
 		}
 		if resp == nil {
 			return failTurn(errors.New("模型返回 nil 响应"))
 		}
+		s.adoptTextToolCalls(resp)
 		assistantMsg := Message{Role: RoleAssistant, Content: resp.Content}
 		toolCalls := resp.ToolCalls
 		if len(toolCalls) == 0 {

@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-24 | HUSHFUSION Forge Agent | **文本工具调用兜底（0.2.3）** | 端点返回 `<invoke name="…"><parameter…>` 文本时，`Turn/TurnStream` 解析成标准 tool_calls（仅已注册工具），执行/回填；同响应重复调用去重；SSE 阶段过滤原始标签；未知工具和代码示例不执行。 | `go test ./internal/agent/` 全绿；新增文本解析、端到端 mem.set、流式过滤测试。 |
 | 2026-10-24 | HUSHFUSION Forge Release | **发布 0.2.2（npm + Go）** | 版本统一 `0.2.2`：`ForgeVersion`、npm `hushfusion-forge@0.2.2`、下载器默认版本、Release 脚本默认版本、CHANGELOG；Go 模块修复 `python/aux` 保留名后打 `v0.2.2`，发布六平台二进制与 npm 包。 | `go build/test ./...`、`npm test`、`npm pack` 通过；Go proxy `v0.2.2` 与 npm registry 发布后校验。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：停止生成 / 稳定流光 / 独立滚动区 / 默认写工具** | 发送按钮在生成中变为终止按钮（AbortController 中断 SSE，保留已生成文本或标记已停止）；流式增量只更新当前 AI 气泡，不再整页重渲染，扫光动画速度稳定；滚动只发生在 `#chat`（`min-height:0` + `body`/`main` overflow hidden），输入框不参与滚动；`shell/mem.set/mem.reset/tasks.add/tasks.set_state` 写工具默认开启，插件工具入口在加号弹窗。 | `go build/vet/gofmt/test ./...` 全绿；`node --check` 通过；本机 bootstrap 工具列表 5 项、`tools_initialized=true`。 |
 | 2026-10-24 | HUSHFUSION Forge Release | **npm 包 + Go 模块 v0.2.1 真发布** | 新增 `npm/`：`hushfusion-forge@0.2.1` 启动器 + `ForgeClient`/`startServer` SDK，首次运行下载 GitHub Release 对应 OS/arch 二进制；修复 Go proxy 拒绝模块 zip 的根因：`python/aux/` 的 `aux` 是 Windows 保留设备名，整目录改名 `python/auxiliary/` 并同步所有引用；`v0.2.1` 标签重指当前提交并重建 Release 资产。 | `go build/test ./...` 通过；`npm test` / `npm pack` 通过；Go proxy `@v/v0.2.1.info`、npm registry 待发布后校验。 |
