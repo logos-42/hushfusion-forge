@@ -50,16 +50,21 @@ var Stages = []Stage{
 			"internal/oskernel/", // 2026-10-20 新增：OS 宏内核（syscall 分发 + 子系统驱动 + 写前守卫，归 parent）
 			"internal/aios/",     // 2026-10-20 新增：phase-3 AI 粘合层（AI 经内核受控 syscall 提议，归 parent）
 			"internal/modules/",
-			"internal/mcp/",      // 2026-10-21 新增：MCP stdio 客户端 + init 门 + 权限门（学 Crush，归 parent）
-			"internal/lsp/",      // 2026-10-21 新增：LSP server 客户端 + manager + init 门 + 权限门（学 Hermes/Crush，归 parent）
-			"internal/agent/",    // 2026-10-23 新增：Agent Runtime（单一 queryLoop + 会话记忆 + skills + 目标/计划/待办 + serve + 上下文压缩，见 docs/wiki/agent-runtime-design.md，归 parent）
-			"internal/identity/", // 2026-10-23 新增：DID 身份（did:key/ed25519）+ 能力令牌，零依赖（归 parent）
-			"internal/wallet/",   // 2026-10-23 新增：EVM 钱包（secp256k1 + did:pkh + EIP-712 签名），归 parent
-			"internal/x402/",     // 2026-10-23 新增：x402 客户端（402 解析 + EIP-3009 TransferWithAuthorization），归 parent
-			"internal/sandbox/",  // 2026-10-23 新增：exec 围栏（目录 jail + env 白名单 + 进程组 kill + 超时，归 parent）
-			"internal/proc/",     // 2026-10-23 新增：进程管理（登记表 + 取消传播 + 进程组停止 + 回收 + 并发上限，归 parent）
-			"internal/persona/",  // 2026-10-23 新增：persona/agent 文档发现 + bootstrap 注入（归 parent）
-			"internal/review/",   // 2026-10-23 新增：目标/计划/结果二审（独立 reviewer + 人工门，fail-closed，归 parent）
+			"internal/mcp/",       // 2026-10-21 新增：MCP stdio 客户端 + init 门 + 权限门（学 Crush，归 parent）
+			"internal/lsp/",       // 2026-10-21 新增：LSP server 客户端 + manager + init 门 + 权限门（学 Hermes/Crush，归 parent）
+			"internal/agent/",     // 2026-10-23 新增：Agent Runtime（单一 queryLoop + 会话记忆 + skills + 目标/计划/待办 + serve + 上下文压缩，见 docs/wiki/agent-runtime-design.md，归 parent）
+			"internal/identity/",  // 2026-10-23 新增：DID 身份（did:key/ed25519）+ 能力令牌，零依赖（归 parent）
+			"internal/wallet/",    // 2026-10-23 新增：EVM 钱包（secp256k1 + did:pkh + EIP-712 签名），归 parent
+			"internal/x402/",      // 2026-10-23 新增：x402 客户端（402 解析 + EIP-3009 TransferWithAuthorization），归 parent
+			"internal/cron/",      // 2026-10-24 新增：内部 cron（5 段表达式解析 + Next/Due + JSON 持久化），归 parent
+			"internal/dchat/",     // 2026-10-24 新增：去中心化通信频道（iroh/hyperswarm/orbitdb，Go↔Node JSON 行协议），归 parent
+			"internal/envload/",   // 2026-10-24 新增：.env 加载与保护（不覆盖已有 env / 密钥脱敏 / 防路径穿越），归 parent
+			"internal/subagents/", // 2026-10-24 新增：子智能体集群（并发上限 / 可查询 / 可停止 / 深度由宿主控制），归 parent
+			"internal/workspace/", // 2026-10-24 新增：workspace 分类索引（project/design/acceptance/evidence/receipts/tools…），归 parent
+			"internal/sandbox/",   // 2026-10-23 新增：exec 围栏（目录 jail + env 白名单 + 进程组 kill + 超时，归 parent）
+			"internal/proc/",      // 2026-10-23 新增：进程管理（登记表 + 取消传播 + 进程组停止 + 回收 + 并发上限，归 parent）
+			"internal/persona/",   // 2026-10-23 新增：persona/agent 文档发现 + bootstrap 注入（归 parent）
+			"internal/review/",    // 2026-10-23 新增：目标/计划/结果二审（独立 reviewer + 人工门，fail-closed，归 parent）
 			"testdata/",
 			"scripts/",
 			"knowledge/",

@@ -1,0 +1,15 @@
+{
+  "name": "hushfusion-dchat-node",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Node helper for HUSHFUSION Forge decentralized channels (hyperswarm / orbitdb / iroh)",
+  "dependencies": {
+    "hyperswarm": "^4.0.0",
+    "orbit-db": "^0.31.0",
+    "ipfs-core": "^0.18.0"
+  },
+  "optionalDependencies": {
+    "@iroh/iroh": "^0.1.0"
+  }
+}

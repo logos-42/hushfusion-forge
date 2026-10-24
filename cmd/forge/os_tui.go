@@ -46,8 +46,10 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/agent"
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/aios"
+	"github.com/logos-42/hushfusion-forge/internal/envload"
 	"github.com/logos-42/hushfusion-forge/internal/osview"
 	"github.com/logos-42/hushfusion-forge/internal/persona"
+	"github.com/logos-42/hushfusion-forge/internal/workspace"
 )
 
 const (
@@ -477,6 +479,11 @@ func (m *osModel) runSlashByName(name string) (tea.Model, tea.Cmd) {
 func newOSModel(base string, snap *osview.Snapshot) *osModel {
 	// 先加载 workspace config 并注入环境变量，后面的 envOr 才能读到。
 	applyWorkspaceConfig(base)
+	// .env 环境加载与保护：不覆盖已有 env；失败要明说，不静默。
+	var envErr error
+	if _, err := envload.Load(repoRoot()); err != nil {
+		envErr = err
+	}
 	migrateRuntimeData(base) // 旧 os/、./forge 数据搬到全局 ~/.forge
 	// 型号不再写死 "default"：未显式设置时取 provider 的 DefaultModel
 	// （custom → custom-model），保证自定义端点启动即带出正确型号。
@@ -510,6 +517,9 @@ func newOSModel(base string, snap *osview.Snapshot) *osModel {
 		budgetTokens: budgetTokens,
 	}
 	m.initStyles()
+	if envErr != nil {
+		m.out = append(m.out, m.styles.err.Render("⚠ .env 加载失败: "+envErr.Error()))
+	}
 	m.spinner = spinner.New(
 		spinner.WithSpinner(spinner.Dot),
 		spinner.WithStyle(m.styles.spinner),
@@ -602,6 +612,9 @@ func (m *osModel) buildFrozenContext() string {
 	if wf, err := os.ReadFile(filepath.Join(runtimeMemoryDir(m.base), "workflow.md")); err == nil {
 		b.WriteString("\n## 工作流快照\n" + tailRunes(string(wf), 1200) + "\n")
 	}
+
+	// 7) workspace 分类索引：项目文档 / 设计 / 验收 / 证据 / 回执 / 工具 等
+	b.WriteString("\n" + workspace.Render(workspace.Scan(repoRoot()), 6))
 	return b.String()
 }
 
@@ -2859,8 +2872,10 @@ func runAICmd(ctx context.Context, base, goal, provider, model, extraSystem stri
 				if os.Getenv("HUSHFUSION_ALLOW_SHELL") == "1" {
 					sess.AllowWrites["shell"] = true
 				}
+				allowPlatformWrites(sess)
 			} else {
 				sess.SetBudget(budget) // /budget 改动下一轮生效
+				allowPlatformWrites(sess)
 			}
 			sess.SetGoal(longGoal) // /goal 每轮动态注入，不占历史
 			// 工具执行完立刻投递一行；最终回复最后到达。

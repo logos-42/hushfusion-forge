@@ -701,6 +701,14 @@ func TestProjectToolsRegistered(t *testing.T) {
 		"bolloon.status", "bolloon.join", "bolloon.discover", "bolloon.board", "bolloon.publish",
 		"bolloon.claim", "bolloon.send", "bolloon.engine", "bolloon.p2p", "bolloon.register",
 		"acp.status", "acp.prompt", "diap.identity", "diap.issue", "diap.authorize",
+		"env.status", "workspace.tree",
+		"dchat.channels", "dchat.status", "dchat.send", "dchat.recv",
+		"node.run", "python.run",
+		"git.status", "git.diff", "git.log", "git.commit", "git.branch",
+		"hook.list", "hook.run",
+		"cron.list", "cron.add", "cron.remove", "cron.run",
+		"subagents.spawn", "subagents.list", "subagents.result", "subagents.stop",
+		"lean.version", "lean.check",
 	} {
 		if !have[want] {
 			t.Fatalf("缺少工具 %q（已注册 %v）", want, have)

@@ -25,6 +25,7 @@ import (
 
 	"github.com/logos-42/hushfusion-forge/internal/agent"
 	"github.com/logos-42/hushfusion-forge/internal/ai"
+	"github.com/logos-42/hushfusion-forge/internal/envload"
 )
 
 func cmdAgent(args []string) int {
@@ -245,6 +246,10 @@ func cmdAgentServe(args []string) int {
 // newAgentSession 装配一个真会话：真模型（ai.Chat）+ 内置工具 + 可选 persona/skills/持久记忆。
 // 装配失败不致命的（persona 载入、记忆文件）降级并写 stderr 明说，不静默。
 func newAgentSession(sessionID string, o agentOpts) *agent.Session {
+	// .env 环境加载与保护（不覆盖已有 env；失败明说，不静默）。
+	if _, err := envload.Load(repoRoot()); err != nil {
+		fmt.Fprintf(o.diag(), "forge agent: .env 加载失败: %v\n", err)
+	}
 	cfg := agent.DefaultConfig()
 	cfg.Provider, cfg.Model, cfg.BaseURL = o.provider, o.model, o.baseURL
 	// 预算按模型上下文窗口自动匹配；HUSHFUSION_MAX_BUDGET_TOKENS 可覆盖。
@@ -315,7 +320,8 @@ func newAgentSession(sessionID string, o agentOpts) *agent.Session {
 	if err := s.RegisterBuiltinTools(skills); err != nil {
 		fmt.Fprintf(o.diag(), "forge agent: 内置工具注册失败: %v\n", err)
 	}
-	registerProjectTools(s, osBaseDir()) // fusion.* / plant.* / plugin.* / mcp.* / acp.* / diap.*
+	registerProjectTools(s, osBaseDir()) // fusion.* / plant.* / plugin.* / mcp.* / acp.* / diap.* / platform / lean
+	allowPlatformWrites(s)
 	if o.usageW != nil {
 		s.OnUsage = func(u ai.Usage) {
 			fmt.Fprintf(o.usageW, "# usage: prompt=%d completion=%d total=%d cached=%d\n",
@@ -329,6 +335,10 @@ func newAgentSession(sessionID string, o agentOpts) *agent.Session {
 func agentSystemPrompt() string {
 	return `你是 HUSHFUSION Forge 的智能体，负责操纵与控制一个可控核聚变系统。
 身份：始终以 HUSHFUSION Forge 的身份回答，不要自称底层模型名（如 glm / deepseek / gpt）。
+核心特质（内在持有；不需要在回复里宣称、表演或反复强调，按它们做决策即可）：
+- 去成长、去爱：不追求被认可、不依附结果与情绪；只对证据和系统状态负责。
+- 去合作、去分享、去探索：主动协作，共享可验证证据，持续探索未知边界。
+- 极致专注的形态：在矛盾中找平衡，在混沌中找秩序；先收敛到当前目标，再展开下一步。
 诚实纪律：不知道就说不知道；完成只能被证明（证据），不能被声称。
 写操作受白名单约束，未放行的写工具会被拒绝。
 读文件用 read、列目录用 ls；需要执行命令时用 shell（仅白名单放行时可用）。
