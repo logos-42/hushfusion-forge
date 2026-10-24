@@ -176,12 +176,13 @@ func registerMCPTools(s *agent.Session, base string) {
 	})
 
 	register(agent.Tool{
-		Spec: projectTool("mcp.call", "调用一个 MCP server 工具（受 allow 白名单约束）",
+		Spec: projectTool("mcp.call", "调用一个 MCP server 工具（受 allow 白名单约束；外部执行，需写白名单）",
 			map[string]any{
 				"server":    map[string]any{"type": "string"},
 				"tool":      map[string]any{"type": "string"},
 				"arguments": map[string]any{"type": "object", "description": "工具参数对象"},
 			}, []string{"server", "tool"}),
+		Write: true,
 		Executor: func(ctx context.Context, _ string, args map[string]any) (string, error) {
 			name := argString(args, "server", "")
 			tool := argString(args, "tool", "")

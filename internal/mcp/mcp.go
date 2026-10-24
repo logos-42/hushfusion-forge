@@ -148,7 +148,16 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 		return "", err
 	}
 	var sb strings.Builder
+	const maxOutput = 64 << 10
 	for _, c := range r.Content {
+		if sb.Len()+len(c.Text) > maxOutput {
+			remain := maxOutput - sb.Len()
+			if remain > 0 {
+				sb.WriteString(c.Text[:remain])
+			}
+			sb.WriteString("\n…(MCP 输出超长，已截断)")
+			break
+		}
 		sb.WriteString(c.Text)
 	}
 	return sb.String(), nil

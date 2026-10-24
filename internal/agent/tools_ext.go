@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/logos-42/hushfusion-forge/internal/ai"
+	"github.com/logos-42/hushfusion-forge/internal/privacy"
 )
 
 // toolArgs 是工具参数 schema（JSON Schema 子集：object + string 属性）。
@@ -67,6 +68,12 @@ func registerMemoryTools(r *ToolRegistry, s *Session) error {
 			val, _ := args["value"].(string)
 			if strings.TrimSpace(key) == "" {
 				return "", fmt.Errorf("mem.set: key 为空")
+			}
+			if privacy.ContainsPrivateKey(val) {
+				return "", fmt.Errorf("隐私围栏拒绝：记忆值包含私钥，未写入")
+			}
+			if clean, findings := privacy.Redact(val); len(findings) > 0 {
+				val = clean
 			}
 			s.Memory.Set(key, val)
 			return "已记忆 " + key + "=" + val, nil
@@ -296,6 +303,9 @@ func (s *Session) RegisterBuiltinTools(skills *SkillsDir) error {
 		return err
 	}
 	if err := registerFSTools(s.registry, s); err != nil {
+		return err
+	}
+	if err := registerPythonTool(s.registry, s); err != nil {
 		return err
 	}
 	if err := registerPathTools(s.registry, s); err != nil {

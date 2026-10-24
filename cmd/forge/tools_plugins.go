@@ -113,12 +113,13 @@ func registerPluginTools(s *agent.Session, base string) {
 	})
 
 	register(agent.Tool{
-		Spec: projectTool("plugin.load", "加载一个插件（外部 command 或仅 manifest）",
+		Spec: projectTool("plugin.load", "加载一个插件（外部 command 或仅 manifest；写动作，需白名单）",
 			map[string]any{
 				"path":     map[string]any{"type": "string", "description": "manifest JSON 路径（相对插件目录或绝对路径）"},
 				"id":       map[string]any{"type": "string", "description": "模块 ID；缺省用 manifest identity.id"},
 				"manifest": map[string]any{"type": "object", "description": "内联插件声明（与 path 二选一）"},
 			}, nil),
+		Write: true,
 		Executor: func(_ context.Context, _ string, args map[string]any) (string, error) {
 			var raw []byte
 			if p := argString(args, "path", ""); p != "" {
@@ -178,12 +179,13 @@ func registerPluginTools(s *agent.Session, base string) {
 	})
 
 	register(agent.Tool{
-		Spec: projectTool("plugin.call", "调用插件的某个 action",
+		Spec: projectTool("plugin.call", "调用插件的某个 action（外部执行，需白名单）",
 			map[string]any{
 				"id":     map[string]any{"type": "string"},
 				"action": map[string]any{"type": "string"},
 				"params": map[string]any{"type": "object", "description": "action 参数对象"},
 			}, []string{"id", "action"}),
+		Write: true,
 		Executor: func(ctx context.Context, _ string, args map[string]any) (string, error) {
 			id := argString(args, "id", "")
 			action := argString(args, "action", "")
@@ -203,8 +205,9 @@ func registerPluginTools(s *agent.Session, base string) {
 	})
 
 	register(agent.Tool{
-		Spec: projectTool("plugin.unload", "卸载并关闭插件",
+		Spec: projectTool("plugin.unload", "卸载并关闭插件（写动作，需白名单）",
 			map[string]any{"id": map[string]any{"type": "string"}}, []string{"id"}),
+		Write: true,
 		Executor: func(_ context.Context, _ string, args map[string]any) (string, error) {
 			id := argString(args, "id", "")
 			if id == "" {

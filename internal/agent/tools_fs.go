@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/logos-42/hushfusion-forge/internal/privacy"
 )
 
 const (
@@ -74,6 +76,13 @@ func (s *Session) safePath(p string) (string, error) {
 	if !under(root, abs) && !under(s.globalRoot(), abs) {
 		return "", fmt.Errorf("路径越出 workspace/global：%s", p)
 	}
+	// 解析符号链接后再检查一次，防止用 notes -> .env 绕过 basename 围栏。
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = real
+		if !under(root, abs) && !under(s.globalRoot(), abs) {
+			return "", fmt.Errorf("符号链接越出 workspace/global：%s", p)
+		}
+	}
 	return abs, nil
 }
 
@@ -97,6 +106,9 @@ func registerFSTools(r *ToolRegistry, s *Session) error {
 			if err != nil {
 				return "", err
 			}
+			if privacy.SensitivePath(abs) {
+				return "", fmt.Errorf("隐私围栏拒绝读取敏感文件：%s", p)
+			}
 			b, err := os.ReadFile(abs)
 			if err != nil {
 				return "", err
@@ -118,12 +130,18 @@ func registerFSTools(r *ToolRegistry, s *Session) error {
 			if err != nil {
 				return "", err
 			}
+			if privacy.SensitivePath(abs) {
+				return "", fmt.Errorf("隐私围栏拒绝列出敏感目录：%s", p)
+			}
 			entries, err := os.ReadDir(abs)
 			if err != nil {
 				return "", err
 			}
 			names := make([]string, 0, len(entries))
 			for _, e := range entries {
+				if privacy.SensitivePath(filepath.Join(abs, e.Name())) {
+					continue
+				}
 				name := e.Name()
 				if e.IsDir() {
 					name += "/"
@@ -147,6 +165,9 @@ func registerFSTools(r *ToolRegistry, s *Session) error {
 			cmdStr, _ := args["cmd"].(string)
 			if strings.TrimSpace(cmdStr) == "" {
 				return "", fmt.Errorf("shell: cmd 为空")
+			}
+			if privacy.SensitiveCommand(cmdStr) {
+				return "", fmt.Errorf("隐私围栏拒绝读取敏感路径/凭据的命令")
 			}
 			timeout := s.cfg.ShellTimeout
 			if timeout <= 0 {

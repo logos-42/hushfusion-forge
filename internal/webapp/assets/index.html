@@ -45,6 +45,13 @@
   .room-msg .body p{margin:0 0 6px}
   .room-msg .body p:last-child{margin-bottom:0}
   .room-foot{flex:none;padding:10px 12px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+  .room-controls{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+  .room-controls select{flex:1;min-width:0;font-size:11px;padding:5px 6px;border-radius:8px;background:var(--btn-bg);color:var(--btn-text);border:1px solid var(--btn-border)}
+  .room-controls button{font-size:11px;padding:5px 8px;border-radius:8px;white-space:nowrap}
+  .room-members{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;color:var(--muted)}
+  .room-members .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--muted);margin-right:3px}
+  .room-members .dot.thinking{background:var(--glow);animation:pulse 1.2s infinite}
+  .room-members .dot.idle{background:#5bd67a}
   @media(max-width:900px){
     #app.room-open{grid-template-columns:284px 1fr}
     #app.collapsed.room-open{grid-template-columns:66px 1fr}
@@ -236,7 +243,15 @@
       <button id="roomClose" title="关闭">×</button>
     </div>
     <div id="roomMessages" class="room-messages"></div>
-    <div class="room-foot">任务结束自动汇报；智能体可用 room_read / room_post 商议。此面板默认关闭。</div>
+    <div class="room-foot">
+      <div class="room-controls">
+        <select id="roomA"></select><select id="roomB"></select>
+        <button id="roomStartBtn">发起交流</button><button id="roomStopBtn">结束</button>
+      </div>
+      <div id="roomState" class="hint"></div>
+      <div id="roomMembers" class="room-members"></div>
+      <div>任务结束自动汇报；智能体可用 room_read / room_post 商议。此面板默认关闭。</div>
+    </div>
   </aside>
 </div>
 
@@ -281,7 +296,7 @@
   <h3 style="margin:0 0 6px">添加图片 / 工具</h3>
   <label>图片（最多 4 张，单张 ≤1MB）</label>
   <input type="file" id="imgFile" accept="image/*" multiple />
-  <div class="hint">read / ls 等只读工具默认可用；shell、mem、tasks 写工具默认开启。插件工具加载后会显示在加号里。</div>
+  <div class="hint">read / ls 等只读工具默认可用；shell、python.run、mem、tasks 写工具默认开启。插件工具加载后会显示在加号里。</div>
   <div class="tools" id="toolList"></div>
   <div class="row"><button onclick="document.getElementById('toolsDlg').close()">取消</button><button class="primary" id="toolsSave">保存</button></div>
 </dialog>
@@ -289,6 +304,8 @@
 <script>
 let state=null, update=null, models=null, pendingImages=[], editingAgentId='', menuSessionId='', editingMessageIndex=null, editingSessionId='';
 const busySessions=new Set(), aborts=new Map(), resumeTimers=new Map();
+const PRIVATE_INPUT=/-----BEGIN[\s\S]*?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{16,}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bAKIA[0-9A-Z]{16}\b|api[_-]?key\s*[:=]\s*\S{8,}/i;
+const privacyBlocked=(text)=>PRIVATE_INPUT.test(text||'');
 const isBusy=(id)=>{const sid=id||(state&&state.active_session_id);return !!(sid&&busySessions.has(sid));};
 function setBusy(id,on){if(!id)return;if(on)busySessions.add(id);else busySessions.delete(id);renderSendState();}
 
@@ -357,9 +374,25 @@ async function boot(){
   renderAll();
 }
 
-function renderAll(){ renderUpdate(); renderSidebar(); renderHeader(); renderChat(); renderModel(); }
+function renderAll(){ renderUpdate(); renderSidebar(); renderHeader(); renderChat(); renderModel(); renderRoomControls(); }
 
 let roomTimer=null;
+function renderRoomControls(){
+  const a=$('roomA'),b=$('roomB');
+  if(!a||!b||!state)return;
+  const opts=(state.agents||[]).map(x=>`<option value="${x.id}">${escapeHTML(x.name)}</option>`).join('');
+  const keepA=a.value,keepB=b.value;
+  a.innerHTML=opts;b.innerHTML=opts;
+  if([...a.options].some(o=>o.value===keepA))a.value=keepA;
+  if([...b.options].some(o=>o.value===keepB))b.value=keepB;
+  if(!a.value&&state.agents[0])a.value=state.agents[0].id;
+  if(!b.value){const other=(state.agents||[]).find(x=>x.id!==a.value);if(other)b.value=other.id;}
+}
+function renderRoomMeta(st,members){
+  const s=$('roomState'),m=$('roomMembers');
+  if(s)s.textContent=st&&st.active?`交流中 · 第 ${st.turn||0}/${st.max_turns||6} 轮 · ${st.topic||''}`:'未在主动交流';
+  if(m)m.innerHTML=(members||[]).map(x=>`<span><span class="dot ${x.status||''}"></span>${escapeHTML(x.agent_name||x.agent_id||'')}</span>`).join('');
+}
 function renderRoom(msgs){
   const box=$('roomMessages');
   if(!box)return;
@@ -377,7 +410,7 @@ function renderRoom(msgs){
   if(stick)box.scrollTop=box.scrollHeight;
 }
 async function loadRoom(){
-  try{const j=await api('/api/room');renderRoom(j.messages||[]);}catch(_){}
+  try{const j=await api('/api/room');renderRoom(j.messages||[]);renderRoomMeta(j.state,j.members);}catch(_){}
 }
 function setRoomOpen(open){
   const app=$('app');
@@ -387,6 +420,16 @@ function setRoomOpen(open){
 }
 $('roomBtn').onclick=()=>setRoomOpen(!$('app').classList.contains('room-open'));
 $('roomClose').onclick=()=>setRoomOpen(false);
+$('roomStartBtn').onclick=async()=>{
+  const ids=[$('roomA').value,$('roomB').value].filter(Boolean);
+  if(new Set(ids).size<2){alert('请选择两个不同的智能体');return;}
+  try{await api('/api/room/start',{method:'POST',body:JSON.stringify({agent_ids:ids})});await loadRoom();}
+  catch(e){alert(e.message);}
+};
+$('roomStopBtn').onclick=async()=>{
+  try{await api('/api/room/stop',{method:'POST',body:'{}'});await loadRoom();}
+  catch(e){alert(e.message);}
+};
 
 function renderSettingsUpdate(){
   const el=$('settingsUpdateStatus');
@@ -884,6 +927,11 @@ async function submitMessage(text,images){
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   if(!s){alert('先创建一个会话');return;}
   if(isBusy(s.id))return;
+  if(privacyBlocked(text)){
+    s.messages=s.messages||[];
+    s.messages.push({role:'assistant',text:'（隐私围栏：检测到私钥/凭据，消息未发送，也未写入会话）',time:new Date().toISOString()});
+    renderChat();renderSidebar();return;
+  }
   const controller=new AbortController();
   aborts.set(s.id,controller);
   setBusy(s.id,true);renderSidebar();
@@ -925,6 +973,11 @@ async function send(){
   if(isBusy())return;
   const text=$('input').value.trim();
   if(!text&&pendingImages.length===0)return;
+  if(privacyBlocked(text)){
+    const s=state.sessions.find(x=>x.id===state.active_session_id);
+    if(s){s.messages=s.messages||[];s.messages.push({role:'assistant',text:'（隐私围栏：检测到私钥/凭据，消息未发送，也未写入会话）',time:new Date().toISOString()});renderChat();renderSidebar();}
+    $('input').value='';return;
+  }
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   if(s&&editingMessageIndex!=null&&editingSessionId===s.id){
     try{
