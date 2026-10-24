@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -888,6 +889,79 @@ func TestLoopTick(t *testing.T) {
 	mm.busy = true
 	if _, cmd := mm.Update(loopTickMsg{}); cmd == nil {
 		t.Fatal("忙时 tick 应重排定时器")
+	}
+}
+
+// 普通对话：第一条实质输入成为对话主线；显式 /goal 优先；/goal clear 一并清掉。
+func TestNormalChatThreadGoal(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	long := "这是一个足够长的普通对话主线，用来验证目标不漂移注入。"
+	if _, _ = m.submitCommand(long); m.threadGoal != long {
+		t.Fatalf("threadGoal = %q", m.threadGoal)
+	}
+	if got := m.currentGoal(); got != long {
+		t.Fatalf("currentGoal = %q, want 对话主线", got)
+	}
+	m.goal = "显式目标"
+	if got := m.currentGoal(); got != "显式目标" {
+		t.Fatalf("显式 goal 应优先, got %q", got)
+	}
+	if _, _ = m.runSlash("goal clear"); m.threadGoal != "" || m.goal != "" {
+		t.Fatalf("goal clear 后 threadGoal=%q goal=%q", m.threadGoal, m.goal)
+	}
+}
+
+// 普通对话出错后应自动重试上一句（最多 3 次），不是一次错误就断线。
+func TestChatAutoRetryOnError(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.lastGoal = "上一句"
+	m.busy = false
+	_, cmd := m.onAIResult(aiResultMsg{err: errors.New("boom")})
+	if cmd == nil || !m.chatRetrying || m.chatRetry != 1 {
+		t.Fatalf("首次错误应安排重试: retry=%d waiting=%v cmd=%v", m.chatRetry, m.chatRetrying, cmd != nil)
+	}
+	// 用户中断后不自动重试。
+	m.chatStopReq = true
+	if _, cmd := m.onAIResult(aiResultMsg{err: errors.New("boom")}); cmd != nil {
+		t.Fatal("用户中断后不应再安排重试")
+	}
+	// 到 3 次后停止。
+	m.chatStopReq = false
+	m.chatRetry = 3
+	if _, cmd := m.onAIResult(aiResultMsg{err: errors.New("boom")}); cmd != nil {
+		t.Fatal("超过 3 次不应再重试")
+	}
+}
+
+// 自动重试定时器到点：原样重发上一句，不改目标。
+func TestChatRetryTickResendsLastGoal(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.lastGoal = "继续处理 D9857"
+	m.chatRetry = 1
+	m.chatRetrying = true
+	m.busy = false
+	_, cmd := m.onChatRetry()
+	if cmd == nil || !m.busy {
+		t.Fatal("重试定时器应启动下一轮")
+	}
+}
+
+// 会话落盘应带上对话主线与重试计数，供 --resume 续跑。
+func TestSessionDataPersistsThreadGoal(t *testing.T) {
+	base := setupTempOS(t)
+	m := newOSModel(base, mustLoad(t, base))
+	m.threadGoal = "长周期对话主线"
+	m.chatRetry = 2
+	m.persistSession()
+	d, err := loadSession(base, m.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ThreadGoal != "长周期对话主线" || d.ChatRetry != 2 {
+		t.Fatalf("恢复数据: %+v", d)
 	}
 }
 

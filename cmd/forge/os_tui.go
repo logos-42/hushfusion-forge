@@ -159,11 +159,20 @@ type osModel struct {
 	budgetTokens int
 	// goal 是 /goal 设置的长期目标；loop* 是 /loop 自主推进状态。
 	goal         string
+	threadGoal   string // 普通对话的“对话主线”：第一条实质输入，无 /goal 时也注入，防漂移
 	loopActive   bool
 	loopMax      int
 	loopIter     int
 	loopInterval time.Duration
 	loopWaiting  bool
+	loopErr      int
+	loopStopReq  bool
+	// chatRetry* 是普通对话出错后的自动纠正反馈（区别于 /loop 的续跑）。
+	chatRetry      int
+	chatRetrying   bool
+	chatStopReq    bool
+	pendingChatCmd tea.Cmd
+	pendingLoopCmd tea.Cmd
 	// frozenContext 是会话首次 AI 调用前构建一次的冻结快照：
 	// user/agent/soul 文件 + skills + 沉淀经验 + 长期记忆 + 记忆 + 工作流。
 	// 之后每轮原样注入 system，不随文件变化重建（“每轮不能忘”）。
@@ -646,7 +655,16 @@ func (m *osModel) initStyles() {
 // ---------------------------------------------------------------------------
 
 func (m *osModel) Init() tea.Cmd {
-	return tea.Batch(secondTick(), heartbeatTick(), m.startLoad())
+	cmds := []tea.Cmd{secondTick(), heartbeatTick(), m.startLoad()}
+	if m.pendingChatCmd != nil {
+		cmds = append(cmds, m.pendingChatCmd)
+		m.pendingChatCmd = nil
+	}
+	if m.pendingLoopCmd != nil {
+		cmds = append(cmds, m.pendingLoopCmd)
+		m.pendingLoopCmd = nil
+	}
+	return tea.Batch(cmds...)
 }
 
 // 空闲心跳：无输入一段时间后，自动做梦 / 进化 skill / 整理工作流并写入记忆。
@@ -858,6 +876,8 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onCompressResult(msg)
 	case loopTickMsg:
 		return m.onLoopTick()
+	case chatRetryMsg:
+		return m.onChatRetry()
 	case wizModelsMsg:
 		return m.onWizModels(msg)
 	case tea.PasteMsg:
@@ -922,6 +942,12 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	if msg.sess != nil {
 		m.sess = msg.sess // 跨轮复用；下一轮继续带历史
 	}
+	if msg.err == nil {
+		m.chatRetry = 0
+		m.chatRetrying = false
+		m.chatStopReq = false
+		m.loopErr = 0
+	}
 	m.state = statePanels // 内联：结果直接落展示框，不切「AI 粘合报告」弹窗
 	m.outScroll = 0       // 新回复吸底，避免用户上翻后看不到回复
 	m.report = msg.rep
@@ -970,9 +996,17 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	// 自主循环：未完成且未到上限 → 立即推进下一轮（用量先入账再续跑）。
 	if m.loopActive {
 		if msg.err != nil {
-			m.loopActive = false
-			m.loopWaiting = false
-			m.status = m.styles.err.Render("循环因错误停止: " + msg.err.Error())
+			if m.loopStopReq || m.loopErr >= 5 || strings.Contains(msg.err.Error(), "API key") {
+				m.loopActive = false
+				m.loopWaiting = false
+				m.status = m.styles.err.Render("循环因错误停止: " + msg.err.Error())
+			} else {
+				m.loopErr++
+				m.loopWaiting = true
+				m.status = m.styles.err.Render(fmt.Sprintf(
+					"循环第 %d 次出错，%s 后重试（最多 5 次）", m.loopErr, retryBackoff(m.loopErr)))
+				return m, loopTick(retryBackoff(m.loopErr))
+			}
 		} else {
 			m.loopIter++
 			ans := msg.answer
@@ -984,17 +1018,17 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 				m.loopActive = false
 				m.loopWaiting = false
 				m.status = m.styles.ok.Render(fmt.Sprintf("✅ 目标完成（%d 轮）", m.loopIter))
-			} else if m.loopIter >= m.loopMax {
+			} else if m.loopMax > 0 && m.loopIter >= m.loopMax {
 				m.loopActive = false
 				m.loopWaiting = false
-				m.status = m.styles.err.Render(fmt.Sprintf("⏹ 达到循环上限 %d 轮，目标未标记完成", m.loopMax))
+				m.status = m.styles.err.Render(fmt.Sprintf("⏹ 达到循环上限 %s 轮，目标未标记完成", loopMaxLabel(m.loopMax)))
 			} else if m.loopInterval > 0 {
 				m.loopWaiting = true
 				m.status = m.styles.hint.Render(fmt.Sprintf(
-					"⏳ 循环 %d/%d，%s 后开始下一轮", m.loopIter, m.loopMax, m.loopInterval))
+					"⏳ 循环 %s/%s，%s 后开始下一轮", loopIterLabel(m.loopIter), loopMaxLabel(m.loopMax), loopIntervalLabel(m.loopInterval)))
 				return m, loopTick(m.loopInterval)
 			} else {
-				m.status = m.styles.hint.Render(fmt.Sprintf("▶ 循环 %d/%d", m.loopIter, m.loopMax))
+				m.status = m.styles.hint.Render(fmt.Sprintf("▶ 循环 %s/%s", loopIterLabel(m.loopIter), loopMaxLabel(m.loopMax)))
 				_, cmd := m.startThinking(m.loopPrompt(), "", "")
 				return m, cmd
 			}
@@ -1002,6 +1036,15 @@ func (m *osModel) onAIResult(msg aiResultMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.compacted && msg.err == nil {
 		m.status = m.styles.hint.Render(fmt.Sprintf("🗜 已自动压缩较早轮次（预算 %d tokens，/compress 可手动）", m.budgetTokens))
+	}
+	// 普通对话的自动纠正：出错且非用户中断时，原句重试，避免一次网络错误就断线。
+	if msg.err != nil && !m.loopActive && !m.chatStopReq && m.chatRetry < 3 &&
+		strings.TrimSpace(m.lastGoal) != "" && !strings.Contains(msg.err.Error(), "API key") {
+		m.chatRetry++
+		m.chatRetrying = true
+		m.status = m.styles.err.Render(fmt.Sprintf(
+			"↻ 网络/模型错误，%s 后自动重试上一句（%d/3）", retryBackoff(m.chatRetry), m.chatRetry))
+		return m, chatRetryTick(retryBackoff(m.chatRetry))
 	}
 	m.reload()
 	if len(m.queue) > 0 {
@@ -1037,9 +1080,14 @@ func (m *osModel) onCompressResult(msg compressResultMsg) (tea.Model, tea.Cmd) {
 func (m *osModel) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Ctrl+C 全局语义：忙→中断；空闲→两次退出（第二次落盘并退出）。
 	if msg.String() == "ctrl+c" {
-		if m.loopActive {
+		if m.loopActive || m.loopWaiting {
 			m.loopActive = false // 中断同时停止自主循环（含等待定时器）
 			m.loopWaiting = false
+			m.loopStopReq = true
+		}
+		if m.chatRetrying {
+			m.chatRetrying = false // 用户主动中断时不自动重试
+			m.chatStopReq = true
 		}
 		if m.busy && m.aiCancel != nil {
 			m.aiCancel() // 一次：中断当前 AI（ctx 取消）
@@ -1319,6 +1367,15 @@ func (m *osModel) submitCommand(text string) (tea.Model, tea.Cmd) {
 		m.loopWaiting = false
 		m.status = m.styles.hint.Render("检测到手动输入，自主循环已停止")
 	}
+	// 用户手动输入 = 纠正反馈：取消待重试，避免和自动重试打架。
+	m.chatRetrying = false
+	m.chatStopReq = false
+	m.chatRetry = 0
+	// 没有显式 /goal 时，第一条实质输入成为“对话主线”，每轮注入防漂移。
+	if strings.TrimSpace(m.goal) == "" && strings.TrimSpace(m.threadGoal) == "" &&
+		len([]rune(strings.TrimSpace(text))) >= 12 {
+		m.threadGoal = strings.TrimSpace(text)
+	}
 	m.goalCount++
 	m.appendUserEcho(text)
 	return m.startThinking(text, "", "")
@@ -1392,12 +1449,14 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		}
 		if text == "clear" || text == "none" {
 			m.goal = ""
+			m.threadGoal = "" // 同时清掉普通对话主线，避免仍按旧目标注入
 			if m.sess != nil {
 				m.sess.SetGoal("")
 			}
 			m.loopActive = false
 			m.loopWaiting = false
-			m.status = m.styles.ok.Render("长期目标已清除")
+			m.loopErr = 0
+			m.status = m.styles.ok.Render("目标已清除")
 			break
 		}
 		m.goal = text
@@ -1414,14 +1473,16 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		case "stop", "off":
 			m.loopActive = false
 			m.loopWaiting = false
+			m.loopErr = 0
 			m.status = m.styles.ok.Render("自主循环已停止")
 		case "status":
 			if m.loopActive {
-				where := fmt.Sprintf("循环中 %d/%d", m.loopIter, m.loopMax)
+				where := fmt.Sprintf("循环中 %s/%s", loopIterLabel(m.loopIter), loopMaxLabel(m.loopMax))
 				if m.loopWaiting {
-					where = fmt.Sprintf("等待下一轮 %d/%d（间隔 %s）", m.loopIter+1, m.loopMax, m.loopInterval)
+					where = fmt.Sprintf("等待下一轮 %s/%s（间隔 %s）",
+						loopIterLabel(m.loopIter+1), loopMaxLabel(m.loopMax), loopIntervalLabel(m.loopInterval))
 				} else if m.loopInterval > 0 {
-					where += fmt.Sprintf("（间隔 %s）", m.loopInterval)
+					where += fmt.Sprintf("（间隔 %s）", loopIntervalLabel(m.loopInterval))
 				}
 				m.status = m.styles.hint.Render(where)
 			} else {
@@ -1462,7 +1523,7 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 			if interval > 0 {
 				suffix = fmt.Sprintf("，间隔 %s", interval)
 			}
-			m.status = m.styles.hint.Render(fmt.Sprintf("▶ 自主循环启动（最多 %d 轮%s）", maxIter, suffix))
+			m.status = m.styles.hint.Render(fmt.Sprintf("▶ 自主循环启动（最多 %s 轮%s）", loopMaxLabel(maxIter), suffix))
 			return m.startThinking(m.loopPrompt(), "", "")
 		}
 	case "clear":
@@ -1480,6 +1541,12 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		m.sess = nil         // 丢弃旧会话历史
 		m.loopActive = false
 		m.loopWaiting = false
+		m.loopErr = 0
+		m.loopStopReq = false
+		m.chatRetry = 0
+		m.chatRetrying = false
+		m.chatStopReq = false
+		m.threadGoal = ""
 		m.status = m.styles.ok.Render("新会话 " + m.sessionID)
 	case "save":
 		m.persistSession()
@@ -1493,6 +1560,9 @@ func (m *osModel) runSlash(cmd string) (tea.Model, tea.Cmd) {
 		if m.busy && m.aiCancel != nil {
 			m.loopActive = false
 			m.loopWaiting = false
+			m.loopStopReq = true
+			m.chatRetrying = false
+			m.chatStopReq = true
 			m.aiCancel()
 			m.status = m.styles.err.Render("⏹ 已中断")
 		} else {
@@ -2519,7 +2589,7 @@ func (m *osModel) startThinking(goal, provider, model string) (tea.Model, tea.Cm
 	ctx, cancel := context.WithCancel(context.Background())
 	m.aiCancel = cancel
 	cmd := tea.Batch(m.spinner.Tick, thinkTick(),
-		runAICmd(ctx, m.base, goal, provider, model, m.frozenContext, m.sess, m.budgetTokens, m.goal))
+		runAICmd(ctx, m.base, goal, provider, model, m.frozenContext, m.sess, m.budgetTokens, m.currentGoal()))
 	if fresh {
 		m.status = m.styles.hint.Render(fmt.Sprintf(
 			"❄ 已冻结上下文快照（%d 字符）：soul/agent/user + skills + 经验 + 记忆", len([]rune(m.frozenContext))))
@@ -2567,6 +2637,66 @@ func (m *osModel) loopPrompt() string {
 		return "开始执行当前长期目标。每轮只做可验证的一步；完成时在最终回复末尾单独一行输出 `GOAL_DONE: <证据>`。"
 	}
 	return fmt.Sprintf("继续推进当前长期目标（第 %d/%d 轮）。完成时输出 `GOAL_DONE: <证据>`；未完成则说明下一步并继续。", m.loopIter+1, m.loopMax)
+}
+
+// onModelChanged 切换模型后重建会话：旧会话的 chat/model 仍是旧 provider。
+// 没有显式 /budget 时，预算随新模型上下文窗口自动重算。
+func loopIterLabel(n int) string { return fmt.Sprintf("%d", n) }
+
+func loopMaxLabel(n int) string {
+	if n <= 0 {
+		return "∞"
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+func loopIntervalLabel(d time.Duration) string {
+	if d <= 0 {
+		return "无间隔"
+	}
+	return d.String()
+}
+
+// currentGoal 返回本轮应注入的目标：显式 /goal 优先，否则用对话主线。
+func (m *osModel) currentGoal() string {
+	if strings.TrimSpace(m.goal) != "" {
+		return m.goal
+	}
+	return m.threadGoal
+}
+
+// chatRetryMsg 是普通对话出错后的自动重试定时器。
+type chatRetryMsg struct{}
+
+func chatRetryTick(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return chatRetryMsg{} })
+}
+
+// retryBackoff 出错重试的退避：5s、10s、20s…封顶 10m。
+func retryBackoff(n int) time.Duration {
+	if n < 1 {
+		n = 1
+	}
+	d := time.Duration(1<<(n-1)) * 5 * time.Second
+	if d > 10*time.Minute {
+		d = 10 * time.Minute
+	}
+	return d
+}
+
+// onChatRetry 普通对话的自动纠正：不修改用户目标，原样重发上一句，让对话继续。
+func (m *osModel) onChatRetry() (tea.Model, tea.Cmd) {
+	if m.chatStopReq || !m.chatRetrying || m.busy {
+		return m, nil
+	}
+	if strings.TrimSpace(m.lastGoal) == "" {
+		m.chatRetrying = false
+		return m, nil
+	}
+	m.chatRetrying = false
+	m.out = append(m.out, m.styles.hint.Render(
+		fmt.Sprintf("↻ 自动重试上一句（%d/3）：%s", m.chatRetry, clipSkillText(m.lastGoal, 80))))
+	return m.startThinking(m.lastGoal, "", "")
 }
 
 // onModelChanged 切换模型后重建会话：旧会话的 chat/model 仍是旧 provider。
@@ -3476,20 +3606,33 @@ func (m *osModel) persistSession() {
 	_ = os.WriteFile(filepath.Join(dir, m.sessionID+".md"), []byte(b.String()), 0o644)
 	// 机器可读侧车：供 --resume 恢复（输出日志 + 计数）。
 	data := sessionData{
-		SessionID: m.sessionID,
-		Title:     m.title,
-		StartTime: m.startTime.Format(time.RFC3339),
-		Provider:  m.provider,
-		Model:     m.model,
-		GoalCount: m.goalCount,
-		ToolCalls: m.toolCalls,
-		ToolOK:    m.toolOK,
-		ToolFail:  m.toolFail,
-		Out:       m.allOutputLines(),
-		Sent:      m.sentLog,
-		Frozen:    m.frozenContext,
-		Goal:      m.goal,
-		Usage:     m.ledger,
+		SessionID:  m.sessionID,
+		Title:      m.title,
+		StartTime:  m.startTime.Format(time.RFC3339),
+		Provider:   m.provider,
+		Model:      m.model,
+		GoalCount:  m.goalCount,
+		ToolCalls:  m.toolCalls,
+		ToolOK:     m.toolOK,
+		ToolFail:   m.toolFail,
+		Out:        m.allOutputLines(),
+		Sent:       m.sentLog,
+		Frozen:     m.frozenContext,
+		Goal:       m.goal,
+		ThreadGoal: m.threadGoal,
+		ChatRetry:  m.chatRetry,
+		LoopActive: m.loopActive,
+		LoopMax:    m.loopMax,
+		LoopIter:   m.loopIter,
+		LoopInterval: func() string {
+			if m.loopInterval > 0 {
+				return m.loopInterval.String()
+			}
+			return ""
+		}(),
+		LoopWaiting: m.loopWaiting,
+		LoopErr:     m.loopErr,
+		Usage:       m.ledger,
 	}
 	if jb, err := json.MarshalIndent(data, "", "  "); err == nil {
 		_ = os.WriteFile(filepath.Join(dir, m.sessionID+".json"), jb, 0o644)
@@ -3513,6 +3656,17 @@ type sessionData struct {
 	Frozen string `json:"frozen,omitempty"`
 	// Goal 是 /goal 的长期目标（--resume 后继续生效）。
 	Goal string `json:"goal,omitempty"`
+	// ThreadGoal 是普通对话主线（无 /goal 时注入，防漂移）。
+	ThreadGoal string `json:"thread_goal,omitempty"`
+	// ChatRetry 是普通对话出错自动重试计数（--resume 后续跑）。
+	ChatRetry int `json:"chat_retry,omitempty"`
+	// Loop* 是 /loop 自主循环状态（--resume 后续跑长周期任务）。
+	LoopActive   bool   `json:"loop_active,omitempty"`
+	LoopMax      int    `json:"loop_max,omitempty"`
+	LoopIter     int    `json:"loop_iter,omitempty"`
+	LoopInterval string `json:"loop_interval,omitempty"`
+	LoopWaiting  bool   `json:"loop_waiting,omitempty"`
+	LoopErr      int    `json:"loop_err,omitempty"`
 	// Usage 是会话累计的真实 token 用量（provider 上报才有；--resume 后继续累计）。
 	Usage ai.UsageLedger `json:"usage,omitempty"`
 }
@@ -4265,6 +4419,26 @@ func cmdOSTUI(args []string) int {
 				m.frozenContext = d.Frozen // 恢复同一份冻结快照，不重建
 			}
 			m.goal = d.Goal
+			m.threadGoal = d.ThreadGoal
+			m.chatRetry = d.ChatRetry
+			m.loopStopReq = false
+			m.chatStopReq = false
+			if d.LoopActive {
+				m.loopActive = true
+				m.loopMax = d.LoopMax
+				m.loopIter = d.LoopIter
+				m.loopErr = d.LoopErr
+				if iv, perr := time.ParseDuration(d.LoopInterval); perr == nil && iv > 0 {
+					m.loopInterval = iv
+				} else {
+					m.loopInterval = 0
+				}
+				m.loopWaiting = true
+				m.pendingLoopCmd = loopTick(m.loopInterval)
+				m.out = append(m.out, m.styles.hint.Render(fmt.Sprintf(
+					"▶ 恢复自主循环（%s/%s，间隔 %s）：/loop stop 可停止",
+					loopIterLabel(m.loopIter), loopMaxLabel(m.loopMax), loopIntervalLabel(m.loopInterval))))
+			}
 			m.out = append(m.out, m.styles.label.Render("── 恢复会话 "+m.sessionID+" ──"))
 			m.out = append(m.out, d.Out...)
 			if len(d.Sent) > 0 {

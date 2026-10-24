@@ -480,7 +480,7 @@ func (s *Session) AppendSystem(block string) {
 	s.System = s.baseSystem
 }
 
-// SetGoal 设置长期目标；空串表示清除。每轮 assemble 动态注入，不占历史消息。
+// SetGoal 设置当前目标；空串表示清除。每轮 assemble 动态注入，不占历史消息。
 func (s *Session) SetGoal(goal string) { s.Goal = strings.TrimSpace(goal) }
 
 // assemble 组装一次模型调用的消息（学 Claude Code 的 assemble() 注入点）：
@@ -490,8 +490,8 @@ func (s *Session) assemble() []ai.Message {
 	out := make([]ai.Message, 0, 1+len(s.messages))
 	sys := s.systemText()
 	if strings.TrimSpace(s.Goal) != "" {
-		goal := "## 当前长期目标（每轮都要对齐）\n" + s.Goal +
-			"\n\n推进目标时每轮只做可验证的一步；完成时在最终回复末尾单独一行输出 `GOAL_DONE: <证据>`。"
+		goal := "## 当前目标（每轮都要对齐）\n" + s.Goal +
+			"\n\n保持不漂移，每轮只做可验证的一步；如需宣告完成，最后一行输出 `GOAL_DONE: <证据>`。"
 		if strings.TrimSpace(sys) == "" {
 			sys = goal
 		} else {
