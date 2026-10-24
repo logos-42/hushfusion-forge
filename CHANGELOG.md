@@ -9,6 +9,12 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 
 ---
 
+## 0.6.0 — 2026-10-25（MINOR：需求清单收口 + OrbitDB 依赖自装）
+
+- dchat 助手目录持久化到 `~/.forge/dchat`（`DCHAT_NODE_DIR` 可覆盖），内嵌 `package.json` 声明 `orbit-db` / `ipfs-core` / `hyperswarm` 依赖；频道启动时 status 探测，缺依赖自动 `npm install --no-audit --no-fund` 一次并重试（只试一次，失败如实报错并给出手动命令）。
+- 持久目录不随 `Close` 删除：`node_modules` 装一次跨进程复用；脚本内容变化才重写。
+- 至此需求清单全部落地：OrbitDB 商议维护 + git 存档、TERM 后端终端、私钥围栏、python/term 大内容执行、外部内容不可信包装与 prompt/compress/MCP/plugin 防护、主动交流心跳、双内核调度、多会话并发与右侧商议面板。
+
 ## 0.5.0 — 2026-10-25（MINOR：TERM 后端终端 + OrbitDB 商议 + git 存档）
 
 - 新增 `term.run` / `term.reset`：后端常驻 bash 终端，cwd 与环境跨调用保持（`cd`/`export` 生效）；超时杀进程并自动重启回 workspace 根；输出 256KB 截断；受 workspace 锁与隐私围栏约束；Web 写工具默认开启。

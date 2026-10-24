@@ -692,23 +692,24 @@ func TestProjectToolsRegistered(t *testing.T) {
 	for _, sp := range s.ToolSpecs() {
 		have[sp.Function.Name] = true
 	}
+	// ToolSpecs() 返回 provider 安全名（点号 → 下划线，见 0.2.9）。
 	for _, want := range []string{
-		"fusion.evaluate", "fusion.search", "fusion.baseline", "fusion.top", "plant.state",
-		"plugin.spec", "plugin.list", "plugin.load", "plugin.call", "plugin.unload", "plugin.loaded",
-		"mcp.servers", "mcp.tools", "mcp.call",
-		"lsp.status", "lsp.definition", "lsp.hover", "lsp.references", "lsp.caps",
-		"wallet.create", "wallet.info", "wallet.balance", "x402.requirements", "x402.fetch",
-		"bolloon.status", "bolloon.join", "bolloon.discover", "bolloon.board", "bolloon.publish",
-		"bolloon.claim", "bolloon.send", "bolloon.engine", "bolloon.p2p", "bolloon.register",
-		"acp.status", "acp.prompt", "diap.identity", "diap.issue", "diap.authorize",
-		"env.status", "workspace.tree",
-		"dchat.channels", "dchat.status", "dchat.send", "dchat.recv",
-		"node.run", "python.run",
-		"git.status", "git.diff", "git.log", "git.commit", "git.branch",
-		"hook.list", "hook.run",
-		"cron.list", "cron.add", "cron.remove", "cron.run",
-		"subagents.spawn", "subagents.list", "subagents.result", "subagents.stop",
-		"lean.version", "lean.check",
+		"fusion_evaluate", "fusion_search", "fusion_baseline", "fusion_top", "plant_state",
+		"plugin_spec", "plugin_list", "plugin_load", "plugin_call", "plugin_unload", "plugin_loaded",
+		"mcp_servers", "mcp_tools", "mcp_call",
+		"lsp_status", "lsp_definition", "lsp_hover", "lsp_references", "lsp_caps",
+		"wallet_create", "wallet_info", "wallet_balance", "x402_requirements", "x402_fetch",
+		"bolloon_status", "bolloon_join", "bolloon_discover", "bolloon_board", "bolloon_publish",
+		"bolloon_claim", "bolloon_send", "bolloon_engine", "bolloon_p2p", "bolloon_register",
+		"acp_status", "acp_prompt", "diap_identity", "diap_issue", "diap_authorize",
+		"env_status", "workspace_tree",
+		"dchat_channels", "dchat_status", "dchat_send", "dchat_recv",
+		"node_run", "python_run",
+		"git_status", "git_diff", "git_log", "git_commit", "git_branch",
+		"hook_list", "hook_run",
+		"cron_list", "cron_add", "cron_remove", "cron_run",
+		"subagents_spawn", "subagents_list", "subagents_result", "subagents_stop",
+		"lean_version", "lean_check",
 	} {
 		if !have[want] {
 			t.Fatalf("缺少工具 %q（已注册 %v）", want, have)
