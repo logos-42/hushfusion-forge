@@ -9,6 +9,12 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 
 ---
 
+## 0.2.8 — 2026-10-24（PATCH：修复工具名非法导致模型 400）
+
+- 将 `agent.paths` 改名为 provider 安全的 `agent_paths`：部分 OpenAI-compatible 端点拒绝带两个点的 function name，会直接返回 `400 invalid function name`。
+- 系统提示同步改为 `agent_paths`；新增回归测试仍覆盖路径自查。
+- 实测普通对话与 `shell` 工具调用恢复正常。
+
 ## 0.2.7 — 2026-10-24（PATCH：Web 后台长任务，不随浏览器断开）
 
 - Web 一轮对话改为服务端后台执行：不再绑定 SSE 请求的 `r.Context()`，页面刷新、关闭标签或网络断开不会取消任务。
@@ -22,7 +28,7 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 - 智能体新增 `workspace`（工具根/`shell` cwd）与 `global_dir`（全局专属目录）；编辑智能体可直接填写，留空自动回落。
 - 默认全局目录为 `~/.forge/web/agents/<agent-id>`；`mem.set` 落盘到 `<global_dir>/memory.json`，跨会话保留。
 - `read` / `ls` 支持访问 workspace 或全局目录内的绝对路径；越界仍拒绝。
-- 系统提示自动注入 Workspace、全局目录、记忆文件路径；新增只读工具 `agent.paths` 供智能体自查。
+- 系统提示自动注入 Workspace、全局目录、记忆文件路径；新增只读工具 `agent_paths` 供智能体自查。
 - 启动时把已有智能体补齐默认目录；重启/换会话后记忆自动加载并注入 system。
 
 ## 0.2.5 — 2026-10-24（PATCH：更新入口常驻检查，不改判据）

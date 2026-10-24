@@ -41,13 +41,13 @@ func TestAgentPathsTool(t *testing.T) {
 	if err := s.RegisterBuiltinTools(nil); err != nil {
 		t.Fatal(err)
 	}
-	out, err := s.ExecuteTool(context.Background(), "agent.paths", nil)
+	out, err := s.ExecuteTool(context.Background(), "agent_paths", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"workspace=" + ws, "global_dir=" + gd, "memory_file=" + memPath} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("agent.paths 缺 %q:\n%s", want, out)
+			t.Fatalf("agent_paths 缺 %q:\n%s", want, out)
 		}
 	}
 }

@@ -269,7 +269,7 @@ func registerSkillView(r *ToolRegistry, skills *SkillsDir) error {
 // registerPathTools 让智能体随时自查自己的路径，不依赖用户重复告知。
 func registerPathTools(r *ToolRegistry, s *Session) error {
 	return r.Register(Tool{
-		Spec:  mkSpec("agent.paths", "返回当前智能体的 workspace、全局专属目录、记忆文件路径（系统自动配置）", nil, nil),
+		Spec:  mkSpec("agent_paths", "返回当前智能体的 workspace、全局专属目录、记忆文件路径（系统自动配置）", nil, nil),
 		Write: false,
 		Executor: func(_ context.Context, _ string, _ map[string]any) (string, error) {
 			memPath := s.Memory.Path()
