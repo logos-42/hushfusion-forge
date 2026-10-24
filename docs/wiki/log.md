@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-24 | HUSHFUSION Forge Desktop | **Web：修复用户气泡多出两行空白** | 根因是 `.msg.user` 的 `white-space:pre-wrap` 把模板缩进换行也渲染成了空白行；改为 `white-space:normal`（换行已由 `<br>` 处理），气泡只保留真实文字行。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：用户气泡再压缩** | 用户气泡 padding 从 `7px 12px` 降到 `4px 10px`，行高 1.45→1.3，圆角 10px；渲染时 trim 首尾空白，避免空白行撑高；操作区上边距 3→2px。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：用户气泡压缩 / AI 流光加载 / 输入框与消息编辑** | 用户消息气泡减少上下 padding 并收紧行高，单行高度与字体匹配；AI 流式回复期间加 `streaming` 类，用渐变扫光动画提示生成中，结束后移除；输入框右侧加铅笔 SVG 按钮（空输入时编辑最后一条用户消息，有草稿时聚焦全选），用户消息操作区也加编辑图标；新增 `POST /api/sessions/truncate`，编辑已发送消息时先截断服务端历史再重发。 | `go build/test ./...` 通过；`node --check` 通过；`TestSessionActions` 覆盖截断。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：折叠按钮顶替版本号，折叠后靠 logo 展开** | 折叠按钮放到品牌行右侧、顶替版本号（版本号不再显示）；折叠后按钮隐藏，点击 logo 展开；折叠态隐藏会话三个点菜单按钮。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
