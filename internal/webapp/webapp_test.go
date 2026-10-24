@@ -202,6 +202,69 @@ func TestAgentDirectories(t *testing.T) {
 	}
 }
 
+func TestChatRunStatusAndStop(t *testing.T) {
+	s, err := NewWithRoot("", t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.http.Handler)
+	defer ts.Close()
+
+	run, ctx, ok := s.beginRun("sess-run")
+	if !ok {
+		t.Fatal("beginRun 失败")
+	}
+	run.append("partial")
+	defer s.endRun("sess-run", run)
+
+	resp, err := http.Get(ts.URL + "/api/chat/status?session_id=sess-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status struct {
+		Running bool   `json:"running"`
+		Text    string `json:"text"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !status.Running || status.Text != "partial" {
+		t.Fatalf("运行状态 = %+v", status)
+	}
+
+	resp, err = http.Post(ts.URL+"/api/chat/stop", "application/json",
+		strings.NewReader(`{"session_id":"sess-run"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("停止 HTTP %d", resp.StatusCode)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("stop 未取消后台任务")
+	}
+	s.endRun("sess-run", run)
+	resp, err = http.Get(ts.URL + "/api/chat/status?session_id=sess-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	status = struct {
+		Running bool   `json:"running"`
+		Text    string `json:"text"`
+	}{}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if status.Running {
+		t.Fatalf("停止后仍在运行: %+v", status)
+	}
+}
+
 func TestSessionActions(t *testing.T) {
 	root := t.TempDir()
 	s, err := NewWithRoot("", t.TempDir(), root)

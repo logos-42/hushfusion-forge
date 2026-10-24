@@ -115,6 +115,86 @@ type Server struct {
 	http        *http.Server
 	agentSesses map[string]*agent.Session
 	secrets     map[string]Secret
+
+	// runMu/runs 管理服务端后台对话任务：任务不绑浏览器请求生命周期。
+	runMu sync.Mutex
+	runs  map[string]*chatRun
+}
+
+// chatRun 是一轮后台对话的共享状态（部分文本 + 取消）。
+type chatRun struct {
+	cancel  context.CancelFunc
+	started time.Time
+
+	mu   sync.Mutex
+	text string
+}
+
+func (r *chatRun) append(s string) {
+	r.mu.Lock()
+	r.text += s
+	r.mu.Unlock()
+}
+
+func (r *chatRun) snapshot() (string, time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.text, r.started
+}
+
+func (s *Server) beginRun(sessionID string) (*chatRun, context.Context, bool) {
+	ctx, cancel := context.WithCancel(context.Background())
+	run := &chatRun{cancel: cancel, started: time.Now()}
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	if _, exists := s.runs[sessionID]; exists {
+		cancel()
+		return nil, nil, false
+	}
+	s.runs[sessionID] = run
+	return run, ctx, true
+}
+
+func (s *Server) endRun(sessionID string, run *chatRun) {
+	run.cancel()
+	s.runMu.Lock()
+	if s.runs[sessionID] == run {
+		delete(s.runs, sessionID)
+	}
+	s.runMu.Unlock()
+}
+
+func (s *Server) currentRun(sessionID string) *chatRun {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	return s.runs[sessionID]
+}
+
+func (s *Server) handleChatStatus(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	run := s.currentRun(id)
+	if run == nil {
+		s.writeJSON(w, map[string]any{"running": false})
+		return
+	}
+	text, started := run.snapshot()
+	s.writeJSON(w, map[string]any{
+		"running": true, "text": text, "started_at": started,
+	})
+}
+
+func (s *Server) handleChatStop(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"session_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	run := s.currentRun(strings.TrimSpace(req.SessionID))
+	if run == nil {
+		s.writeJSON(w, map[string]any{"stopped": false})
+		return
+	}
+	run.cancel()
+	s.writeJSON(w, map[string]any{"stopped": true})
 }
 
 const (
@@ -154,7 +234,8 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 		osDir = filepath.Join(root, "os")
 	}
 	s := &Server{addr: addr, dir: dir, root: root, osDir: osDir,
-		agentSesses: map[string]*agent.Session{}, secrets: map[string]Secret{}}
+		agentSesses: map[string]*agent.Session{}, secrets: map[string]Secret{},
+		runs: map[string]*chatRun{}}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
@@ -178,6 +259,8 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	mux.HandleFunc("GET /share/{token}", s.handleSharePage)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
+	mux.HandleFunc("GET /api/chat/status", s.handleChatStatus)
+	mux.HandleFunc("POST /api/chat/stop", s.handleChatStop)
 	mux.HandleFunc("POST /api/profile", s.handleProfile)
 	mux.HandleFunc("GET /api/update", s.handleUpdate)
 	mux.HandleFunc("GET /api/version", s.handleVersion)
@@ -984,6 +1067,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "智能体不存在", http.StatusBadRequest)
 		return
 	}
+	run, ctx, ok := s.beginRun(sess.ID)
+	if !ok {
+		s.mu.Unlock()
+		http.Error(w, "上一轮还在后台运行，请等待完成或先停止", http.StatusConflict)
+		return
+	}
+	defer s.endRun(sess.ID, run)
 	history := append([]Message(nil), sess.Messages...) // 不含本轮新 user，避免 Turn 重复追加
 	sess.Messages = append(sess.Messages, Message{
 		Role: "user", Text: msg, Images: append([]string(nil), req.Images...), Time: time.Now(),
@@ -1004,7 +1094,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, map[string]any{"error": err.Error()})
 		return
 	}
-	reply, err := as.Turn(r.Context(), textWithImages(Message{Role: "user", Text: msg, Images: req.Images}))
+	reply, err := as.Turn(ctx, textWithImages(Message{Role: "user", Text: msg, Images: req.Images}))
 	if err != nil {
 		s.writeJSON(w, map[string]any{"error": err.Error()})
 		return
@@ -1049,6 +1139,13 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "智能体不存在", http.StatusBadRequest)
 		return
 	}
+	run, ctx, ok := s.beginRun(sess.ID)
+	if !ok {
+		s.mu.Unlock()
+		http.Error(w, "上一轮还在后台运行，请等待完成或先停止", http.StatusConflict)
+		return
+	}
+	defer s.endRun(sess.ID, run)
 	history := append([]Message(nil), sess.Messages...)
 	sess.Messages = append(sess.Messages, Message{
 		Role: "user", Text: msg, Images: append([]string(nil), req.Images...), Time: time.Now(),
@@ -1069,25 +1166,64 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+	var writeMu sync.Mutex
 	send := func(event string, v any) {
 		b, _ := json.Marshal(v)
+		writeMu.Lock()
 		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
 		if flusher != nil {
 			flusher.Flush()
 		}
+		writeMu.Unlock()
 	}
+	// 心跳：任务长时间无 token 时也保持 SSE 连接；浏览器断开不影响任务。
+	heartbeatDone := make(chan struct{})
+	heartbeatExited := make(chan struct{})
+	go func() {
+		defer close(heartbeatExited)
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				writeMu.Lock()
+				_, _ = fmt.Fprint(w, ": ping\n\n")
+				if flusher != nil {
+					flusher.Flush()
+				}
+				writeMu.Unlock()
+			case <-heartbeatDone:
+				return
+			}
+		}
+	}()
+	defer func() {
+		close(heartbeatDone)
+		<-heartbeatExited
+	}()
 
 	as, err := s.agentSession(settings, sess, *ag, history)
 	if err != nil {
 		send("error", map[string]string{"error": err.Error()})
 		return
 	}
-	reply, err := as.TurnStream(r.Context(), textWithImages(Message{Role: "user", Text: msg, Images: req.Images}), func(ev ai.StreamEvent) {
+	reply, err := as.TurnStream(ctx, textWithImages(Message{Role: "user", Text: msg, Images: req.Images}), func(ev ai.StreamEvent) {
 		if ev.Type == ai.StreamContent && ev.Text != "" {
+			run.append(ev.Text)
 			send("delta", map[string]string{"text": ev.Text})
 		}
 	})
 	if err != nil {
+		partial, _ := run.snapshot()
+		if strings.TrimSpace(partial) == "" {
+			partial = "（错误）" + err.Error()
+		} else {
+			partial += "\n\n（已中断：" + err.Error() + "）"
+		}
+		s.mu.Lock()
+		sess.Messages = append(sess.Messages, Message{Role: "assistant", Text: partial, Time: time.Now()})
+		_ = s.save()
+		s.mu.Unlock()
 		send("error", map[string]string{"error": err.Error()})
 		return
 	}
@@ -1124,6 +1260,8 @@ func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, histor
 	cfg := agent.DefaultConfig()
 	cfg.Provider, cfg.Model = settings.Provider, settings.Model
 	cfg.MaxBudgetTokens = agent.BudgetFromEnv(agent.BudgetForModel(settings.Model, 0.6))
+	// Web 任务在后台运行，单次模型调用给更长窗口；仍保留上限避免挂死。
+	cfg.ModelTimeout = 10 * time.Minute
 	cfg.Root = root
 	cfg.GlobalRoot = globalDir
 	opts := func() ai.ClientOptions {

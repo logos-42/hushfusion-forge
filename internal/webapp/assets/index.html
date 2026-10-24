@@ -256,7 +256,7 @@
 </dialog>
 
 <script>
-let state=null, update=null, models=null, busy=false, pendingImages=[], editingAgentId='', menuSessionId='', editingMessageIndex=null, editingSessionId='', currentAbort=null;
+let state=null, update=null, models=null, busy=false, pendingImages=[], editingAgentId='', menuSessionId='', editingMessageIndex=null, editingSessionId='', currentAbort=null, resumeTimer=null;
 
 const $=(id)=>document.getElementById(id);
 const escapeHTML=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -449,12 +449,19 @@ function renderTools(){
 function cancelEdit(){editingMessageIndex=null;editingSessionId='';}
 async function pickAgent(id){
   cancelEdit();
+  if(resumeTimer){clearInterval(resumeTimer);resumeTimer=null;}
+  busy=false;renderSendState();
   state.active_agent_id=id;
   let s=state.sessions.find(x=>x.agent_id===id);
   if(!s){s=await api('/api/sessions',{method:'POST',body:JSON.stringify({agent_id:id})});state.sessions.push(s);}
-  state.active_session_id=s.id;renderSidebar();renderHeader();renderChat();
+  state.active_session_id=s.id;renderSidebar();renderHeader();renderChat();resumeRunning();
 }
-function pickSession(id){cancelEdit();state.active_session_id=id;renderSidebar();renderChat();}
+function pickSession(id){
+  cancelEdit();
+  if(resumeTimer){clearInterval(resumeTimer);resumeTimer=null;}
+  busy=false;renderSendState();
+  state.active_session_id=id;renderSidebar();renderChat();resumeRunning();
+}
 
 async function copyText(text){
   try{await navigator.clipboard.writeText(text);return true;}
@@ -499,6 +506,37 @@ async function shareSession(id,messageIndex){
 async function shareMessage(i){
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   if(s)await shareSession(s.id,i);
+}
+async function resumeRunning(){
+  if(!state)return;
+  if(resumeTimer){clearInterval(resumeTimer);resumeTimer=null;}
+  const s=state.sessions.find(x=>x.id===state.active_session_id);
+  if(!s)return;
+  let st;
+  try{st=await api('/api/chat/status?session_id='+encodeURIComponent(s.id));}catch(_){return;}
+  if(!st.running){busy=false;renderSendState();return;}
+  busy=true;renderSendState();
+  let a=s.messages&&s.messages[s.messages.length-1];
+  if(!a||a.role!=='assistant'||!a.streaming){
+    a={role:'assistant',text:st.text||'',streaming:true};
+    s.messages.push(a);
+  }else{
+    a.text=st.text||a.text;
+  }
+  renderChat();
+  resumeTimer=setInterval(async()=>{
+    if(!state||state.active_session_id!==s.id)return;
+    try{
+      const q=await api('/api/chat/status?session_id='+encodeURIComponent(s.id));
+      a.text=q.text||a.text;a.streaming=!!q.running;renderChat();
+      if(!q.running){
+        clearInterval(resumeTimer);resumeTimer=null;
+        a.streaming=false;busy=false;renderSendState();
+        const j=await api('/api/bootstrap');
+        state=j.state;update=j.update;renderAll();
+      }
+    }catch(_){}
+  },1000);
 }
 async function retryMessage(i){
   const s=state.sessions.find(x=>x.id===state.active_session_id);
@@ -756,7 +794,7 @@ async function streamChat(payload,onDelta,signal){
       if(!data)continue;
       let obj={};try{obj=JSON.parse(data)}catch{obj={text:data}}
       if(event==='delta'&&obj.text)onDelta(obj.text);
-      else if(event==='error')throw new Error(obj.error||'流式错误');
+      else if(event==='error'){const e=new Error(obj.error||'流式错误');e.sse=true;throw e;}
       else if(event==='done')final=obj.reply||'';
     }
   }
@@ -772,7 +810,11 @@ function renderSendState(){
     b.classList.remove('stop');b.title='发送';b.textContent='发送';
   }
 }
-function stopStreaming(){if(currentAbort){currentAbort.abort();currentAbort=null;}}
+async function stopStreaming(){
+  if(currentAbort){currentAbort.abort();currentAbort=null;}
+  const s=state&&state.sessions.find(x=>x.id===state.active_session_id);
+  if(s){try{await api('/api/chat/stop',{method:'POST',body:JSON.stringify({session_id:s.id})});}catch(_){}}
+}
 async function submitMessage(text,images){
   if(busy)return;
   const s=state.sessions.find(x=>x.id===state.active_session_id);
@@ -797,6 +839,8 @@ async function submitMessage(text,images){
   }catch(e){
     if(e.name==='AbortError'){
       if(!assistant.text)assistant.text='（已停止）';
+    }else if(e.sse){
+      assistant.text='（错误）'+(e.message||'流式错误');
     }else if(!assistant.text){
       try{
         const j=await api('/api/chat',{method:'POST',body:JSON.stringify(payload),signal:controller.signal});
@@ -845,6 +889,7 @@ $('input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.pre
 boot().finally(()=>{
   setTimeout(refreshUpdate,5000);
   setInterval(refreshUpdate,60000);
+  resumeRunning();
 });
 </script>
 </body>
