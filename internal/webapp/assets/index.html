@@ -77,7 +77,7 @@
   header{height:54px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 14px;color:var(--muted)}
   header b{color:var(--text)}
   .grow{flex:1}
-  #chat{flex:1;overflow:auto;padding:28px clamp(24px,6vw,96px);display:flex;flex-direction:column;gap:14px}
+  #chat{flex:1;overflow:auto;padding:30px clamp(40px,10vw,180px);display:flex;flex-direction:column;gap:14px}
   .empty{height:100%;display:grid;place-items:center;color:var(--muted)}
   .empty h1{font-size:28px;font-weight:600;color:var(--text);margin:0}
   .msg-row{display:flex;flex-direction:column;max-width:min(760px,78%);min-width:0}
@@ -102,11 +102,13 @@
   .msg.bot a{color:var(--accent)}
   .msg.bot table{border-collapse:collapse;margin:6px 0}
   .msg.bot th,.msg.bot td{border:1px solid var(--line);padding:4px 8px}
-  .msg-actions{display:flex;gap:2px;flex-wrap:wrap;margin-top:2px;padding:0 3px;opacity:.72}
-  .msg-row:hover .msg-actions{opacity:1}
-  .msg-actions button{display:grid;place-items:center;width:26px;height:26px;padding:0;border-radius:8px;background:transparent;border:1px solid transparent;color:var(--muted)}
+  .msg-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;padding:0 3px;opacity:.8}
+  .msg-row.bot .msg-actions{opacity:1}
+  .msg-row.user .msg-actions{display:none}
+  .msg-row.user.active .msg-actions{display:flex}
+  .msg-actions button{display:grid;place-items:center;width:32px;height:32px;padding:0;border-radius:9px;background:transparent;border:1px solid transparent;color:var(--muted)}
   .msg-actions button:hover{background:var(--panel2);border-color:var(--line);color:var(--text)}
-  .msg-actions svg{width:14px;height:14px}
+  .msg-actions svg{width:18px;height:18px}
   .menu{position:fixed;z-index:30;min-width:158px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 12px 32px rgba(0,0,0,.28)}
   .menu.hidden{display:none}
   .menu button{display:block;width:100%;text-align:left;background:transparent;border:none;border-radius:7px;padding:7px 9px;font-size:13px;color:var(--text)}
@@ -372,7 +374,7 @@ function renderChat(){
     const edit=m.role==='user'?`<button title="编辑" aria-label="编辑" onclick="editMessage(${i})">${iconPencil}</button>`:'';
     const streaming=m.streaming?' streaming':'';
     return `<div class="msg-row ${role}">
-      <div class="msg ${role}${streaming}">${body}
+      <div class="msg ${role}${streaming}" ${m.role==='user'?'onclick="toggleUserActions(this)"':''}>${body}
         ${(m.images||[]).map(im=>`<img src="${im}" alt="">`).join('')}
       </div>
       <div class="msg-actions">
@@ -435,6 +437,12 @@ async function copyText(text){
 async function copyMessage(i){
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   if(s&&s.messages&&s.messages[i])await copyText(s.messages[i].text||'');
+}
+function toggleUserActions(el){
+  const row=el.closest('.msg-row');
+  const open=row.classList.contains('active');
+  document.querySelectorAll('.msg-row.user.active').forEach(x=>x.classList.remove('active'));
+  if(!open)row.classList.add('active');
 }
 function editMessage(i){
   const s=state.sessions.find(x=>x.id===state.active_session_id);
