@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-24 | HUSHFUSION Forge Desktop | **Web：折叠按钮顶替版本号，折叠后靠 logo 展开** | 折叠按钮放到品牌行右侧、顶替版本号（版本号不再显示）；折叠后按钮隐藏，点击 logo 展开；折叠态隐藏会话三个点菜单按钮。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：侧边栏折叠按钮下移** | 折叠/展开按钮从 logo 同一行移到 logo 下方独立一行；折叠态居中，避免与品牌图标挤在一起。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：消息操作改为气泡外图标** | 复制/分支/分享/重试从气泡内文字按钮改为气泡下方独立图标按钮（SVG，`title` 提示），用 `.msg-row` 包裹气泡与操作区，用户/助手分别右/左对齐；操作区默认半透明，悬停高亮。 | `go build/test ./...` 通过；`node --check` 通过。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：消息操作 / 会话菜单 / 更新按钮下沉 / 气泡居中** | 消息气泡底部加复制、分支、分享链接、重试；会话三个点打开小菜单，可重命名、删除、固定、分享；`POST /api/sessions/update|delete|branch|share`，分享生成只读 `GET /share/{token}` 页面；更新按钮移到底部，无更新时隐藏；聊天气泡左右留白加大（`clamp(24px,6vw,96px)`，宽度 72%）。 | `go build/vet/gofmt/test ./...` 全绿；`node --check` 通过；新增 `TestSessionActions`（重命名/固定/分支/分享页/删除）；本机分享页 200。 |
