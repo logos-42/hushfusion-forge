@@ -9,6 +9,14 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 
 ---
 
+## 0.2.2 — 2026-10-24（PATCH：Web 外壳交互修复，不改判据）
+
+- 生成中发送按钮变为终止按钮，可中断 SSE 并保留已生成内容。
+- 流式回复只增量更新当前 AI 气泡，扫光动画速度稳定；滚动仅发生在消息区。
+- 写工具 `shell / mem.set / mem.reset / tasks.add / tasks.set_state` 默认开启；只读工具保持默认可用。
+- 修复 Go 模块 `v0.2.1` 因 `python/aux` 保留名被 proxy 拒绝的问题，目录改为 `python/auxiliary`。
+- 发布 npm 包 `hushfusion-forge@0.2.2`（启动器 + Node SDK）与 Go `v0.2.2` Release。
+
 ## 0.2 — 2026-10-05（MINOR：版本号跃迁 + 证据冻结）
 
 **这是判据版本从 `0.1.x` 跃到 `0.2` 的一次 MINOR**（新增能力=版本号正式成为 0.2 线）。它不改变任何判据数字
