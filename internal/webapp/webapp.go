@@ -1581,6 +1581,10 @@ func (s *Server) checkUpdate(ctx context.Context) UpdateInfo {
 	info := UpdateInfo{Current: config.ForgeVersion}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	// npm registry 优先：无 GitHub 未认证 API 的 60 次/小时限流。
+	if next, ok := s.checkUpdateViaNPM(ctx, info); ok {
+		return next
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		"https://api.github.com/repos/"+repoSlug+"/releases/latest", nil)
 	if err != nil {
@@ -1588,11 +1592,14 @@ func (s *Server) checkUpdate(ctx context.Context) UpdateInfo {
 	}
 	req.Header.Set("User-Agent", "hushfusion-forge/"+config.ForgeVersion)
 	resp, err := (&http.Client{}).Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
+	if err != nil {
 		return info
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		// 未认证 GitHub API 只有 60 次/小时；被限流时退回 releases/latest
+		// 的 302 跳转，不消耗 API 配额，也不影响更新按钮。
+		return s.checkUpdateViaLatest(ctx, info)
 	}
 	defer resp.Body.Close()
 	var rel struct {
@@ -1605,7 +1612,7 @@ func (s *Server) checkUpdate(ctx context.Context) UpdateInfo {
 		} `json:"assets"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
-		return info
+		return s.checkUpdateViaLatest(ctx, info)
 	}
 	latest := strings.TrimPrefix(rel.TagName, "v")
 	info.Latest = latest
@@ -1615,7 +1622,86 @@ func (s *Server) checkUpdate(ctx context.Context) UpdateInfo {
 	if info.Available {
 		info.AssetURL = pickAsset(rel.Assets)
 	}
+	if info.Latest == "" {
+		return s.checkUpdateViaLatest(ctx, info)
+	}
 	return info
+}
+
+// checkUpdateViaNPM 从 npm registry 读 @hibs/forge 的最新版本。
+// 返回 ok=false 表示 npm 不可用/无版本号，调用方继续走 GitHub 兜底。
+func (s *Server) checkUpdateViaNPM(ctx context.Context, info UpdateInfo) (UpdateInfo, bool) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://registry.npmjs.org/@hibs%2fforge/latest", nil)
+	if err != nil {
+		return info, false
+	}
+	req.Header.Set("User-Agent", "hushfusion-forge/"+config.ForgeVersion)
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		return info, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return info, false
+	}
+	var rel struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&rel); err != nil {
+		return info, false
+	}
+	latest := strings.TrimPrefix(strings.TrimSpace(rel.Version), "v")
+	if latest == "" {
+		return info, false
+	}
+	info.Latest = latest
+	info.URL = "https://github.com/" + repoSlug + "/releases/tag/v" + latest
+	info.Available = newer(latest, info.Current)
+	if info.Available {
+		info.AssetURL = releaseAssetURL(latest)
+	}
+	return info, true
+}
+
+// checkUpdateViaLatest 用 releases/latest 的跳转获取最新 tag，作为 API
+// 被限流/不可用时的兜底；资产 URL 按 Release 命名规则构造。
+func (s *Server) checkUpdateViaLatest(ctx context.Context, info UpdateInfo) UpdateInfo {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://github.com/"+repoSlug+"/releases/latest", nil)
+	if err != nil {
+		return info
+	}
+	req.Header.Set("User-Agent", "hushfusion-forge/"+config.ForgeVersion)
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return info
+	}
+	defer resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 || loc == "" {
+		return info
+	}
+	tag := loc[strings.LastIndex(loc, "/")+1:]
+	latest := strings.TrimPrefix(tag, "v")
+	if latest == "" {
+		return info
+	}
+	info.Latest = latest
+	info.URL = loc
+	info.Available = newer(latest, info.Current)
+	if info.Available {
+		info.AssetURL = releaseAssetURL(latest)
+	}
+	return info
+}
+
+func releaseAssetURL(version string) string {
+	name := fmt.Sprintf("hushfusion-forge-%s-%s-%s", version, runtime.GOOS, runtime.GOARCH)
+	return fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", repoSlug, version, name)
 }
 
 func pickAsset(assets []struct {

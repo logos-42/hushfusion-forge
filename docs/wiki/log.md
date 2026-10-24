@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-25 | HUSHFUSION Forge Desktop | **更新检查走 npm（0.2.10）** | `checkUpdate` 先查 `registry.npmjs.org/@hibs%2fforge/latest`；失败回退 GitHub API，再回退 `releases/latest` 302；资产 URL 按 tag + GOOS/GOARCH 构造。 | `go test ./internal/webapp` 通过；本机 `/api/update` 在 GitHub API 403 时仍返回 npm 最新版；发布 0.2.10 后 0.2.9 页面出现更新按钮。 |
 | 2026-10-25 | HUSHFUSION Forge Agent | **全量工具名安全化（0.2.9）** | `Specs()` 把内部名 sanitize 成下划线安全名；`Execute`/文本 invoke 反向解析；写白名单按原名；注册时检测安全名碰撞。覆盖 `mem.*`、`tasks.*`、`skill.view`。 | `go test ./internal/agent ./internal/webapp` 通过；本机 custom provider 原生 `mem_set` 调用成功，`memory.json` 写入 `smoke_test=ok`；普通对话与 shell 调用正常。 |
 | 2026-10-24 | HUSHFUSION Forge Agent | **修复工具名非法（0.2.8）** | `agent.paths` → `agent_paths`；部分 OpenAI-compatible 端点拒绝双点 function name，导致 `400 invalid function name`；系统提示与测试同步。 | `go test ./internal/agent ./internal/webapp` 通过；本机实测普通对话 `ok`、`shell` 工具调用输出 `HELLO`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web 后台长任务（0.2.7）** | 对话改用服务端 `context.Background()` + `chatRun` 管理，不绑 SSE 请求生命周期；新增 `/api/chat/status`、`/api/chat/stop`；SSE 15s 心跳；页面重载后 status 轮询接续部分文本；同一会话并发 409；停止按钮取消服务端任务；单次模型超时 10 分钟。 | `go vet ./...`、`go test ./internal/webapp ./internal/agent` 通过；`node --check` 通过；`TestChatRunStatusAndStop` 覆盖状态/取消。全仓 `go test ./...` 仅 `internal/owners` 因未跟踪 `soul/SOUL.md` 缺归属失败，与本次无关。 |

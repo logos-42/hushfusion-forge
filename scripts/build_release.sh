@@ -8,11 +8,11 @@
 #              Hushfusion Forge.app（darwin arm64/amd64 各一个 .app.zip）
 #
 # 用法：
-#   VERSION=0.2.9 scripts/build_release.sh            # 打包并创建/上传 release
-#   VERSION=0.2.9 scripts/build_release.sh --no-push  # 只打包，不动 GitHub
+#   VERSION=0.2.10 scripts/build_release.sh            # 打包并创建/上传 release
+#   VERSION=0.2.10 scripts/build_release.sh --no-push  # 只打包，不动 GitHub
 set -euo pipefail
 
-VERSION="${VERSION:-0.2.9}"
+VERSION="${VERSION:-0.2.10}"
 PUSH=1
 if [[ "${1:-}" == "--no-push" ]]; then PUSH=0; fi
 

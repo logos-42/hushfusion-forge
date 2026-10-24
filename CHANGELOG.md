@@ -9,6 +9,12 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 
 ---
 
+## 0.2.10 — 2026-10-25（PATCH：更新检查改走 npm，绕开 GitHub API 限流）
+
+- 检查更新优先请求 npm registry 的 `@hibs/forge/latest`，不再依赖 GitHub 未认证 API 的 60 次/小时额度。
+- npm 不可用时回退 GitHub API，再回退 `releases/latest` 的 302 跳转；资产 URL 按 Release 命名规则构造。
+- 修复被 GitHub API 限流后 `latest` 为空、更新按钮不出现的问题。
+
 ## 0.2.9 — 2026-10-25（PATCH：全量工具名 provider 安全化）
 
 - `ToolRegistry.Specs()` 统一把工具名映射为 `[A-Za-z0-9_-]` 安全名：`mem.get → mem_get`、`tasks.set_state → tasks_set_state`、`skill.view → skill_view`。
