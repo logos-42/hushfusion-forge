@@ -8,9 +8,12 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -55,11 +58,13 @@ type Message struct {
 
 // Session 是会话栏里的一条会话（归属某个智能体）。
 type Session struct {
-	ID        string    `json:"id"`
-	AgentID   string    `json:"agent_id"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"created_at"`
-	Messages  []Message `json:"messages"`
+	ID         string    `json:"id"`
+	AgentID    string    `json:"agent_id"`
+	Title      string    `json:"title"`
+	CreatedAt  time.Time `json:"created_at"`
+	Messages   []Message `json:"messages"`
+	Pinned     bool      `json:"pinned,omitempty"`
+	ShareToken string    `json:"share_token,omitempty"`
 }
 
 // Settings 是模型与工具设置（侧边栏/主窗口可选）。
@@ -161,6 +166,11 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	mux.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	mux.HandleFunc("POST /api/agents/update", s.handleUpdateAgent)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
+	mux.HandleFunc("POST /api/sessions/update", s.handleUpdateSession)
+	mux.HandleFunc("POST /api/sessions/delete", s.handleDeleteSession)
+	mux.HandleFunc("POST /api/sessions/branch", s.handleBranchSession)
+	mux.HandleFunc("POST /api/sessions/share", s.handleShareSession)
+	mux.HandleFunc("GET /share/{token}", s.handleSharePage)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
 	mux.HandleFunc("POST /api/profile", s.handleProfile)
@@ -573,6 +583,215 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, sess)
+}
+
+// handleUpdateSession 重命名 / 固定会话。
+func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID     string `json:"id"`
+		Title  string `json:"title"`
+		Pinned *bool  `json:"pinned"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess := s.findSession(strings.TrimSpace(req.ID))
+	if sess == nil {
+		http.Error(w, "会话不存在", http.StatusNotFound)
+		return
+	}
+	if t := strings.TrimSpace(req.Title); t != "" {
+		sess.Title = t
+	}
+	if req.Pinned != nil {
+		sess.Pinned = *req.Pinned
+	}
+	if err := s.save(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.writeJSON(w, *sess)
+}
+
+// handleDeleteSession 删除会话；若删的是当前会话，自动切到同智能体下一个会话。
+func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := strings.TrimSpace(req.ID)
+	idx := -1
+	for i := range s.st.Sessions {
+		if s.st.Sessions[i].ID == id {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		http.Error(w, "会话不存在", http.StatusNotFound)
+		return
+	}
+	s.st.Sessions = append(s.st.Sessions[:idx], s.st.Sessions[idx+1:]...)
+	delete(s.agentSesses, id)
+	var created *Session
+	if s.st.ActiveSessionID == id {
+		s.st.ActiveSessionID = ""
+		for i := range s.st.Sessions {
+			if s.st.Sessions[i].AgentID == s.st.ActiveAgentID {
+				s.st.ActiveSessionID = s.st.Sessions[i].ID
+				break
+			}
+		}
+		if s.st.ActiveSessionID == "" {
+			sess := Session{ID: fmt.Sprintf("sess-%d", time.Now().UnixNano()), AgentID: s.st.ActiveAgentID, Title: "新对话", CreatedAt: time.Now()}
+			s.st.Sessions = append(s.st.Sessions, sess)
+			s.st.ActiveSessionID = sess.ID
+			created = &sess
+		}
+	}
+	if err := s.save(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.writeJSON(w, map[string]any{"deleted": id, "active_session_id": s.st.ActiveSessionID, "session": created})
+}
+
+// handleBranchSession 从某条消息处分叉出一个新会话（复制到该消息为止）。
+func (s *Server) handleBranchSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID    string `json:"session_id"`
+		MessageIndex int    `json:"message_index"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	src := s.findSession(strings.TrimSpace(req.SessionID))
+	if src == nil {
+		http.Error(w, "会话不存在", http.StatusNotFound)
+		return
+	}
+	if req.MessageIndex < 0 || req.MessageIndex >= len(src.Messages) {
+		http.Error(w, "消息位置非法", http.StatusBadRequest)
+		return
+	}
+	title := strings.TrimSpace(src.Title)
+	if title == "" {
+		title = "新对话"
+	}
+	sess := Session{
+		ID:        fmt.Sprintf("sess-%d", time.Now().UnixNano()),
+		AgentID:   src.AgentID,
+		Title:     title + " · 分支",
+		CreatedAt: time.Now(),
+		Messages:  append([]Message(nil), src.Messages[:req.MessageIndex+1]...),
+	}
+	s.st.Sessions = append(s.st.Sessions, sess)
+	s.st.ActiveAgentID = sess.AgentID
+	s.st.ActiveSessionID = sess.ID
+	if err := s.save(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.writeJSON(w, sess)
+}
+
+// handleShareSession 为会话生成只读分享 token/链接。
+func (s *Server) handleShareSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess := s.findSession(strings.TrimSpace(req.ID))
+	if sess == nil {
+		http.Error(w, "会话不存在", http.StatusNotFound)
+		return
+	}
+	if sess.ShareToken == "" {
+		sess.ShareToken = newShareToken()
+		if err := s.save(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); v != "" {
+		scheme = v
+	}
+	url := scheme + "://" + r.Host + "/share/" + sess.ShareToken
+	s.writeJSON(w, map[string]string{"url": url, "token": sess.ShareToken})
+}
+
+func newShareToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}
+
+func (s *Server) handleSharePage(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.PathValue("token"))
+	s.mu.Lock()
+	var sess *Session
+	for i := range s.st.Sessions {
+		if s.st.Sessions[i].ShareToken == token && token != "" {
+			sess = &s.st.Sessions[i]
+			break
+		}
+	}
+	if sess == nil {
+		s.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	title := sess.Title
+	agentName := sess.AgentID
+	if ag := s.findAgent(sess.AgentID); ag != nil {
+		agentName = ag.Name
+	}
+	msgs := append([]Message(nil), sess.Messages...)
+	s.mu.Unlock()
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = fmt.Fprintf(w, `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>%s</title><style>
+:root{color-scheme:light dark;--bg:#000;--panel:#111418;--line:#252b34;--text:#f2f6fa;--muted:#9aa6b2}
+@media(prefers-color-scheme:light){:root{--bg:#f5f7fa;--panel:#fff;--line:#dfe5ec;--text:#11151a;--muted:#68727d}}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC",sans-serif}
+main{max-width:820px;margin:0 auto;padding:28px 18px}
+h1{font-size:20px;margin:0 0 4px}.meta{color:var(--muted);margin-bottom:20px}
+.msg{padding:10px 12px;border-radius:12px;margin:10px 0;white-space:pre-wrap;max-width:82%%}
+.user{margin-left:auto;background:#1e3a5f}.bot{background:var(--panel);border:1px solid var(--line)}
+.role{font-size:11px;color:var(--muted);margin-bottom:3px}
+</style></head><body><main><h1>%s</h1><div class="meta">%s · HUSHFUSION Forge 只读分享</div>`,
+		html.EscapeString(title), html.EscapeString(title), html.EscapeString(agentName))
+	for _, m := range msgs {
+		role := "bot"
+		label := agentName
+		if m.Role == "user" {
+			role, label = "user", "用户"
+		}
+		_, _ = fmt.Fprintf(w, `<div class="msg %s"><div class="role">%s</div>%s</div>`, role, html.EscapeString(label), html.EscapeString(m.Text))
+	}
+	_, _ = io.WriteString(w, `</main></body></html>`)
 }
 
 type chatReq struct {

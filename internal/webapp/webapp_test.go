@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
@@ -105,6 +106,95 @@ func TestUpdateAgentNameAndAvatar(t *testing.T) {
 	}
 	if updated.DID == "" || updated.ID != created.Agent.ID {
 		t.Fatal("更新不应改变 ID/DID")
+	}
+}
+
+func TestSessionActions(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewWithRoot("", t.TempDir(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.http.Handler)
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/sessions", "application/json", strings.NewReader(`{"agent_id":"agent-1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sess Session
+	if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	resp2, err := http.Post(ts.URL+"/api/sessions/update", "application/json",
+		strings.NewReader(`{"id":"`+sess.ID+`","title":"重命名会话","pinned":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var updated Session
+	if err := json.NewDecoder(resp2.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if updated.Title != "重命名会话" || !updated.Pinned {
+		t.Fatalf("更新会话 = %+v", updated)
+	}
+
+	// 分支需要至少一条消息；直接补到状态里，避免真实模型调用。
+	s.mu.Lock()
+	for i := range s.st.Sessions {
+		if s.st.Sessions[i].ID == sess.ID {
+			s.st.Sessions[i].Messages = []Message{{Role: "user", Text: "分支起点", Time: time.Now()}}
+		}
+	}
+	s.mu.Unlock()
+	resp3, err := http.Post(ts.URL+"/api/sessions/branch", "application/json",
+		strings.NewReader(`{"session_id":"`+sess.ID+`","message_index":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var branch Session
+	if err := json.NewDecoder(resp3.Body).Decode(&branch); err != nil {
+		t.Fatal(err)
+	}
+	resp3.Body.Close()
+	if branch.ID == sess.ID || len(branch.Messages) != 1 || branch.Messages[0].Text != "分支起点" {
+		t.Fatalf("分支会话 = %+v", branch)
+	}
+
+	resp4, err := http.Post(ts.URL+"/api/sessions/share", "application/json",
+		strings.NewReader(`{"id":"`+sess.ID+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var share map[string]string
+	if err := json.NewDecoder(resp4.Body).Decode(&share); err != nil {
+		t.Fatal(err)
+	}
+	resp4.Body.Close()
+	if share["url"] == "" || share["token"] == "" {
+		t.Fatalf("分享 = %+v", share)
+	}
+	page, err := http.Get(ts.URL + "/share/" + share["token"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(page.Body)
+	page.Body.Close()
+	if page.StatusCode != http.StatusOK || !strings.Contains(string(body), "重命名会话") {
+		t.Fatalf("分享页 HTTP %d", page.StatusCode)
+	}
+
+	resp5, err := http.Post(ts.URL+"/api/sessions/delete", "application/json",
+		strings.NewReader(`{"id":"`+sess.ID+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp5.Body.Close()
+	if resp5.StatusCode != http.StatusOK {
+		t.Fatalf("删除会话 HTTP %d", resp5.StatusCode)
 	}
 }
 

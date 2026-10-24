@@ -38,6 +38,9 @@
   .side-actions{display:flex;gap:8px;padding:0 12px 10px;align-items:center}
   .icon-btn{display:grid;place-items:center;width:38px;height:34px;padding:0}
   .icon-btn svg{width:18px;height:18px}
+  .side-update{padding:6px 12px 0}
+  .side-update button{width:100%;font-size:12px;padding:7px 9px;border-radius:9px}
+  #updateBtn.available{color:#1a1300;background:var(--glow);border-color:var(--glow);animation:pulse 1.6s infinite}
   button{font:inherit;color:var(--btn-text);background:var(--btn-bg);border:1px solid var(--btn-border);border-radius:10px;padding:7px 10px;cursor:pointer}
   button:hover{border-color:var(--accent)}
   button.primary{background:linear-gradient(180deg,#2b6cb0,#1f4f80);color:#fff;border-color:#2b6cb0;font-weight:600}
@@ -58,6 +61,9 @@
   .item .txt{min-width:0;flex:1}
   .item .txt b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .item .txt small{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+  .item .dots{margin-left:auto;padding:0 5px;border:none;background:transparent;color:var(--muted);font-size:16px;line-height:1;border-radius:6px}
+  .item .dots:hover{background:var(--active);color:var(--text)}
+  .pin{font-size:10px;color:var(--accent);margin-right:4px;vertical-align:1px}
   .account{border-top:1px solid var(--line);padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer}
   .account:hover{background:var(--panel2)}
   .account .ava-wrap{position:relative;flex:none}
@@ -71,10 +77,10 @@
   header{height:54px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 14px;color:var(--muted)}
   header b{color:var(--text)}
   .grow{flex:1}
-  #chat{flex:1;overflow:auto;padding:24px 16px;display:flex;flex-direction:column;gap:14px}
+  #chat{flex:1;overflow:auto;padding:28px clamp(24px,6vw,96px);display:flex;flex-direction:column;gap:14px}
   .empty{height:100%;display:grid;place-items:center;color:var(--muted)}
   .empty h1{font-size:28px;font-weight:600;color:var(--text);margin:0}
-  .msg{max-width:min(760px,82%);padding:10px 12px;border-radius:12px}
+  .msg{max-width:min(720px,72%);padding:10px 12px;border-radius:12px}
   .msg.user{align-self:flex-end;background:var(--user-bg);color:var(--user-text);white-space:pre-wrap}
   .msg.bot{align-self:flex-start;background:var(--panel2);border:1px solid var(--line);position:relative;margin-left:36px;white-space:normal}
   .msg.bot::before{content:"";position:absolute;left:-36px;top:2px;width:26px;height:26px;border-radius:8px;background:url('/icons/apple-touch-icon.png') center/cover;box-shadow:0 0 0 1px var(--line)}
@@ -90,6 +96,13 @@
   .msg.bot a{color:var(--accent)}
   .msg.bot table{border-collapse:collapse;margin:6px 0}
   .msg.bot th,.msg.bot td{border:1px solid var(--line);padding:4px 8px}
+  .msg-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+  .msg-actions button{font-size:11px;padding:3px 8px;border-radius:999px;background:var(--btn-bg);color:var(--btn-text);border:1px solid var(--btn-border)}
+  .msg.user .msg-actions button{background:rgba(255,255,255,.12);color:inherit;border-color:rgba(255,255,255,.22)}
+  .menu{position:fixed;z-index:30;min-width:158px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:5px;box-shadow:0 12px 32px rgba(0,0,0,.28)}
+  .menu.hidden{display:none}
+  .menu button{display:block;width:100%;text-align:left;background:transparent;border:none;border-radius:7px;padding:7px 9px;font-size:13px;color:var(--text)}
+  .menu button:hover{background:var(--active)}
   .msg img{max-width:220px;border-radius:8px;display:block;margin-top:6px}
   .composer{border-top:1px solid var(--line);padding:12px 16px 6px;display:flex;gap:8px;align-items:flex-end}
   .composer textarea{flex:1;resize:none;height:46px;max-height:140px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px}
@@ -117,6 +130,7 @@
 </style>
 </head>
 <body>
+<div id="sessionMenu" class="menu hidden"></div>
 <div id="app">
   <aside>
     <div class="brand">
@@ -133,7 +147,6 @@
           <path d="M8.5 13.5h.01M15.5 13.5h.01M9.5 17h5"></path>
         </svg>
       </button>
-      <button id="updateBtn" title="检查/安装更新">⟳</button>
     </div>
     <div class="side-scroll">
       <div class="sec">智能体</div>
@@ -141,6 +154,7 @@
       <div class="sec">会话</div>
       <div id="sessions"></div>
     </div>
+    <div class="side-update"><button id="updateBtn" title="安装更新" style="display:none">⟳ 更新</button></div>
     <div class="account" id="account">
       <div class="ava-wrap">
         <div class="ava" id="accountAva"></div>
@@ -218,7 +232,7 @@
 </dialog>
 
 <script>
-let state=null, update=null, models=null, busy=false, pendingImages=[], editingAgentId='';
+let state=null, update=null, models=null, busy=false, pendingImages=[], editingAgentId='', menuSessionId='';
 
 const $=(id)=>document.getElementById(id);
 const escapeHTML=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -290,8 +304,12 @@ function renderAll(){ renderUpdate(); renderSidebar(); renderHeader(); renderCha
 
 function renderUpdate(){
   const b=$('updateBtn');
-  if(update&&update.available){b.classList.add('available');b.title='有新版本 '+update.latest+'，点击自动更新';b.textContent='⟳ 更新';}
-  else{b.classList.remove('available');b.title='已是最新';b.textContent='⟳';}
+  if(update&&update.available){
+    b.style.display='block';b.classList.add('available');
+    b.title='有新版本 '+update.latest+'，点击自动更新';b.textContent='⟳ 更新 '+update.latest;
+  }else{
+    b.style.display='none';b.classList.remove('available');
+  }
 }
 
 const iconChat=()=>`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.5-4.5A8 8 0 1 1 21 12z"/></svg>`;
@@ -302,11 +320,13 @@ function renderSidebar(){
       <div class="ava" title="编辑名字和头像" onclick="event.stopPropagation();editAgent('${a.id}')">${avaHTML(a.avatar)}</div>
       <div class="txt"><b>${escapeHTML(a.name)}</b><small>${a.did.slice(0,20)}…</small></div>
     </div>`).join('');
-  const sess=state.sessions.filter(s=>s.agent_id===state.active_agent_id);
+  const sess=state.sessions.filter(s=>s.agent_id===state.active_agent_id)
+    .slice().sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0));
   $('sessions').innerHTML=sess.map(s=>`
     <div class="item ${s.id===state.active_session_id?'active':''}" onclick="pickSession('${s.id}')">
       <div class="ava">${iconChat()}</div>
-      <div class="txt"><b>${escapeHTML(s.title||'新对话')}</b><small>${(s.messages||[]).length} 条</small></div>
+      <div class="txt"><b>${s.pinned?'<span class="pin">置顶</span>':''}${escapeHTML(s.title||'新对话')}</b><small>${(s.messages||[]).length} 条</small></div>
+      <button class="dots" title="会话设置" onclick="openSessionMenu(event,'${s.id}')">⋯</button>
     </div>`).join('');
   $('accountName').textContent=state.profile.name;
   $('accountDid').textContent=state.profile.did;
@@ -326,10 +346,17 @@ function renderChat(){
   const chat=$('chat');
   const msgs=(s&&s.messages)||[];
   if(!s||msgs.length===0){chat.innerHTML='<div class="empty"><h1>我们要做什么？</h1></div>';return;}
-  chat.innerHTML=msgs.map(m=>{
+  chat.innerHTML=msgs.map((m,i)=>{
     const body=m.role==='user'?escapeHTML(m.text).replace(/\n/g,'<br>'):mdToHTML(m.text);
+    const retry=m.role==='assistant'?`<button onclick="retryMessage(${i})">重试</button>`:'';
     return `<div class="msg ${m.role==='user'?'user':'bot'}">${body}
       ${(m.images||[]).map(im=>`<img src="${im}" alt="">`).join('')}
+      <div class="msg-actions">
+        <button onclick="copyMessage(${i})">复制</button>
+        <button onclick="branchMessage(${i})">分支</button>
+        <button onclick="shareMessage(${i})">分享链接</button>
+        ${retry}
+      </div>
     </div>`;
   }).join('');
   chat.scrollTop=chat.scrollHeight;
@@ -369,6 +396,98 @@ async function pickAgent(id){
   state.active_session_id=s.id;renderSidebar();renderHeader();renderChat();
 }
 function pickSession(id){state.active_session_id=id;renderSidebar();renderChat();}
+
+async function copyText(text){
+  try{await navigator.clipboard.writeText(text);return true;}
+  catch(e){
+    const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+    document.body.appendChild(ta);ta.select();
+    try{document.execCommand('copy');}catch(_){}
+    ta.remove();return true;
+  }
+}
+async function copyMessage(i){
+  const s=state.sessions.find(x=>x.id===state.active_session_id);
+  if(s&&s.messages&&s.messages[i])await copyText(s.messages[i].text||'');
+}
+async function branchMessage(i){
+  const s=state.sessions.find(x=>x.id===state.active_session_id);
+  if(!s)return;
+  try{
+    const ns=await api('/api/sessions/branch',{method:'POST',body:JSON.stringify({session_id:s.id,message_index:i})});
+    state.sessions.push(ns);state.active_session_id=ns.id;renderAll();
+  }catch(e){alert(e.message);}
+}
+async function shareSession(id,messageIndex){
+  try{
+    const j=await api('/api/sessions/share',{method:'POST',body:JSON.stringify({id})});
+    const url=j.url+(messageIndex!=null?('#m'+messageIndex):'');
+    await copyText(url);
+    alert('分享链接已复制：\n'+url);
+  }catch(e){alert(e.message);}
+}
+async function shareMessage(i){
+  const s=state.sessions.find(x=>x.id===state.active_session_id);
+  if(s)await shareSession(s.id,i);
+}
+async function retryMessage(i){
+  const s=state.sessions.find(x=>x.id===state.active_session_id);
+  if(!s||!s.messages)return;
+  let u=i;
+  while(u>=0&&s.messages[u].role!=='user')u--;
+  if(u<0)return;
+  const text=s.messages[u].text||'',images=s.messages[u].images||[];
+  s.messages.splice(u);
+  renderChat();
+  await submitMessage(text,images);
+}
+
+function openSessionMenu(e,id){
+  e.stopPropagation();
+  menuSessionId=id;
+  const s=state.sessions.find(x=>x.id===id);
+  const m=$('sessionMenu');
+  m.innerHTML=`
+    <button onclick="renameSession()">重命名</button>
+    <button onclick="deleteSession()">删除</button>
+    <button onclick="pinSession()">${s&&s.pinned?'取消固定':'固定 ping'}</button>
+    <button onclick="shareSession(menuSessionId)">分享</button>`;
+  m.classList.remove('hidden');
+  const w=170,h=170;
+  m.style.left=Math.min(e.clientX,innerWidth-w)+'px';
+  m.style.top=Math.min(e.clientY,innerHeight-h)+'px';
+}
+document.addEventListener('click',()=>$('sessionMenu').classList.add('hidden'));
+
+async function renameSession(){
+  const s=state.sessions.find(x=>x.id===menuSessionId);
+  if(!s)return;
+  const title=prompt('重命名会话',s.title||'');
+  if(!title||!title.trim())return;
+  try{
+    const u=await api('/api/sessions/update',{method:'POST',body:JSON.stringify({id:s.id,title:title.trim()})});
+    Object.assign(s,u);renderSidebar();
+  }catch(e){alert(e.message);}
+}
+async function deleteSession(){
+  const id=menuSessionId,s=state.sessions.find(x=>x.id===id);
+  if(!s)return;
+  if(!confirm('删除会话「'+(s.title||'新对话')+'」？此操作不可撤销。'))return;
+  try{
+    const r=await api('/api/sessions/delete',{method:'POST',body:JSON.stringify({id})});
+    state.sessions=state.sessions.filter(x=>x.id!==id);
+    if(r.session)state.sessions.push(r.session);
+    state.active_session_id=r.active_session_id;renderAll();
+  }catch(e){alert(e.message);}
+}
+async function pinSession(){
+  const s=state.sessions.find(x=>x.id===menuSessionId);
+  if(!s)return;
+  try{
+    const u=await api('/api/sessions/update',{method:'POST',body:JSON.stringify({id:s.id,pinned:!s.pinned})});
+    Object.assign(s,u);renderSidebar();
+  }catch(e){alert(e.message);}
+}
 
 $('newSessionBtn').onclick=async()=>{
   try{
@@ -537,14 +656,11 @@ async function streamChat(payload,onDelta){
   return final;
 }
 
-async function send(){
+async function submitMessage(text,images){
   if(busy)return;
-  const text=$('input').value.trim();
-  if(!text&&pendingImages.length===0)return;
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   if(!s){alert('先创建一个会话');return;}
-  busy=true;$('input').value='';
-  const images=[...pendingImages];pendingImages=[];renderImgPreview();
+  busy=true;
   s.messages=s.messages||[];
   s.messages.push({role:'user',text,images,time:new Date().toISOString()});
   const assistant={role:'assistant',text:'',time:new Date().toISOString()};
@@ -566,6 +682,14 @@ async function send(){
       }
     }
   }finally{busy=false;renderSidebar();renderChat();}
+}
+async function send(){
+  if(busy)return;
+  const text=$('input').value.trim();
+  if(!text&&pendingImages.length===0)return;
+  const images=[...pendingImages];pendingImages=[];renderImgPreview();
+  $('input').value='';
+  await submitMessage(text,images);
 }
 $('send').onclick=send;
 $('input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
