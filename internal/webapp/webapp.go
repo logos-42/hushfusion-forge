@@ -207,8 +207,17 @@ func (s *Server) load() error {
 }
 
 // normalize 兼容旧状态文件：补默认模型/工具/头像。
+func needsNewAvatar(a string) bool {
+	if !strings.HasPrefix(a, "data:image/") {
+		return true
+	}
+	// 旧版生成头像含 <text>（URL 编码后是 %3Ctext）；统一迁移到无文字抽象头像。
+	return strings.HasPrefix(a, "data:image/svg+xml") &&
+		(strings.Contains(a, "<text") || strings.Contains(a, "%3Ctext") || strings.Contains(a, "+text"))
+}
+
 func (s *Server) normalize() {
-	if !strings.HasPrefix(s.st.Profile.Avatar, "data:image/") {
+	if needsNewAvatar(s.st.Profile.Avatar) {
 		s.st.Profile.Avatar = svgAvatar("forge-user", firstRune(s.st.Profile.Name))
 	}
 	if v := strings.TrimSpace(os.Getenv("HUSHFUSION_AI_PROVIDER")); v != "" {
@@ -231,7 +240,7 @@ func (s *Server) normalize() {
 		}
 	}
 	for i := range s.st.Agents {
-		if !strings.HasPrefix(s.st.Agents[i].Avatar, "data:image/") {
+		if needsNewAvatar(s.st.Agents[i].Avatar) {
 			s.st.Agents[i].Avatar = svgAvatar(s.st.Agents[i].ID, firstRune(s.st.Agents[i].Name))
 		}
 	}
@@ -247,13 +256,14 @@ func firstRune(s string) string {
 }
 
 // svgAvatar 生成一个好看的渐变 SVG 头像（data:image/svg+xml），不用 emoji。
-func svgAvatar(seed, label string) string {
+// svgAvatar 生成不带文字的抽象头像（渐变球 + 光环 + 眼睛），避免字母/emoji 头像。
+func svgAvatar(seed, _ string) string {
 	h := 0
 	for _, r := range seed {
 		h = (h*31 + int(r)) % 360
 	}
-	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(%d,82%%,58%%)"/><stop offset="1" stop-color="hsl(%d,72%%,42%%)"/></linearGradient></defs><rect width="96" height="96" rx="48" fill="url(#g)"/><circle cx="70" cy="26" r="10" fill="rgba(255,255,255,.28)"/><text x="48" y="60" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="38" font-weight="600" fill="#fff" text-anchor="middle">%s</text></svg>`,
-		h, (h+48)%360, escapeXML(label))
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" data-forge-avatar="1"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(%d,88%%,66%%)"/><stop offset="1" stop-color="hsl(%d,72%%,38%%)"/></linearGradient><radialGradient id="h" cx="30%%" cy="22%%" r="70%%"><stop offset="0" stop-color="rgba(255,255,255,.55)"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></radialGradient></defs><rect width="96" height="96" rx="48" fill="url(#g)"/><circle cx="48" cy="48" r="46" fill="url(#h)"/><circle cx="70" cy="28" r="12" fill="rgba(255,255,255,.20)"/><path d="M22 68 Q48 42 74 68" stroke="rgba(255,255,255,.40)" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="36" cy="45" r="5" fill="#fff" opacity=".92"/><circle cx="60" cy="45" r="5" fill="#fff" opacity=".92"/></svg>`,
+		h, (h+42)%360)
 	return "data:image/svg+xml;utf8," + url.QueryEscape(svg)
 }
 

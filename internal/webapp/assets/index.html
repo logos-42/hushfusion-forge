@@ -8,8 +8,20 @@
 <title>HUSHFUSION Forge</title>
 <style>
   :root{
-    --bg:#0b0d10; --panel:#12151a; --panel2:#171b22; --line:#232a33;
-    --text:#e7edf3; --muted:#8b98a5; --accent:#4aa8ff; --glow:#ffd166;
+    color-scheme:dark;
+    --bg:#000; --panel:#08090b; --panel2:#111418; --line:#252b34;
+    --text:#f2f6fa; --muted:#9aa6b2; --accent:#8ec5ff; --glow:#ffd166;
+    --btn-bg:#e9eef5; --btn-text:#11151a; --btn-border:#d8e0ea;
+    --user-bg:#dceaff; --user-text:#0b1220; --active:#1a2430;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      color-scheme:light;
+      --bg:#f5f7fa; --panel:#fff; --panel2:#f0f3f7; --line:#dfe5ec;
+      --text:#11151a; --muted:#68727d; --accent:#2563eb; --glow:#b77900;
+      --btn-bg:#fff; --btn-text:#11151a; --btn-border:#d8e0ea;
+      --user-bg:#2563eb; --user-text:#fff; --active:#e8f0ff;
+    }
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -18,16 +30,17 @@
   #app.collapsed{grid-template-columns:66px 1fr}
   aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;overflow:hidden}
   .brand{display:flex;align-items:center;gap:8px;padding:14px 12px 10px;font-weight:600;white-space:nowrap}
-  #app.collapsed .brand span:not(.dot),#app.collapsed .sec,#app.collapsed .item .txt,#app.collapsed .account .who{display:none}
+  #app.collapsed .brand-ver,#app.collapsed .sec,#app.collapsed .item .txt,#app.collapsed .account .who{display:none}
   #app.collapsed .side-actions{flex-direction:column}
   #app.collapsed .account{justify-content:center}
-  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent);flex:none}
+  .brand-icon{width:30px;height:30px;border-radius:9px;object-fit:cover;flex:none;box-shadow:0 0 0 1px var(--line)}
+  .brand-ver{margin-left:auto;color:var(--muted);font-weight:400;font-size:12px}
   .side-actions{display:flex;gap:8px;padding:0 12px 10px;align-items:center}
   .icon-btn{display:grid;place-items:center;width:38px;height:34px;padding:0}
   .icon-btn svg{width:18px;height:18px}
-  button{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:7px 10px;cursor:pointer}
-  button:hover{border-color:#33404d}
-  button.primary{background:linear-gradient(180deg,#2b6cb0,#1f4f80);border-color:#2b6cb0}
+  button{font:inherit;color:var(--btn-text);background:var(--btn-bg);border:1px solid var(--btn-border);border-radius:10px;padding:7px 10px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:linear-gradient(180deg,#f7fbff,#dce9f8);color:#0b1220;border-color:#c9d9ea;font-weight:600}
   #updateBtn{position:relative;margin-left:auto}
   #app.collapsed #updateBtn{margin-left:0}
   #updateBtn.available{color:#1a1300;background:var(--glow);border-color:var(--glow);animation:pulse 1.6s infinite}
@@ -35,17 +48,19 @@
   .side-scroll{flex:1;overflow:auto;padding:0 8px 8px}
   .sec{margin:8px 6px 4px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
   .item{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;cursor:pointer;color:var(--text)}
-  .item:hover{background:#1b2029}
-  .item.active{background:#1d2733;border:1px solid #2b3a4a}
-  .item .ava{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:#222a33;font-size:13px;overflow:hidden;flex:none}
+  .item:hover{background:var(--panel2)}
+  .item.active{background:var(--active);border:1px solid var(--line)}
+  .item .ava{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--panel2);font-size:13px;overflow:hidden;flex:none}
   .item .ava img{width:100%;height:100%;object-fit:cover}
   .item .txt{min-width:0;flex:1}
   .item .txt b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .item .txt small{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
   .account{border-top:1px solid var(--line);padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer}
-  .account:hover{background:#151a21}
-  .account .ava{width:36px;height:36px;border-radius:50%;background:#222a33;display:grid;place-items:center;overflow:hidden;flex:none}
+  .account:hover{background:var(--panel2)}
+  .account .ava-wrap{position:relative;flex:none}
+  .account .ava{width:36px;height:36px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;overflow:hidden}
   .account .ava img{width:100%;height:100%;object-fit:cover}
+  .account .gear{position:absolute;right:-5px;bottom:-5px;width:19px;height:19px;border-radius:50%;padding:0;display:grid;place-items:center;font-size:11px;line-height:1;background:var(--btn-bg);color:var(--btn-text);border:1px solid var(--btn-border)}
   .account .who{min-width:0;flex:1}
   .account .who b{display:block;font-weight:600}
   .account .who small{color:var(--muted);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -57,11 +72,14 @@
   .empty{height:100%;display:grid;place-items:center;color:var(--muted)}
   .empty h1{font-size:28px;font-weight:600;color:var(--text);margin:0}
   .msg{max-width:min(760px,82%);padding:10px 12px;border-radius:12px;white-space:pre-wrap}
-  .msg.user{align-self:flex-end;background:#1f4f80}
-  .msg.bot{align-self:flex-start;background:var(--panel2);border:1px solid var(--line)}
+  .msg.user{align-self:flex-end;background:var(--user-bg);color:var(--user-text)}
+  .msg.bot{align-self:flex-start;background:var(--panel2);border:1px solid var(--line);position:relative;margin-left:36px}
+  .msg.bot::before{content:"";position:absolute;left:-36px;top:2px;width:26px;height:26px;border-radius:8px;background:url('/icons/apple-touch-icon.png') center/cover;box-shadow:0 0 0 1px var(--line)}
   .msg img{max-width:220px;border-radius:8px;display:block;margin-top:6px}
   .composer{border-top:1px solid var(--line);padding:12px 16px 6px;display:flex;gap:8px;align-items:flex-end}
   .composer textarea{flex:1;resize:none;height:46px;max-height:140px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .composer .new-session{display:grid;place-items:center;width:38px;height:38px;padding:0;border-radius:12px}
+  .composer .new-session svg{width:18px;height:18px}
   .composer-footer{display:flex;gap:8px;padding:0 16px 12px}
   .mini{font-size:12px;padding:5px 9px;border-radius:999px;color:var(--muted)}
   .mini:hover{color:var(--text)}
@@ -70,7 +88,8 @@
   dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:16px;width:min(520px,92vw)}
   dialog::backdrop{background:rgba(0,0,0,.55)}
   label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
-  input,select{width:100%;background:#0e1216;border:1px solid var(--line);border-radius:10px;color:var(--text);padding:8px}
+  input,select{width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:8px}
+  .settings-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
   .row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
   .avatars{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
   .avatars button{padding:0;border:none;background:none;width:44px;height:44px;border-radius:50%;overflow:hidden}
@@ -86,8 +105,8 @@
   <aside>
     <div class="brand">
       <button id="collapseBtn" title="折叠/展开侧边栏" style="padding:4px 8px">☰</button>
-      <span class="dot"></span><span>HUSHFUSION Forge</span>
-      <span style="margin-left:auto;color:var(--muted);font-weight:400" id="ver"></span>
+      <img class="brand-icon" src="/icons/apple-touch-icon.png" alt="HUSHFUSION Forge" />
+      <span class="brand-ver" id="ver"></span>
     </div>
     <div class="side-actions">
       <button class="primary icon-btn" id="newAgentBtn" title="创建新智能体" aria-label="创建新智能体">
@@ -107,9 +126,11 @@
       <div id="sessions"></div>
     </div>
     <div class="account" id="account">
-      <div class="ava" id="accountAva"></div>
+      <div class="ava-wrap">
+        <div class="ava" id="accountAva"></div>
+        <button class="gear" id="settingsBtn" title="设置">⚙</button>
+      </div>
       <div class="who"><b id="accountName">用户</b><small id="accountDid">did:…</small></div>
-      <span style="color:var(--muted)">⚙</span>
     </div>
   </aside>
   <main>
@@ -122,6 +143,12 @@
     <div id="imgPreview"></div>
     <div class="composer">
       <button id="toolsBtn" title="添加图片 / 工具">＋</button>
+      <button id="newSessionBtn" class="new-session" title="新会话" aria-label="新会话">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.5-4.5A8 8 0 1 1 21 12z"></path>
+          <path d="M12 8v8M8 12h8"></path>
+        </svg>
+      </button>
       <textarea id="input" placeholder="发送消息；Enter 发送，Shift+Enter 换行"></textarea>
       <button class="primary" id="send">发送</button>
     </div>
@@ -142,11 +169,15 @@
 </dialog>
 
 <dialog id="profileDlg">
-  <h3 style="margin:0 0 6px">个人身份 / 头像</h3>
+  <h3 style="margin:0 0 6px">设置</h3>
   <label>昵称</label><input id="profileName" />
   <label>头像（自动生成；也可上传图片）</label>
   <div class="avatars" id="avatarPresets"></div>
   <input type="file" id="profileAvatarFile" accept="image/*" style="margin-top:8px" />
+  <div class="settings-links">
+    <button id="settingsModelBtn" class="mini">模型：<span id="settingsModelLabel">…</span></button>
+    <button id="settingsToolsBtn" class="mini">工具开关</button>
+  </div>
   <div class="row"><button onclick="document.getElementById('profileDlg').close()">取消</button><button class="primary" id="profileSave">保存</button></div>
 </dialog>
 
@@ -176,9 +207,9 @@ const $=(id)=>document.getElementById(id);
 const escapeHTML=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const avaHTML=(a)=>(a&&a.startsWith('data:image/'))?`<img src="${a}" alt="">`:'';
 
-function svgAvatar(seed,label){
+function svgAvatar(seed,_label){
   let h=0; for(const ch of String(seed||'x')) h=(h*31+ch.charCodeAt(0))%360;
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${h},82%,58%)"/><stop offset="1" stop-color="hsl(${(h+48)%360},72%,42%)"/></linearGradient></defs><rect width="96" height="96" rx="48" fill="url(#g)"/><circle cx="70" cy="26" r="10" fill="rgba(255,255,255,.28)"/><text x="48" y="60" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="38" font-weight="600" fill="#fff" text-anchor="middle">${escapeHTML(label)}</text></svg>`;
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" data-forge-avatar="1"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${h},88%,66%)"/><stop offset="1" stop-color="hsl(${(h+42)%360},72%,38%)"/></linearGradient><radialGradient id="h" cx="30%" cy="22%" r="70%"><stop offset="0" stop-color="rgba(255,255,255,.55)"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></radialGradient></defs><rect width="96" height="96" rx="48" fill="url(#g)"/><circle cx="48" cy="48" r="46" fill="url(#h)"/><circle cx="70" cy="28" r="12" fill="rgba(255,255,255,.20)"/><path d="M22 68 Q48 42 74 68" stroke="rgba(255,255,255,.40)" stroke-width="5" fill="none" stroke-linecap="round"/><circle cx="36" cy="45" r="5" fill="#fff" opacity=".92"/><circle cx="60" cy="45" r="5" fill="#fff" opacity=".92"/></svg>`;
   return 'data:image/svg+xml;utf8,'+encodeURIComponent(svg);
 }
 
@@ -244,6 +275,7 @@ function renderChat(){
 
 function renderModel(){
   $('modelLabel').textContent=(state.settings.provider||'默认')+' / '+(state.settings.model||'default');
+  $('settingsModelLabel').textContent=(state.settings.provider||'默认')+' / '+(state.settings.model||'default');
   const sel=$('providerSelect');
   const current=state.settings.provider||'';
   const opts=models.providers.map(p=>`<option value="${p.name}" ${p.name===current?'selected':''}>${escapeHTML(p.display||p.name)}${p.has_key?'':'（无 key）'}</option>`);
@@ -276,6 +308,14 @@ async function pickAgent(id){
 }
 function pickSession(id){state.active_session_id=id;renderSidebar();renderChat();}
 
+$('newSessionBtn').onclick=async()=>{
+  try{
+    const s=await api('/api/sessions',{method:'POST',body:JSON.stringify({agent_id:state.active_agent_id})});
+    state.sessions.push(s);state.active_session_id=s.id;
+    renderSidebar();renderHeader();renderChat();
+  }catch(e){alert(e.message);}
+};
+
 $('collapseBtn').onclick=()=>$('app').classList.toggle('collapsed');
 
 $('newAgentBtn').onclick=()=>{
@@ -296,14 +336,19 @@ $('agentSave').onclick=async()=>{
   }catch(e){alert(e.message);}
 };
 
-$('account').onclick=()=>{
+function openSettings(){
   $('profileName').value=state.profile.name;
   const presets=['用户','开发者','探索者','工程师','观测者','架构师','协作者','思考者'];
-  $('avatarPresets').innerHTML=presets.map((n,i)=>`<button title="${n}"><img src="${svgAvatar(n,n[0])}" alt="${n}"></button>`).join('');
-  [...$('avatarPresets').children].forEach((b,i)=>b.onclick=()=>{$('profileAvatarFile').dataset.avatar=svgAvatar(presets[i],presets[i][0]);});
+  $('avatarPresets').innerHTML=presets.map((n,i)=>`<button title="${n}"><img src="${svgAvatar(n+state.profile.did,n[0])}" alt="${n}"></button>`).join('');
+  [...$('avatarPresets').children].forEach((b,i)=>b.onclick=()=>{$('profileAvatarFile').dataset.avatar=svgAvatar(presets[i]+state.profile.did,presets[i][0]);});
   delete $('profileAvatarFile').dataset.avatar;
+  $('settingsModelLabel').textContent=(state.settings.provider||'默认')+' / '+(state.settings.model||'default');
   document.getElementById('profileDlg').showModal();
-};
+}
+$('account').onclick=openSettings;
+$('settingsBtn').onclick=(e)=>{e.stopPropagation();openSettings();};
+$('settingsModelBtn').onclick=()=>{document.getElementById('profileDlg').close();document.getElementById('modelDlg').showModal();};
+$('settingsToolsBtn').onclick=()=>{document.getElementById('profileDlg').close();document.getElementById('toolsDlg').showModal();};
 $('profileSave').onclick=async()=>{
   try{
     const avatar=$('profileAvatarFile').dataset.avatar||state.profile.avatar;
