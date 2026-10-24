@@ -25,8 +25,8 @@
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
-  body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
-  #app{display:grid;grid-template-columns:284px 1fr;height:100vh;transition:grid-template-columns .18s ease}
+  body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;overflow:hidden}
+  #app{display:grid;grid-template-columns:284px 1fr;height:100vh;overflow:hidden;transition:grid-template-columns .18s ease}
   #app.collapsed{grid-template-columns:66px 1fr}
   aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;overflow:hidden}
   .brand{display:flex;align-items:center;gap:8px;padding:14px 12px 10px;font-weight:600;white-space:nowrap}
@@ -73,11 +73,11 @@
   .account .who{min-width:0;flex:1}
   .account .who b{display:block;font-weight:600}
   .account .who small{color:var(--muted);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  main{display:flex;flex-direction:column;min-width:0}
+  main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
   header{height:54px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 14px;color:var(--muted)}
   header b{color:var(--text)}
   .grow{flex:1}
-  #chat{flex:1;overflow:auto;padding:30px clamp(40px,10vw,180px);display:flex;flex-direction:column;gap:14px}
+  #chat{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:30px clamp(40px,10vw,180px);display:flex;flex-direction:column;gap:14px}
   .empty{height:100%;display:grid;place-items:center;color:var(--muted)}
   .empty h1{font-size:28px;font-weight:600;color:var(--text);margin:0}
   .msg-row{display:flex;flex-direction:column;max-width:min(760px,78%);min-width:0}
@@ -118,6 +118,9 @@
   .composer textarea{flex:1;resize:none;height:46px;max-height:140px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px}
   .composer .edit-btn{display:grid;place-items:center;width:36px;height:38px;padding:0;border-radius:11px;flex:none}
   .composer .edit-btn svg{width:17px;height:17px}
+  .composer #send{min-width:58px;display:grid;place-items:center}
+  .composer #send.stop{background:#b42318;border-color:#b42318;color:#fff}
+  .composer #send svg{width:17px;height:17px}
   .chat-new{display:grid;place-items:center;width:32px;height:32px;padding:0;border-radius:9px;flex:none}
   .chat-new svg{width:17px;height:17px}
   .agent-head-ava{width:28px;height:28px;border-radius:9px;object-fit:cover;cursor:pointer;box-shadow:0 0 0 1px var(--line)}
@@ -243,13 +246,13 @@
   <h3 style="margin:0 0 6px">添加图片 / 工具</h3>
   <label>图片（最多 4 张，单张 ≤1MB）</label>
   <input type="file" id="imgFile" accept="image/*" multiple />
-  <div class="hint">read / ls 等只读工具默认可用；下面是需要放行的写工具。</div>
+  <div class="hint">read / ls 等只读工具默认可用；shell、mem、tasks 写工具默认开启。插件工具加载后会显示在加号里。</div>
   <div class="tools" id="toolList"></div>
   <div class="row"><button onclick="document.getElementById('toolsDlg').close()">取消</button><button class="primary" id="toolsSave">保存</button></div>
 </dialog>
 
 <script>
-let state=null, update=null, models=null, busy=false, pendingImages=[], editingAgentId='', menuSessionId='', editingMessageIndex=null, editingSessionId='';
+let state=null, update=null, models=null, busy=false, pendingImages=[], editingAgentId='', menuSessionId='', editingMessageIndex=null, editingSessionId='', currentAbort=null;
 
 const $=(id)=>document.getElementById(id);
 const escapeHTML=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -362,10 +365,12 @@ function renderHeader(){
   $('agentHeaderAva').onclick=()=>editAgent(a.id);
 }
 
+function nearBottom(el){return el.scrollHeight-el.scrollTop-el.clientHeight<140;}
 function renderChat(){
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   const chat=$('chat');
   const msgs=(s&&s.messages)||[];
+  const stick=nearBottom(chat);
   if(!s||msgs.length===0){chat.innerHTML='<div class="empty"><h1>我们要做什么？</h1></div>';return;}
   chat.innerHTML=msgs.map((m,i)=>{
     const role=m.role==='user'?'user':'bot';
@@ -373,7 +378,7 @@ function renderChat(){
     const retry=m.role==='assistant'?`<button title="重试" aria-label="重试" onclick="retryMessage(${i})">${iconRetry}</button>`:'';
     const edit=m.role==='user'?`<button title="编辑" aria-label="编辑" onclick="editMessage(${i})">${iconPencil}</button>`:'';
     const streaming=m.streaming?' streaming':'';
-    return `<div class="msg-row ${role}">
+    return `<div class="msg-row ${role}" data-index="${i}">
       <div class="msg ${role}${streaming}">${body}
         ${(m.images||[]).map(im=>`<img src="${im}" alt="">`).join('')}
       </div>
@@ -385,7 +390,15 @@ function renderChat(){
       </div>
     </div>`;
   }).join('');
-  chat.scrollTop=chat.scrollHeight;
+  if(stick)chat.scrollTop=chat.scrollHeight;
+}
+function updateStreamingBubble(index,text){
+  const chat=$('chat');
+  const row=chat.querySelector(`.msg-row[data-index="${index}"]`);
+  if(!row){renderChat();return;}
+  const msg=row.querySelector('.msg.bot');
+  if(msg)msg.innerHTML=mdToHTML(text);
+  if(nearBottom(chat))chat.scrollTop=chat.scrollHeight;
 }
 
 function renderModel(){
@@ -670,8 +683,8 @@ $('updateBtn').onclick=async()=>{
   }catch(e){alert('更新失败: '+e.message);}
 };
 
-async function streamChat(payload,onDelta){
-  const r=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+async function streamChat(payload,onDelta,signal){
+  const r=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal});
   if(!r.ok){const t=await r.text();throw new Error(t||('HTTP '+r.status));}
   const reader=r.body.getReader(),dec=new TextDecoder();
   let buf='',final='';
@@ -697,32 +710,54 @@ async function streamChat(payload,onDelta){
   return final;
 }
 
+function renderSendState(){
+  const b=$('send');
+  if(busy){
+    b.classList.add('stop');b.title='停止生成';
+    b.innerHTML='<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+  }else{
+    b.classList.remove('stop');b.title='发送';b.textContent='发送';
+  }
+}
+function stopStreaming(){if(currentAbort){currentAbort.abort();currentAbort=null;}}
 async function submitMessage(text,images){
   if(busy)return;
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   if(!s){alert('先创建一个会话');return;}
-  busy=true;
+  const controller=new AbortController();
+  currentAbort=controller;
+  busy=true;renderSendState();
   s.messages=s.messages||[];
   s.messages.push({role:'user',text,images,time:new Date().toISOString()});
   const assistant={role:'assistant',text:'',streaming:true,time:new Date().toISOString()};
   s.messages.push(assistant);
+  const aiIndex=s.messages.length-1;
   renderChat();
   const payload={session_id:s.id,agent_id:state.active_agent_id,message:text,images};
   try{
-    const reply=await streamChat(payload,delta=>{assistant.text+=delta;renderChat();});
+    const reply=await streamChat(payload,delta=>{
+      assistant.text+=delta;
+      updateStreamingBubble(aiIndex,assistant.text);
+    },controller.signal);
     if(reply)assistant.text=reply;
     if(!assistant.text)throw new Error('模型没有返回内容');
   }catch(e){
-    if(!assistant.text){
+    if(e.name==='AbortError'){
+      if(!assistant.text)assistant.text='（已停止）';
+    }else if(!assistant.text){
       try{
-        const j=await api('/api/chat',{method:'POST',body:JSON.stringify(payload)});
+        const j=await api('/api/chat',{method:'POST',body:JSON.stringify(payload),signal:controller.signal});
         if(j.error)throw new Error(j.error);
         assistant.text=j.reply;
       }catch(e2){
-        assistant.text='（错误）'+(e.message||e2.message);
+        if(e2.name==='AbortError')assistant.text=assistant.text||'（已停止）';
+        else assistant.text='（错误）'+(e.message||e2.message);
       }
     }
-  }finally{assistant.streaming=false;busy=false;renderSidebar();renderChat();}
+  }finally{
+    currentAbort=null;assistant.streaming=false;busy=false;
+    renderSendState();renderSidebar();renderChat();
+  }
 }
 async function send(){
   if(busy)return;
@@ -751,7 +786,7 @@ $('editBtn').onclick=()=>{
   }
   t.focus();
 };
-$('send').onclick=send;
+$('send').onclick=()=>{if(busy)stopStreaming();else send();};
 $('input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
 
 boot();

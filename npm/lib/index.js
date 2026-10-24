@@ -251,7 +251,7 @@ async function startServer(options = {}) {
   const bin = await ensureBinary({ version: options.version || VERSION });
   const child = spawn(bin, ['web', '--addr', addr, '--open=false'], {
     cwd: options.cwd || process.cwd(),
-    stdio: options.stdio || ['ignore', 'pipe', 'pipe'],
+    stdio: options.stdio || 'ignore',
   });
   await waitForServer(baseUrl, child, options.timeoutMs || 30000);
   return {

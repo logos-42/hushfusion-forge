@@ -41,6 +41,9 @@ func TestBootstrapHasIdentityAndAgents(t *testing.T) {
 	if j.Version == "" || len(j.State.Agents) == 0 || j.State.Profile.DID == "" {
 		t.Fatalf("bootstrap 不完整: %+v", j)
 	}
+	if !j.State.Settings.ToolsInitialized || len(j.State.Settings.Tools) != len(writeTools) {
+		t.Fatalf("写工具应默认开启: %+v", j.State.Settings)
+	}
 }
 
 func TestCreateAgentAndProfile(t *testing.T) {

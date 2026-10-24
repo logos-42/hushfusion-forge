@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-24 | HUSHFUSION Forge Desktop | **Web：停止生成 / 稳定流光 / 独立滚动区 / 默认写工具** | 发送按钮在生成中变为终止按钮（AbortController 中断 SSE，保留已生成文本或标记已停止）；流式增量只更新当前 AI 气泡，不再整页重渲染，扫光动画速度稳定；滚动只发生在 `#chat`（`min-height:0` + `body`/`main` overflow hidden），输入框不参与滚动；`shell/mem.set/mem.reset/tasks.add/tasks.set_state` 写工具默认开启，插件工具入口在加号弹窗。 | `go build/vet/gofmt/test ./...` 全绿；`node --check` 通过；本机 bootstrap 工具列表 5 项、`tools_initialized=true`。 |
 | 2026-10-24 | HUSHFUSION Forge Release | **npm 包 + Go 模块 v0.2.1 真发布** | 新增 `npm/`：`hushfusion-forge@0.2.1` 启动器 + `ForgeClient`/`startServer` SDK，首次运行下载 GitHub Release 对应 OS/arch 二进制；修复 Go proxy 拒绝模块 zip 的根因：`python/aux/` 的 `aux` 是 Windows 保留设备名，整目录改名 `python/auxiliary/` 并同步所有引用；`v0.2.1` 标签重指当前提交并重建 Release 资产。 | `go build/test ./...` 通过；`npm test` / `npm pack` 通过；Go proxy `@v/v0.2.1.info`、npm registry 待发布后校验。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：用户消息操作改为悬停显示** | 用户气泡操作区不再需要点击气泡，鼠标移到气泡/附近区域即显示；AI 回复操作保持常显。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：气泡留白、操作图标放大、用户操作按需显示** | 聊天区左右 padding 提升到 `clamp(40px,10vw,180px)`；消息操作 SVG 按钮 26→32px、图标 14→18px；用户气泡操作按钮默认隐藏，点击气泡才展开；AI 回复操作按钮保持常显。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |

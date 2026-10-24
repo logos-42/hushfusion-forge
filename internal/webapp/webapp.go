@@ -69,9 +69,10 @@ type Session struct {
 
 // Settings 是模型与工具设置（侧边栏/主窗口可选）。
 type Settings struct {
-	Provider string   `json:"provider"`
-	Model    string   `json:"model"`
-	Tools    []string `json:"tools,omitempty"` // 需要放行的写工具；读工具默认可用
+	Provider         string   `json:"provider"`
+	Model            string   `json:"model"`
+	Tools            []string `json:"tools,omitempty"` // 需要放行的写工具；读工具默认可用
+	ToolsInitialized bool     `json:"tools_initialized,omitempty"`
 }
 
 // State 是落盘状态（~/.forge/web/state.json）。
@@ -251,6 +252,11 @@ func (s *Server) normalize() {
 			s.st.Settings.Model = p.DefaultModel
 		}
 	}
+	// 写工具默认全开；用户显式保存过空列表则尊重用户选择。
+	if !s.st.Settings.ToolsInitialized {
+		s.st.Settings.Tools = append([]string(nil), writeTools...)
+		s.st.Settings.ToolsInitialized = true
+	}
 	for i := range s.st.Agents {
 		if needsNewAvatar(s.st.Agents[i].Avatar) {
 			s.st.Agents[i].Avatar = svgAvatar(s.st.Agents[i].ID, firstRune(s.st.Agents[i].Name))
@@ -328,7 +334,10 @@ func (s *Server) initState() error {
 		Sessions:        []Session{sess},
 		ActiveAgentID:   agent.ID,
 		ActiveSessionID: sess.ID,
-		Settings:        Settings{Provider: provider, Model: model},
+		Settings: Settings{
+			Provider: provider, Model: model,
+			Tools: append([]string(nil), writeTools...), ToolsInitialized: true,
+		},
 	}
 	return s.save()
 }
@@ -1187,7 +1196,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mu.Lock()
-	s.st.Settings = Settings{Provider: prof.Name, Model: model, Tools: tools}
+	s.st.Settings = Settings{Provider: prof.Name, Model: model, Tools: tools, ToolsInitialized: true}
 	// 密钥/端点单独落盘（0600）；不返回、不打印。
 	sec := s.secrets[prof.Name]
 	if strings.TrimSpace(req.APIKey) != "" {
