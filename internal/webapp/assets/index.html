@@ -22,7 +22,9 @@
   #app.collapsed .side-actions{flex-direction:column}
   #app.collapsed .account{justify-content:center}
   .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent);flex:none}
-  .side-actions{display:flex;gap:8px;padding:0 12px 10px}
+  .side-actions{display:flex;gap:8px;padding:0 12px 10px;align-items:center}
+  .icon-btn{display:grid;place-items:center;width:38px;height:34px;padding:0}
+  .icon-btn svg{width:18px;height:18px}
   button{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:7px 10px;cursor:pointer}
   button:hover{border-color:#33404d}
   button.primary{background:linear-gradient(180deg,#2b6cb0,#1f4f80);border-color:#2b6cb0}
@@ -58,8 +60,11 @@
   .msg.user{align-self:flex-end;background:#1f4f80}
   .msg.bot{align-self:flex-start;background:var(--panel2);border:1px solid var(--line)}
   .msg img{max-width:220px;border-radius:8px;display:block;margin-top:6px}
-  .composer{border-top:1px solid var(--line);padding:12px 16px;display:flex;gap:8px;align-items:flex-end}
+  .composer{border-top:1px solid var(--line);padding:12px 16px 6px;display:flex;gap:8px;align-items:flex-end}
   .composer textarea{flex:1;resize:none;height:46px;max-height:140px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .composer-footer{display:flex;gap:8px;padding:0 16px 12px}
+  .mini{font-size:12px;padding:5px 9px;border-radius:999px;color:var(--muted)}
+  .mini:hover{color:var(--text)}
   #imgPreview{display:flex;gap:6px;padding:0 16px 8px}
   #imgPreview img{height:44px;border-radius:8px;border:1px solid var(--line)}
   dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:16px;width:min(520px,92vw)}
@@ -85,7 +90,14 @@
       <span style="margin-left:auto;color:var(--muted);font-weight:400" id="ver"></span>
     </div>
     <div class="side-actions">
-      <button class="primary" id="newAgentBtn">＋ 新智能体</button>
+      <button class="primary icon-btn" id="newAgentBtn" title="创建新智能体" aria-label="创建新智能体">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="8" width="16" height="12" rx="3"></rect>
+          <path d="M12 8V5"></path>
+          <circle cx="12" cy="4" r="1"></circle>
+          <path d="M8.5 13.5h.01M15.5 13.5h.01M9.5 17h5"></path>
+        </svg>
+      </button>
       <button id="updateBtn" title="检查/安装更新">⟳</button>
     </div>
     <div class="side-scroll">
@@ -105,16 +117,18 @@
       <b id="agentName">智能体</b>
       <span id="agentDid" style="color:var(--muted)"></span>
       <span class="grow"></span>
-      <button id="modelBtn" title="选择模型">⚙ 模型：<span id="modelLabel">…</span></button>
-      <button id="toolsBtn" title="添加工具">🧰 工具</button>
     </header>
     <div id="chat"><div class="empty"><h1>我们要做什么？</h1></div></div>
     <div id="imgPreview"></div>
     <div class="composer">
       <button id="imgBtn" title="添加图片">🖼</button>
+      <button id="toolsBtn" title="添加工具">＋</button>
       <input type="file" id="imgFile" accept="image/*" multiple style="display:none" />
       <textarea id="input" placeholder="发送消息；Enter 发送，Shift+Enter 换行"></textarea>
       <button class="primary" id="send">发送</button>
+    </div>
+    <div class="composer-footer">
+      <button id="modelBtn" class="mini" title="选择模型">⚙ 模型：<span id="modelLabel">…</span></button>
     </div>
   </main>
 </div>
@@ -191,6 +205,8 @@ function renderUpdate(){
   else{b.classList.remove('available');b.title='已是最新';b.textContent='⟳';}
 }
 
+const iconChat=()=>`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.5-4.5A8 8 0 1 1 21 12z"/></svg>`;
+
 function renderSidebar(){
   $('agents').innerHTML=state.agents.map(a=>`
     <div class="item ${a.id===state.active_agent_id?'active':''}" onclick="pickAgent('${a.id}')">
@@ -200,7 +216,7 @@ function renderSidebar(){
   const sess=state.sessions.filter(s=>s.agent_id===state.active_agent_id);
   $('sessions').innerHTML=sess.map(s=>`
     <div class="item ${s.id===state.active_session_id?'active':''}" onclick="pickSession('${s.id}')">
-      <div class="ava">💬</div>
+      <div class="ava">${iconChat()}</div>
       <div class="txt"><b>${escapeHTML(s.title||'新对话')}</b><small>${s.messages.length} 条</small></div>
     </div>`).join('');
   $('accountName').textContent=state.profile.name;
@@ -226,9 +242,14 @@ function renderChat(){
 }
 
 function renderModel(){
-  $('modelLabel').textContent=state.settings.provider+' / '+(state.settings.model||'default');
+  $('modelLabel').textContent=(state.settings.provider||'默认')+' / '+(state.settings.model||'default');
   const sel=$('providerSelect');
-  sel.innerHTML=models.providers.map(p=>`<option value="${p.name}" ${p.name===state.settings.provider?'selected':''}>${escapeHTML(p.display||p.name)}${p.has_key?'':'（无 key）'}</option>`).join('');
+  const current=state.settings.provider||'';
+  const opts=models.providers.map(p=>`<option value="${p.name}" ${p.name===current?'selected':''}>${escapeHTML(p.display||p.name)}${p.has_key?'':'（无 key）'}</option>`);
+  if(!models.providers.some(p=>p.name===current)){
+    opts.unshift(`<option value="${current}" selected>${escapeHTML(current||'默认')}</option>`);
+  }
+  sel.innerHTML=opts.join('');
   $('modelInput').value=state.settings.model||'';
   const cur=models.providers.find(p=>p.name===state.settings.provider);
   $('modelHint').textContent=cur?('默认模型：'+(cur.default||'未提供')+(cur.has_key?' · 已检测到 key':' · 未检测到 key（将发不出去）')):'';
