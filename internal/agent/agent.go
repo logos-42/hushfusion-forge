@@ -145,6 +145,12 @@ func (r *ToolRegistry) Register(t Tool) error {
 	if t.Spec.Type == "" {
 		t.Spec.Type = "function"
 	}
+	safe := safeToolName(t.Spec.Function.Name)
+	for existing := range r.tools {
+		if existing != t.Spec.Function.Name && safeToolName(existing) == safe {
+			return fmt.Errorf("agent: 工具名 %q 与 %q 映射到同一个安全名 %q", t.Spec.Function.Name, existing, safe)
+		}
+	}
 	r.tools[t.Spec.Function.Name] = t
 	return nil
 }
@@ -176,13 +182,54 @@ func (s *Session) LoadMessages(msgs []Message) {
 	s.messages = append([]Message(nil), msgs...)
 }
 
+// safeToolName 把内部工具名转成 provider 安全的 function name。
+// OpenAI-compatible 端点通常只允许 [A-Za-z0-9_-]；内部仍保留 mem.get 这类名字，
+// 但发给模型和从模型收回的 tool_calls 必须使用安全名，否则部分端点会 400
+// invalid function name。
+func safeToolName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "tool"
+	}
+	return b.String()
+}
+
 // Specs 返回模型可见的工具 schema 列表（model() 注入点）。
+// 名称统一 sanitize，内部注册名不变。
 func (r *ToolRegistry) Specs() []ai.ToolSpec {
 	out := make([]ai.ToolSpec, 0, len(r.tools))
 	for _, t := range r.tools {
-		out = append(out, t.Spec)
+		sp := t.Spec
+		sp.Function.Name = safeToolName(t.Spec.Function.Name)
+		out = append(out, sp)
 	}
 	return out
+}
+
+// ResolveName 把模型返回的安全名映射回内部注册名（original）。
+func (r *ToolRegistry) ResolveName(name string) (string, bool) {
+	orig, _, ok := r.resolve(name)
+	return orig, ok
+}
+
+func (r *ToolRegistry) resolve(name string) (string, Tool, bool) {
+	if t, ok := r.tools[name]; ok {
+		return name, t, true
+	}
+	for orig, t := range r.tools {
+		if safeToolName(orig) == name {
+			return orig, t, true
+		}
+	}
+	return "", Tool{}, false
 }
 
 // Names 返回全部已注册工具名（错误消息 / 调试用）。
@@ -197,10 +244,9 @@ func (r *ToolRegistry) Names() []string {
 // Execute 执行一次工具调用：fail-closed 三闸（未知工具 / 参数解析失败 / 写工具越权）。
 // 返回结果文本或明确错误（错误也会被回灌给模型自愈 — 但不假装成功）。
 func (r *ToolRegistry) Execute(ctx context.Context, call ai.ToolCall, allowWrites map[string]bool) (string, error) {
-	name := call.Function.Name
-	t, ok := r.tools[name]
+	name, t, ok := r.resolve(call.Function.Name)
 	if !ok {
-		return "", fmt.Errorf("未知工具 %q（可用：%v）", name, r.Names())
+		return "", fmt.Errorf("未知工具 %q（可用：%v）", call.Function.Name, r.Names())
 	}
 	// 写门 fail-closed：白名单缺失（nil）= 拒绝一切写，绝不放行。
 	if t.Write && !allowWrites[name] {

@@ -9,6 +9,13 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 
 ---
 
+## 0.2.9 — 2026-10-25（PATCH：全量工具名 provider 安全化）
+
+- `ToolRegistry.Specs()` 统一把工具名映射为 `[A-Za-z0-9_-]` 安全名：`mem.get → mem_get`、`tasks.set_state → tasks_set_state`、`skill.view → skill_view`。
+- 模型返回的 `tool_calls.function.name` 以及文本 `<invoke name="mem_set">` 会在执行前映射回内部原名，写工具白名单仍按原名判断。
+- 修复 custom 等端点对带点 function name 的 `400 invalid function name`，不再只修 `agent_paths` 一个工具。
+- 新增回归断言：模型可见工具名不得含点号；`mem_set` 原生调用实测落盘成功。
+
 ## 0.2.8 — 2026-10-24（PATCH：修复工具名非法导致模型 400）
 
 - 将 `agent.paths` 改名为 provider 安全的 `agent_paths`：部分 OpenAI-compatible 端点拒绝带两个点的 function name，会直接返回 `400 invalid function name`。

@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
 const { Readable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
-const VERSION = '0.2.8';
+const VERSION = '0.2.9';
 const REPO = 'logos-42/hushfusion-forge';
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8787';
 

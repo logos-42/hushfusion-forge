@@ -122,6 +122,7 @@ func (s *Session) adoptTextToolCalls(resp *ai.ChatResponse) {
 	known := map[string]bool{}
 	for _, n := range s.registry.Names() {
 		known[n] = true
+		known[safeToolName(n)] = true // 模型可能使用 provider 安全名
 	}
 	clean, calls := parseTextToolCalls(resp.Content, known)
 	if len(calls) == 0 {
@@ -129,6 +130,11 @@ func (s *Session) adoptTextToolCalls(resp *ai.ChatResponse) {
 	}
 	if s.cfg.MaxToolResults > 0 && len(calls) > s.cfg.MaxToolResults {
 		calls = calls[:s.cfg.MaxToolResults]
+	}
+	for i := range calls {
+		if orig, ok := s.registry.ResolveName(calls[i].Function.Name); ok {
+			calls[i].Function.Name = orig
+		}
 	}
 	resp.Content = clean
 	resp.ToolCalls = calls

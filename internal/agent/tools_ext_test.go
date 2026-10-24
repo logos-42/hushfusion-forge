@@ -61,6 +61,15 @@ func TestMemoryToolsWhitelist(t *testing.T) {
 	if !strings.Contains(out, "k=v") {
 		t.Fatalf("mem.get 应读回 k=v, got %q", out)
 	}
+
+	// 模型侧使用安全名 mem_set；执行层必须映射回内部 mem.set。
+	if out, err := execTool(t, s2, "mem_set", `{"key":"safe","value":"ok"}`); err != nil || !strings.Contains(out, "已记忆") {
+		t.Fatalf("安全名 mem_set 应执行成功, out=%q err=%v", out, err)
+	}
+	out, _ = execTool(t, s2, "mem_get", `{"key":"safe"}`)
+	if !strings.Contains(out, "safe=ok") {
+		t.Fatalf("安全名 mem_get 应读回 safe=ok, got %q", out)
+	}
 }
 
 // 任务工具：tasks.add 需白名单；tasks.list 只读；set_state 转 done 必须附证据。
@@ -145,9 +154,14 @@ func TestBuiltinSpecsExposed(t *testing.T) {
 	for _, sp := range specs {
 		names[sp.Function.Name] = true
 	}
-	for _, want := range []string{"mem.get", "mem.set", "mem.reset", "tasks.list", "tasks.add", "tasks.set_state"} {
+	for _, want := range []string{"mem_get", "mem_set", "mem_reset", "tasks_list", "tasks_add", "tasks_set_state", "agent_paths"} {
 		if !names[want] {
 			t.Fatalf("Specs() 缺工具 %q（got %v）", want, names)
+		}
+	}
+	for name := range names {
+		if strings.Contains(name, ".") {
+			t.Fatalf("模型可见工具名不能含点号: %q", name)
 		}
 	}
 	// 写工具在 Specs 里不带 Write 标记（模型不可见权限面；权限在 execute() 层）。
