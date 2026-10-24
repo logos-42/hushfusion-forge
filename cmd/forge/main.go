@@ -194,6 +194,8 @@ func run(args []string) int {
 		// 设计借鉴 hermes-agent 的 ProviderProfile: 声明式 profile + 注册表别名 +
 		// OpenAI-compatible 默认 transport, 一个客户端覆盖大多数 provider。
 		return cmdAI(rest)
+	case "web", "desktop":
+		return cmdWeb(rest)
 	case "agent":
 		// 连续对话执行 Agent Runtime (internal/agent, docs/wiki/agent-runtime-design.md):
 		// chat    单发: 一次对话后进程退出即失忆 (无状态)
