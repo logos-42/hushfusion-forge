@@ -2,7 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
-| 2026-10-24 | HUSHFUSION Forge Release | **@hibs/forge 0.2.3** | npm 包改名 `@hibs/forge`（`forge` + `hushfusion-forge` 双 bin，`publishConfig.access=public`）；registry PUT 202，版本元数据与 tarball 可读，packument 仍在传播。 | `npm test`/`npm pack` 通过；`registry.npmjs.org/@hibs%2fforge/0.2.3` 200、tarball 200；发布后复查 packument。 |
+| 2026-10-24 | HUSHFUSION Forge Release | **@hibs/forge 0.2.3** | npm 包改名 `@hibs/forge`（`forge` + `hushfusion-forge` 双 bin，`publishConfig.access=public`）；registry PUT 202，packument 传播完成后 `latest=0.2.3`。 | `npm test`/`npm pack` 通过；packument 200；`npx @hibs/forge@0.2.3 --version` 输出 `0.2.3`。 |
 | 2026-10-24 | HUSHFUSION Forge Agent | **文本工具调用兜底（0.2.3）** | 端点返回 `<invoke name="…"><parameter…>` 文本时，`Turn/TurnStream` 解析成标准 tool_calls（仅已注册工具），执行/回填；同响应重复调用去重；SSE 阶段过滤原始标签；未知工具和代码示例不执行。 | `go test ./internal/agent/` 全绿；新增文本解析、端到端 mem.set、流式过滤测试。 |
 | 2026-10-24 | HUSHFUSION Forge Release | **发布 0.2.2（npm + Go）** | 版本统一 `0.2.2`：`ForgeVersion`、npm `hushfusion-forge@0.2.2`、下载器默认版本、Release 脚本默认版本、CHANGELOG；Go 模块修复 `python/aux` 保留名后打 `v0.2.2`，发布六平台二进制与 npm 包。 | `go build/test ./...`、`npm test`、`npm pack` 通过；Go proxy `v0.2.2` 与 npm registry 发布后校验。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：停止生成 / 稳定流光 / 独立滚动区 / 默认写工具** | 发送按钮在生成中变为终止按钮（AbortController 中断 SSE，保留已生成文本或标记已停止）；流式增量只更新当前 AI 气泡，不再整页重渲染，扫光动画速度稳定；滚动只发生在 `#chat`（`min-height:0` + `body`/`main` overflow hidden），输入框不参与滚动；`shell/mem.set/mem.reset/tasks.add/tasks.set_state` 写工具默认开启，插件工具入口在加号弹窗。 | `go build/vet/gofmt/test ./...` 全绿；`node --check` 通过；本机 bootstrap 工具列表 5 项、`tools_initialized=true`。 |
