@@ -164,6 +164,21 @@ func TestSessionActions(t *testing.T) {
 		t.Fatalf("分支会话 = %+v", branch)
 	}
 
+	// 编辑消息后的截断：从第 0 条起删除，历史变空。
+	respT, err := http.Post(ts.URL+"/api/sessions/truncate", "application/json",
+		strings.NewReader(`{"id":"`+branch.ID+`","from_index":0}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var truncated Session
+	if err := json.NewDecoder(respT.Body).Decode(&truncated); err != nil {
+		t.Fatal(err)
+	}
+	respT.Body.Close()
+	if len(truncated.Messages) != 0 {
+		t.Fatalf("截断后消息 = %+v", truncated.Messages)
+	}
+
 	resp4, err := http.Post(ts.URL+"/api/sessions/share", "application/json",
 		strings.NewReader(`{"id":"`+sess.ID+`"}`))
 	if err != nil {

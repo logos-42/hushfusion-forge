@@ -169,6 +169,7 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	mux.HandleFunc("POST /api/sessions/update", s.handleUpdateSession)
 	mux.HandleFunc("POST /api/sessions/delete", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/branch", s.handleBranchSession)
+	mux.HandleFunc("POST /api/sessions/truncate", s.handleTruncateSession)
 	mux.HandleFunc("POST /api/sessions/share", s.handleShareSession)
 	mux.HandleFunc("GET /share/{token}", s.handleSharePage)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
@@ -699,6 +700,36 @@ func (s *Server) handleBranchSession(w http.ResponseWriter, r *http.Request) {
 	s.st.Sessions = append(s.st.Sessions, sess)
 	s.st.ActiveAgentID = sess.AgentID
 	s.st.ActiveSessionID = sess.ID
+	if err := s.save(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.writeJSON(w, sess)
+}
+
+// handleTruncateSession 从某条消息起截断，用于编辑已发送消息后重发。
+func (s *Server) handleTruncateSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID        string `json:"id"`
+		FromIndex int    `json:"from_index"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess := s.findSession(strings.TrimSpace(req.ID))
+	if sess == nil {
+		http.Error(w, "会话不存在", http.StatusNotFound)
+		return
+	}
+	if req.FromIndex < 0 || req.FromIndex > len(sess.Messages) {
+		http.Error(w, "消息位置非法", http.StatusBadRequest)
+		return
+	}
+	sess.Messages = sess.Messages[:req.FromIndex]
+	delete(s.agentSesses, sess.ID) // 丢弃旧上下文，下轮按截断后的历史重建
 	if err := s.save(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
