@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -177,6 +178,7 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
 	mux.HandleFunc("POST /api/profile", s.handleProfile)
 	mux.HandleFunc("GET /api/update", s.handleUpdate)
+	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.HandleFunc("POST /api/update/apply", s.handleUpdateApply)
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	s.http = &http.Server{Addr: addr, Handler: security(mux)}
@@ -187,7 +189,23 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 func (s *Server) Addr() string { return s.addr }
 
 // ListenAndServe 启动服务（阻塞）。
-func (s *Server) ListenAndServe() error { return s.http.ListenAndServe() }
+func (s *Server) ListenAndServe() error {
+	// 自更新时新进程可能比旧进程早几百毫秒起来；端口被占时短暂重试，
+	// 避免出现“新二进制已替换，但新进程 bind 失败退出”。
+	var ln net.Listener
+	var err error
+	for i := 0; i < 40; i++ {
+		ln, err = net.Listen("tcp", s.addr)
+		if err == nil {
+			break
+		}
+		if i == 39 {
+			return err
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return s.http.Serve(ln)
+}
 
 // Shutdown 优雅停止。
 func (s *Server) Shutdown(ctx context.Context) error { return s.http.Shutdown(ctx) }
@@ -1261,6 +1279,10 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, s.checkUpdate(r.Context()))
 }
 
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	s.writeJSON(w, map[string]string{"version": config.ForgeVersion})
+}
+
 func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	info := s.checkUpdate(r.Context())
 	if !info.Available || info.AssetURL == "" {
@@ -1276,7 +1298,20 @@ func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "已下载但替换失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.writeJSON(w, map[string]any{"ok": true, "staged": path, "restart_required": true})
+	// 先把新进程拉起来（它带等待时间，避免和当前进程抢端口），
+	// 再回响应并退出；前端轮询到新版本后自动刷新。
+	if err := startReplacement(); err != nil {
+		http.Error(w, "已替换但重启失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.writeJSON(w, map[string]any{"ok": true, "restarting": true, "version": info.Latest})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	go func() {
+		time.Sleep(700 * time.Millisecond)
+		os.Exit(0)
+	}()
 }
 
 func (s *Server) checkUpdateBestEffort(ctx context.Context) UpdateInfo {
@@ -1491,23 +1526,13 @@ func writeExec(r io.Reader, out string) error {
 	return f.Close()
 }
 
-// replaceBinary 用新二进制替换当前可执行文件（Windows 上运行中不能自替换，落到临时目录并提示）。
+// replaceBinary 用新二进制替换当前可执行文件。
+// Unix 和 Windows 都先把自己改名到 .bak，再把新文件放到原路径：
+// 运行中的进程继续从 .bak 执行，新进程从原路径启动。
 func replaceBinary(newPath string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
-	}
-	if runtime.GOOS == "windows" {
-		// Windows：拷贝到 exe.new，返回特殊错误让 UI 提示重启替换。
-		dst := exe + ".new"
-		b, err := os.ReadFile(newPath)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(dst, b, 0o755); err != nil {
-			return err
-		}
-		return fmt.Errorf("windows 运行中不能自替换，已下载到 %s；重启后用它覆盖", dst)
 	}
 	backup := exe + ".bak"
 	_ = os.Remove(backup)

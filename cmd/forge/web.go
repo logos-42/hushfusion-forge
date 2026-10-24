@@ -27,6 +27,12 @@ func cmdWeb(args []string) int {
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
+	// 自更新：新进程等旧进程释放端口后再监听。只由 restart.go 注入。
+	if v := os.Getenv("HUSHFUSION_RESTART_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			time.Sleep(d)
+		}
+	}
 	root := repoRoot()
 	base := os.Getenv("HUSHFUSION_OS_DIR")
 	if base == "" {

@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-24 | HUSHFUSION Forge Desktop | **Web：一条龙自动更新（0.2.4）** | 更新接口替换二进制后启动新进程并退出旧进程；新进程等待旧进程释放端口，`ListenAndServe` 对端口占用重试；前端去掉确认/警告，轮询 `/api/version` 后自动 `location.reload()`；Windows 用 `.bak` 改名方式自替换。 | `go build/vet/test ./...`、Windows 交叉编译通过；`node --check` 通过；0.2.3→0.2.4 本机真实自更新测试通过。 |
 | 2026-10-24 | HUSHFUSION Forge Release | **@hibs/forge 0.2.3** | npm 包改名 `@hibs/forge`（`forge` + `hushfusion-forge` 双 bin，`publishConfig.access=public`）；registry PUT 202，packument 传播完成后 `latest=0.2.3`。 | `npm test`/`npm pack` 通过；packument 200；`npx @hibs/forge@0.2.3 --version` 输出 `0.2.3`。 |
 | 2026-10-24 | HUSHFUSION Forge Agent | **文本工具调用兜底（0.2.3）** | 端点返回 `<invoke name="…"><parameter…>` 文本时，`Turn/TurnStream` 解析成标准 tool_calls（仅已注册工具），执行/回填；同响应重复调用去重；SSE 阶段过滤原始标签；未知工具和代码示例不执行。 | `go test ./internal/agent/` 全绿；新增文本解析、端到端 mem.set、流式过滤测试。 |
 | 2026-10-24 | HUSHFUSION Forge Release | **发布 0.2.2（npm + Go）** | 版本统一 `0.2.2`：`ForgeVersion`、npm `hushfusion-forge@0.2.2`、下载器默认版本、Release 脚本默认版本、CHANGELOG；Go 模块修复 `python/aux` 保留名后打 `v0.2.2`，发布六平台二进制与 npm 包。 | `go build/test ./...`、`npm test`、`npm pack` 通过；Go proxy `v0.2.2` 与 npm registry 发布后校验。 |

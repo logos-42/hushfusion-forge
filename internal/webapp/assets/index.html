@@ -323,6 +323,7 @@ function renderAll(){ renderUpdate(); renderSidebar(); renderHeader(); renderCha
 
 function renderUpdate(){
   const b=$('updateBtn');
+  if(b.dataset.busy==='1')return;
   if(update&&update.available){
     b.style.display='block';b.classList.add('available');
     b.title='有新版本 '+update.latest+'，点击自动更新';b.textContent='⟳ 更新 '+update.latest;
@@ -674,13 +675,40 @@ $('toolsSave').onclick=async()=>{
   }catch(e){alert(e.message);}
 };
 
+async function waitForRestart(latest){
+  for(let i=0;i<50;i++){
+    await new Promise(r=>setTimeout(r,400));
+    try{
+      const r=await fetch('/api/version',{cache:'no-store'});
+      if(!r.ok)continue;
+      const j=await r.json();
+      if(j.version===latest)return true;
+    }catch(_){}
+  }
+  return false;
+}
 $('updateBtn').onclick=async()=>{
-  if(!(update&&update.available)){update=await api('/api/update');renderUpdate();if(!update.available){alert('已是最新版本');return;}}
-  if(!confirm('发现新版本 '+update.latest+'，现在自动更新吗？'))return;
+  const b=$('updateBtn');
+  if(b.dataset.busy==='1')return;
+  b.dataset.busy='1';b.disabled=true;b.textContent='更新中…';
   try{
-    const r=await api('/api/update/apply',{method:'POST'});
-    alert((r.restart_required?'更新已下载，重启后生效。':'更新完成，重启后生效。')+(r.staged?('\n路径: '+r.staged):''));
-  }catch(e){alert('更新失败: '+e.message);}
+    if(!(update&&update.available))update=await api('/api/update');
+    if(!update.available){
+      b.textContent='已是最新';
+      setTimeout(()=>{b.dataset.busy='';b.disabled=false;renderUpdate();},1200);
+      return;
+    }
+    const latest=update.latest;
+    try{await api('/api/update/apply',{method:'POST'});}catch(e){/* 旧进程可能已退出，继续轮询 */}
+    b.textContent='正在重启…';
+    if(await waitForRestart(latest)){location.reload();return;}
+    b.textContent='重启超时';
+  }catch(e){
+    console.error(e);
+    b.textContent='更新失败';
+  }
+  b.dataset.busy='';b.disabled=false;
+  setTimeout(()=>renderUpdate(),2500);
 };
 
 async function streamChat(payload,onDelta,signal){
