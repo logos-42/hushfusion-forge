@@ -7,10 +7,10 @@ function usage() {
   console.log(`HUSHFUSION Forge ${VERSION}
 
 用法:
-  hushfusion-forge                 启动 Web/桌面外壳（默认打开浏览器）
-  hushfusion-forge web [args...]   启动 Web 外壳，其余参数透传
-  hushfusion-forge --version       显示版本
-  hushfusion-forge --help          显示帮助
+  forge                 启动 Web/桌面外壳（默认打开浏览器）
+  forge web [args...]   启动 Web 外壳，其余参数透传
+  forge --version       显示版本
+  forge --help          显示帮助
 
 环境变量:
   HUSHFUSION_FORGE_BIN             使用已有的 forge 二进制
@@ -41,7 +41,7 @@ async function main() {
   process.on('SIGINT', forward('SIGINT'));
   process.on('SIGTERM', forward('SIGTERM'));
   child.on('error', (err) => {
-    console.error(`hushfusion-forge: 启动失败: ${err.message}`);
+    console.error(`forge: 启动失败: ${err.message}`);
     process.exitCode = 1;
   });
   child.on('exit', (code, signal) => {
@@ -51,6 +51,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`hushfusion-forge: ${err.message}`);
+  console.error(`forge: ${err.message}`);
   process.exitCode = 1;
 });

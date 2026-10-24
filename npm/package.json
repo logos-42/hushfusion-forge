@@ -1,12 +1,16 @@
 {
-  "name": "hushfusion-forge",
+  "name": "@hibs/forge",
   "version": "0.2.3",
   "description": "HUSHFUSION Forge desktop/web launcher and Node.js SDK",
   "license": "MIT",
   "type": "commonjs",
   "main": "lib/index.js",
   "bin": {
+    "forge": "bin/hushfusion-forge.js",
     "hushfusion-forge": "bin/hushfusion-forge.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "files": [
     "bin",

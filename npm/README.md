@@ -1,4 +1,4 @@
-# hushfusion-forge
+# @hibs/forge
 
 HUSHFUSION Forge 的 npm 启动器与 Node.js SDK，版本 `0.2.3`。
 
@@ -11,9 +11,11 @@ HUSHFUSION Forge 的 npm 启动器与 Node.js SDK，版本 `0.2.3`。
 ## CLI
 
 ```bash
-npx hushfusion-forge
+npx @hibs/forge
 # 或
-npx hushfusion-forge web --addr 127.0.0.1:8787 --open
+npx @hibs/forge web --addr 127.0.0.1:8787 --open
+# 全局安装后
+forge
 ```
 
 默认打开 Web/桌面外壳：`http://127.0.0.1:8787`。
@@ -22,13 +24,13 @@ npx hushfusion-forge web --addr 127.0.0.1:8787 --open
 
 ```bash
 export HUSHFUSION_FORGE_BIN=/path/to/hushfusion-forge
-npx hushfusion-forge
+npx @hibs/forge
 ```
 
 ## Node.js SDK
 
 ```js
-const { ForgeClient, startServer } = require('hushfusion-forge');
+const { ForgeClient, startServer } = require('@hibs/forge');
 
 const server = await startServer({ addr: '127.0.0.1:8787' });
 const client = server.client;
@@ -47,7 +49,7 @@ server.stop();
 已有服务时直接连接：
 
 ```js
-const { ForgeClient } = require('hushfusion-forge');
+const { ForgeClient } = require('@hibs/forge');
 const client = new ForgeClient({ baseUrl: 'http://127.0.0.1:8787' });
 await client.bootstrap();
 ```

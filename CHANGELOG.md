@@ -15,6 +15,7 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 - `Turn` / `TurnStream` 现在识别已注册工具的文本调用块，转成标准 `tool_calls` 执行并回填；未知工具/代码示例不执行。
 - 同一响应内重复调用去重；SSE 增量阶段隐藏原始 `<invoke>` 块，避免用户看到一屏调用文本。
 - 新增 `TestParseTextToolCalls`、`TestTurnExecutesTextToolInvoke`、`TestTextToolStreamFilter`。
+- npm 包同时以 `@hibs/forge@0.2.3` 发布（`forge` bin，公开访问）；原 `hushfusion-forge` 继续保留。
 
 ## 0.2.2 — 2026-10-24（PATCH：Web 外壳交互修复，不改判据）
 
