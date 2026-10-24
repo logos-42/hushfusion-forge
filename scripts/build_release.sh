@@ -128,10 +128,25 @@ if ! command -v gh >/dev/null 2>&1; then
 fi
 
 TAG="v$VERSION"
-if gh release view "$TAG" >/dev/null 2>&1; then
-  echo "release $TAG 已存在，上传/覆盖资产"
-  gh release upload "$TAG" "$DIST"/* --clobber
-else
-  gh release create "$TAG" "$DIST"/* --title "HUSHFUSION Forge $TAG" --notes-file "$DIST/RELEASE_NOTES.md"
+if ! gh release view "$TAG" >/dev/null 2>&1; then
+  # 先建 release（不带资产）：大资产一次性创建容易触发 GitHub API EOF。
+  gh release create "$TAG" --title "HUSHFUSION Forge $TAG" --notes-file "$DIST/RELEASE_NOTES.md" --verify-tag
 fi
+# 资产逐个上传 + 重试，避免一次 upload 全部导致连接中断。
+for f in "$DIST"/*; do
+  [ -f "$f" ] || continue
+  ok=0
+  for i in 1 2 3; do
+    if gh release upload "$TAG" "$f" --clobber >/tmp/hushfusion-release-upload.log 2>&1; then
+      ok=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$ok" != "1" ]; then
+    echo "资产上传失败: $f"
+    tail -5 /tmp/hushfusion-release-upload.log
+    exit 1
+  fi
+done
 echo "published: https://github.com/logos-42/hushfusion-forge/releases/tag/$TAG"
