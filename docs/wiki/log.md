@@ -4,7 +4,6 @@
 |---|---|---|---|---|
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：侧边栏折叠按钮下移** | 折叠/展开按钮从 logo 同一行移到 logo 下方独立一行；折叠态居中，避免与品牌图标挤在一起。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：消息操作改为气泡外图标** | 复制/分支/分享/重试从气泡内文字按钮改为气泡下方独立图标按钮（SVG，`title` 提示），用 `.msg-row` 包裹气泡与操作区，用户/助手分别右/左对齐；操作区默认半透明，悬停高亮。 | `go build/test ./...` 通过；`node --check` 通过。 |
-|---|---|---|---|---|
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：消息操作 / 会话菜单 / 更新按钮下沉 / 气泡居中** | 消息气泡底部加复制、分支、分享链接、重试；会话三个点打开小菜单，可重命名、删除、固定、分享；`POST /api/sessions/update|delete|branch|share`，分享生成只读 `GET /share/{token}` 页面；更新按钮移到底部，无更新时隐藏；聊天气泡左右留白加大（`clamp(24px,6vw,96px)`，宽度 72%）。 | `go build/vet/gofmt/test ./...` 全绿；`node --check` 通过；新增 `TestSessionActions`（重命名/固定/分支/分享页/删除）；本机分享页 200。 |
 |---|---|---|---|---|
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：Markdown 渲染 / 同主题配色 / 新会话位置 / 智能体头像编辑** | AI 气泡改用内置 Markdown 渲染（标题、列表、代码块、行内代码、粗斜体、引用、链接、图片，先转义再渲染）；按钮/气泡按主题同色系（深色全深、浅色全浅，`prefers-color-scheme`）；新会话按钮移到聊天区左上角 header；侧边栏/聊天 header 的智能体头像点击打开编辑弹窗，可改名字、人格、头像，新增 `POST /api/agents/update`（保留 ID/DID，清空旧 agent session 以重建提示词）。 | `go build/vet/gofmt/test ./...` 全绿；`node --check` 通过；Markdown 渲染样例输出标题/列表/代码块/引用/链接；新增 `TestUpdateAgentNameAndAvatar`。 |
