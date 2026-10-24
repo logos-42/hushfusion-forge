@@ -864,6 +864,7 @@ func (m *osModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, secondTick() // 驱动 header 运行时间每秒刷新
 	case heartbeatMsg:
 		m.idlePulse()
+		runDueCron(m.base, func(s string) { m.out = append(m.out, m.styles.label.Render(s)) })
 		return m, heartbeatTick()
 	case loadTickMsg:
 		m.progPct += 20

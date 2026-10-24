@@ -620,6 +620,43 @@ func registerPlatformTools(s *agent.Session, base string) {
 	})
 }
 
+// runDueCron 执行到点的 cron 任务（派生子智能体）。由 TUI 心跳调用，
+// 默认关闭：HUSHFUSION_CRON_AUTO=1 才启用，避免未经确认的后台 AI 消耗。
+func runDueCron(base string, log func(string)) {
+	if os.Getenv("HUSHFUSION_CRON_AUTO") != "1" {
+		return
+	}
+	st, err := cronStoreFor(base)
+	if err != nil {
+		if log != nil {
+			log("⏰ cron 存储不可用: " + err.Error())
+		}
+		return
+	}
+	jobs, err := st.Due(time.Now())
+	if err != nil {
+		if log != nil {
+			log("⏰ cron 读取失败: " + err.Error())
+		}
+		return
+	}
+	mgr := subagentManagerFor(base)
+	for _, j := range jobs {
+		if _, err := mgr.Spawn("cron:"+j.Name, j.Prompt); err != nil {
+			if log != nil {
+				log("⏰ cron " + j.Name + " 派生失败: " + err.Error())
+			}
+			continue
+		}
+		if err := st.MarkRun(j.ID, time.Now()); err != nil && log != nil {
+			log("⏰ cron " + j.Name + " 标记运行失败: " + err.Error())
+		}
+		if log != nil {
+			log("⏰ cron 触发 " + j.Name + " → 子智能体")
+		}
+	}
+}
+
 func envPairs(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k, v := range m {
