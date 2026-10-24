@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-24 | HUSHFUSION Forge Desktop | **Web：用户气泡压缩 / AI 流光加载 / 输入框铅笔** | 用户消息气泡减少上下 padding 并收紧行高，单行高度与字体匹配；AI 流式回复期间加 `streaming` 类，用渐变扫光动画提示生成中，结束后移除；输入框右侧加铅笔 SVG 按钮，点击聚焦并全选输入内容，便于修改。 | `go build/test ./...` 通过；`node --check` 通过。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：折叠按钮顶替版本号，折叠后靠 logo 展开** | 折叠按钮放到品牌行右侧、顶替版本号（版本号不再显示）；折叠后按钮隐藏，点击 logo 展开；折叠态隐藏会话三个点菜单按钮。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：侧边栏折叠按钮下移** | 折叠/展开按钮从 logo 同一行移到 logo 下方独立一行；折叠态居中，避免与品牌图标挤在一起。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：消息操作改为气泡外图标** | 复制/分支/分享/重试从气泡内文字按钮改为气泡下方独立图标按钮（SVG，`title` 提示），用 `.msg-row` 包裹气泡与操作区，用户/助手分别右/左对齐；操作区默认半透明，悬停高亮。 | `go build/test ./...` 通过；`node --check` 通过。 |
