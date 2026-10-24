@@ -228,7 +228,9 @@
   <div class="settings-links">
     <button id="settingsModelBtn" class="mini">模型：<span id="settingsModelLabel">…</span></button>
     <button id="settingsToolsBtn" class="mini">工具开关</button>
+    <button id="settingsUpdateBtn" class="mini">检查更新</button>
   </div>
+  <div class="hint" id="settingsUpdateStatus"></div>
   <div class="row"><button onclick="document.getElementById('profileDlg').close()">取消</button><button class="primary" id="profileSave">保存</button></div>
 </dialog>
 
@@ -321,6 +323,12 @@ async function boot(){
 
 function renderAll(){ renderUpdate(); renderSidebar(); renderHeader(); renderChat(); renderModel(); }
 
+function renderSettingsUpdate(){
+  const el=$('settingsUpdateStatus');
+  if(!el||!update)return;
+  if(update.available)el.textContent='发现新版本 '+update.latest+'，点击底部更新按钮安装。';
+  else el.textContent='当前已是最新 '+(update.current||'');
+}
 function renderUpdate(){
   const b=$('updateBtn');
   if(b.dataset.busy==='1')return;
@@ -330,6 +338,13 @@ function renderUpdate(){
   }else{
     b.style.display='none';b.classList.remove('available');
   }
+  renderSettingsUpdate();
+}
+async function refreshUpdate(){
+  try{
+    const u=await api('/api/update');
+    if(u){update=u;renderUpdate();}
+  }catch(_){}
 }
 
 const iconChat=()=>`<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.5-4.5A8 8 0 1 1 21 12z"/></svg>`;
@@ -604,12 +619,18 @@ function openSettings(){
   [...$('avatarPresets').children].forEach((b,i)=>b.onclick=()=>{$('profileAvatarFile').dataset.avatar=svgAvatar(presets[i]+state.profile.did,presets[i][0]);});
   delete $('profileAvatarFile').dataset.avatar;
   $('settingsModelLabel').textContent=(state.settings.provider||'默认')+' / '+(state.settings.model||'default');
+  renderSettingsUpdate();
   document.getElementById('profileDlg').showModal();
 }
 $('account').onclick=openSettings;
 $('settingsBtn').onclick=(e)=>{e.stopPropagation();openSettings();};
 $('settingsModelBtn').onclick=()=>{document.getElementById('profileDlg').close();document.getElementById('modelDlg').showModal();};
 $('settingsToolsBtn').onclick=()=>{document.getElementById('profileDlg').close();document.getElementById('toolsDlg').showModal();};
+$('settingsUpdateBtn').onclick=async()=>{
+  const b=$('settingsUpdateBtn');
+  b.disabled=true;b.textContent='检查中…';
+  try{await refreshUpdate();}finally{b.disabled=false;b.textContent='检查更新';}
+};
 $('profileSave').onclick=async()=>{
   try{
     const avatar=$('profileAvatarFile').dataset.avatar||state.profile.avatar;
@@ -817,7 +838,10 @@ $('editBtn').onclick=()=>{
 $('send').onclick=()=>{if(busy)stopStreaming();else send();};
 $('input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
 
-boot();
+boot().finally(()=>{
+  setTimeout(refreshUpdate,5000);
+  setInterval(refreshUpdate,60000);
+});
 </script>
 </body>
 </html>

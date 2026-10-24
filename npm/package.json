@@ -1,6 +1,6 @@
 {
   "name": "@hibs/forge",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "HUSHFUSION Forge desktop/web launcher and Node.js SDK",
   "license": "MIT",
   "type": "commonjs",
