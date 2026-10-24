@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/logos-42/hushfusion-forge/internal/agent"
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/config"
 	"github.com/logos-42/hushfusion-forge/internal/identity"
@@ -46,9 +47,10 @@ type Agent struct {
 
 // Message 是对话消息。
 type Message struct {
-	Role string    `json:"role"`
-	Text string    `json:"text"`
-	Time time.Time `json:"time"`
+	Role   string    `json:"role"`
+	Text   string    `json:"text"`
+	Images []string  `json:"images,omitempty"`
+	Time   time.Time `json:"time"`
 }
 
 // Session 是会话栏里的一条会话（归属某个智能体）。
@@ -60,6 +62,13 @@ type Session struct {
 	Messages  []Message `json:"messages"`
 }
 
+// Settings 是模型与工具设置（侧边栏/主窗口可选）。
+type Settings struct {
+	Provider string   `json:"provider"`
+	Model    string   `json:"model"`
+	Tools    []string `json:"tools,omitempty"` // 需要放行的写工具；读工具默认可用
+}
+
 // State 是落盘状态（~/.forge/web/state.json）。
 type State struct {
 	Profile         Profile   `json:"profile"`
@@ -67,6 +76,13 @@ type State struct {
 	Sessions        []Session `json:"sessions"`
 	ActiveAgentID   string    `json:"active_agent_id"`
 	ActiveSessionID string    `json:"active_session_id"`
+	Settings        Settings  `json:"settings"`
+}
+
+// Secret 是按 provider 保存的密钥/端点（单独文件 0600，绝不随 state 返回）。
+type Secret struct {
+	APIKey  string `json:"api_key,omitempty"`
+	BaseURL string `json:"base_url,omitempty"`
 }
 
 // UpdateInfo 是侧边栏更新按钮状态。
@@ -81,18 +97,25 @@ type UpdateInfo struct {
 
 // Server 是 Web 外壳。
 type Server struct {
-	addr string
-	dir  string
-	mu   sync.Mutex
-	st   State
-	http *http.Server
+	addr        string
+	dir         string
+	mu          sync.Mutex
+	st          State
+	http        *http.Server
+	agentSesses map[string]*agent.Session
+	secrets     map[string]Secret
 }
 
 const (
-	stateFile = "state.json"
-	maxAvatar = 128 * 1024
-	repoSlug  = "logos-42/hushfusion-forge"
+	stateFile   = "state.json"
+	secretsFile = "secrets.json"
+	maxAvatar   = 128 * 1024
+	maxImage    = 1024 * 1024
+	repoSlug    = "logos-42/hushfusion-forge"
 )
+
+// writeTools 是 Web 外壳里可放行的写工具（读工具默认可用）。
+var writeTools = []string{"shell", "mem.set", "mem.reset", "tasks.add", "tasks.set_state"}
 
 // New 构造服务器并加载/初始化状态。
 func New(addr, dir string) (*Server, error) {
@@ -106,12 +129,18 @@ func New(addr, dir string) (*Server, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	s := &Server{addr: addr, dir: dir}
+	s := &Server{addr: addr, dir: dir, agentSesses: map[string]*agent.Session{}, secrets: map[string]Secret{}}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
+	if err := s.loadSecrets(); err != nil {
+		return nil, err
+	}
+	s.normalize()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/bootstrap", s.handleBootstrap)
+	mux.HandleFunc("GET /api/models", s.handleModels)
+	mux.HandleFunc("POST /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
@@ -159,6 +188,64 @@ func (s *Server) load() error {
 	return nil
 }
 
+// normalize 兼容旧状态文件：补默认模型/工具/头像。
+func (s *Server) normalize() {
+	if !strings.HasPrefix(s.st.Profile.Avatar, "data:image/") {
+		s.st.Profile.Avatar = svgAvatar("forge-user", firstRune(s.st.Profile.Name))
+	}
+	if s.st.Settings.Provider == "" {
+		s.st.Settings.Provider = defaultProvider()
+	}
+	if s.st.Settings.Model == "" {
+		if p := ai.Lookup(s.st.Settings.Provider); p != nil {
+			s.st.Settings.Model = p.DefaultModel
+		}
+	}
+	for i := range s.st.Agents {
+		if !strings.HasPrefix(s.st.Agents[i].Avatar, "data:image/") {
+			s.st.Agents[i].Avatar = svgAvatar(s.st.Agents[i].ID, firstRune(s.st.Agents[i].Name))
+		}
+	}
+	_ = s.save()
+}
+
+func firstRune(s string) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) == 0 {
+		return "F"
+	}
+	return string(r[0])
+}
+
+// svgAvatar 生成一个好看的渐变 SVG 头像（data:image/svg+xml），不用 emoji。
+func svgAvatar(seed, label string) string {
+	h := 0
+	for _, r := range seed {
+		h = (h*31 + int(r)) % 360
+	}
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(%d,82%%,58%%)"/><stop offset="1" stop-color="hsl(%d,72%%,42%%)"/></linearGradient></defs><rect width="96" height="96" rx="48" fill="url(#g)"/><circle cx="70" cy="26" r="10" fill="rgba(255,255,255,.28)"/><text x="48" y="60" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="38" font-weight="600" fill="#fff" text-anchor="middle">%s</text></svg>`,
+		h, (h+48)%360, escapeXML(label))
+	return "data:image/svg+xml;utf8," + url.QueryEscape(svg)
+}
+
+func escapeXML(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&apos;")
+	return r.Replace(s)
+}
+
+func defaultProvider() string {
+	if v := envOr("HUSHFUSION_AI_PROVIDER", ""); v != "" {
+		return v
+	}
+	_ = ai.RegisterBuiltins()
+	for _, p := range ai.Builtins() {
+		if ai.ResolveAPIKey(p) != "" {
+			return p.Name
+		}
+	}
+	return "zai"
+}
+
 func (s *Server) initState() error {
 	id, err := identity.Generate()
 	if err != nil {
@@ -168,7 +255,7 @@ func (s *Server) initState() error {
 	agent := Agent{
 		ID:        "agent-1",
 		Name:      "Forge 主智能体",
-		Avatar:    "🧠",
+		Avatar:    svgAvatar("forge-agent", "F"),
 		DID:       id.DID(),
 		Persona:   "可控核聚变开发协作智能体；诚实、可验证、专注。",
 		CreatedAt: now,
@@ -179,12 +266,18 @@ func (s *Server) initState() error {
 		Title:     "新对话",
 		CreatedAt: now,
 	}
+	provider := defaultProvider()
+	model := ""
+	if p := ai.Lookup(provider); p != nil {
+		model = p.DefaultModel
+	}
 	s.st = State{
-		Profile:         Profile{Name: "Forge 用户", Avatar: "🙂", DID: id.DID()},
+		Profile:         Profile{Name: "Forge 用户", Avatar: svgAvatar("forge-user", "F"), DID: id.DID()},
 		Agents:          []Agent{agent},
 		Sessions:        []Session{sess},
 		ActiveAgentID:   agent.ID,
 		ActiveSessionID: sess.ID,
+		Settings:        Settings{Provider: provider, Model: model},
 	}
 	return s.save()
 }
@@ -200,6 +293,42 @@ func (s *Server) save() error {
 	}
 	return os.Rename(tmp, filepath.Join(s.dir, stateFile))
 }
+
+func (s *Server) loadSecrets() error {
+	b, err := os.ReadFile(filepath.Join(s.dir, secretsFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, &s.secrets)
+}
+
+func (s *Server) saveSecrets() error {
+	b, err := json.MarshalIndent(&s.secrets, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(s.dir, secretsFile+".tmp")
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(s.dir, secretsFile))
+}
+
+// hasKey 判断 provider 是否已有可用 key（env 或本机保存的 secret；不验证有效性）。
+func (s *Server) hasKey(provider string) bool {
+	if sec, ok := s.secrets[provider]; ok && strings.TrimSpace(sec.APIKey) != "" {
+		return true
+	}
+	if p := ai.Lookup(provider); p != nil {
+		return ai.ResolveAPIKey(p) != ""
+	}
+	return false
+}
+
+func (s *Server) secretFor(provider string) Secret { return s.secrets[provider] }
 
 func (s *Server) snapshot() State {
 	s.mu.Lock()
@@ -242,8 +371,12 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "智能体名字不能为空", http.StatusBadRequest)
 		return
 	}
-	if !avatarOK(req.Avatar) {
-		http.Error(w, "头像非法（emoji 或 data:image，≤128KB）", http.StatusBadRequest)
+	avatar := strings.TrimSpace(req.Avatar)
+	if avatar == "" {
+		avatar = svgAvatar(name+time.Now().String(), firstRune(name))
+	}
+	if !avatarOK(avatar) {
+		http.Error(w, "头像非法（data:image，≤128KB）", http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
@@ -256,7 +389,7 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	agent := Agent{
 		ID:        fmt.Sprintf("agent-%d", time.Now().UnixNano()),
 		Name:      name,
-		Avatar:    req.Avatar,
+		Avatar:    avatar,
 		DID:       id.DID(),
 		Persona:   strings.TrimSpace(req.Persona),
 		CreatedAt: time.Now(),
@@ -300,9 +433,10 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type chatReq struct {
-	SessionID string `json:"session_id"`
-	AgentID   string `json:"agent_id"`
-	Message   string `json:"message"`
+	SessionID string   `json:"session_id"`
+	AgentID   string   `json:"agent_id"`
+	Message   string   `json:"message"`
+	Images    []string `json:"images,omitempty"`
 }
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -312,8 +446,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	msg := strings.TrimSpace(req.Message)
-	if msg == "" {
-		http.Error(w, "消息为空", http.StatusBadRequest)
+	if msg == "" && len(req.Images) == 0 {
+		http.Error(w, "消息或图片不能为空", http.StatusBadRequest)
+		return
+	}
+	if err := imagesOK(req.Images); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
@@ -333,11 +471,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "智能体不存在", http.StatusBadRequest)
 		return
 	}
-	sess.Messages = append(sess.Messages, Message{Role: "user", Text: msg, Time: time.Now()})
+	sess.Messages = append(sess.Messages, Message{
+		Role: "user", Text: msg, Images: append([]string(nil), req.Images...), Time: time.Now(),
+	})
 	if sess.Title == "新对话" && len([]rune(msg)) > 4 {
 		sess.Title = string([]rune(msg)[:min(24, len([]rune(msg)))])
 	}
-	history := append([]Message(nil), sess.Messages...)
+	settings := s.st.Settings
 	if err := s.save(); err != nil {
 		s.mu.Unlock()
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -345,7 +485,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	reply, err := s.chat(r.Context(), *agent, history)
+	as, err := s.agentSession(settings, sess, *agent)
+	if err != nil {
+		s.writeJSON(w, map[string]any{"error": err.Error()})
+		return
+	}
+	reply, err := as.Turn(r.Context(), textWithImages(Message{Role: "user", Text: msg, Images: req.Images}))
 	if err != nil {
 		s.writeJSON(w, map[string]any{"error": err.Error()})
 		return
@@ -357,23 +502,66 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]any{"reply": reply})
 }
 
-// chat 直接走 ai.Chat（v0.2.1 不挂工具，先把身份化主对话窗口跑通）。
-func (s *Server) chat(ctx context.Context, agent Agent, history []Message) (string, error) {
-	provider := envOr("HUSHFUSION_AI_PROVIDER", "zai")
-	model := envOr("HUSHFUSION_AI_MODEL", "")
-	baseURL := os.Getenv("HUSHFUSION_AI_BASE_URL")
-	msgs := []ai.Message{{Role: "system", Content: systemPrompt(agent)}}
-	for _, m := range history {
+// agentSession 为 Web 会话构造/复用 agent Runtime（带工具；写工具按设置放行）。
+func (s *Server) agentSession(settings Settings, sess *Session, ag Agent) (*agent.Session, error) {
+	if s.agentSesses == nil {
+		s.agentSesses = map[string]*agent.Session{}
+	}
+	if as, ok := s.agentSesses[sess.ID]; ok {
+		return as, nil
+	}
+	root, err := os.Getwd()
+	if err != nil {
+		root = "."
+	}
+	cfg := agent.DefaultConfig()
+	cfg.Provider, cfg.Model = settings.Provider, settings.Model
+	cfg.MaxBudgetTokens = agent.BudgetFromEnv(agent.BudgetForModel(settings.Model, 0.6))
+	cfg.Root = root
+	chat := func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+		sec := s.secretFor(settings.Provider)
+		base := firstNonEmpty(sec.BaseURL, os.Getenv("HUSHFUSION_AI_BASE_URL"))
+		return ai.Chat(ctx, settings.Provider, req, ai.ClientOptions{BaseURL: base, APIKey: sec.APIKey})
+	}
+	as := agent.NewSession(cfg, chat, agent.NewRegistry(), systemPrompt(ag))
+	_ = as.RegisterBuiltinTools(nil) // read/ls/shell/mem/tasks；skill.view 无技能目录不注册
+	as.AllowWrites = map[string]bool{}
+	for _, t := range settings.Tools {
+		as.AllowWrites[t] = true
+	}
+	var msgs []agent.Message
+	for _, m := range sess.Messages {
 		if m.Role != "user" && m.Role != "assistant" {
 			continue
 		}
-		msgs = append(msgs, ai.Message{Role: m.Role, Content: m.Text})
+		msgs = append(msgs, agent.Message{Role: agent.Role(m.Role), Content: textWithImages(m)})
 	}
-	resp, err := ai.Chat(ctx, provider, ai.ChatRequest{Model: model, Messages: msgs}, ai.ClientOptions{BaseURL: baseURL})
-	if err != nil {
-		return "", err
+	as.LoadMessages(msgs)
+	s.agentSesses[sess.ID] = as
+	return as, nil
+}
+
+func textWithImages(m Message) string {
+	body := strings.TrimSpace(m.Text)
+	for _, img := range m.Images {
+		body += "\n\n![image](" + img + ")"
 	}
-	return strings.TrimSpace(resp.Content), nil
+	return body
+}
+
+func imagesOK(imgs []string) error {
+	if len(imgs) > 4 {
+		return fmt.Errorf("一次最多 4 张图片")
+	}
+	for _, im := range imgs {
+		if !strings.HasPrefix(im, "data:image/") {
+			return fmt.Errorf("图片必须是 data:image/ URL")
+		}
+		if len(im) > maxImage {
+			return fmt.Errorf("单张图片不能超过 1MB")
+		}
+	}
+	return nil
 }
 
 func systemPrompt(a Agent) string {
@@ -430,6 +618,118 @@ func (s *Server) handleProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, s.st.Profile)
+}
+
+// handleModels 返回可选 provider（有 key 的优先，附带默认模型）。
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
+	_ = ai.RegisterBuiltins()
+	common := map[string]bool{
+		"zai": true, "deepseek": true, "openai": true, "openrouter": true,
+		"anthropic": true, "custom": true, "moonshot": true, "kimi": true, "qwen": true,
+	}
+	type modelInfo struct {
+		Name    string `json:"name"`
+		Display string `json:"display"`
+		Default string `json:"default_model"`
+		HasKey  bool   `json:"has_key"`
+	}
+	out := []modelInfo{}
+	for _, p := range ai.Builtins() {
+		hasKey := s.hasKey(p.Name)
+		if !hasKey && !common[p.Name] {
+			continue
+		}
+		out = append(out, modelInfo{
+			Name: p.Name, Display: firstNonEmpty(p.DisplayName, p.Name),
+			Default: p.DefaultModel, HasKey: hasKey,
+		})
+	}
+	secretSet := map[string]bool{}
+	for name := range s.secrets {
+		secretSet[name] = true
+	}
+	s.writeJSON(w, map[string]any{
+		"providers":   out,
+		"current":     s.snapshot().Settings,
+		"write_tools": writeTools,
+		"secret_set":  secretSet,
+	})
+}
+
+func firstNonEmpty(vs ...string) string {
+	for _, v := range vs {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+type settingsReq struct {
+	Provider string   `json:"provider"`
+	Model    string   `json:"model"`
+	Tools    []string `json:"tools"`
+	APIKey   string   `json:"api_key,omitempty"`
+	BaseURL  string   `json:"base_url,omitempty"`
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	var req settingsReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	_ = ai.RegisterBuiltins()
+	prof := ai.Lookup(strings.TrimSpace(req.Provider))
+	if prof == nil {
+		http.Error(w, "未知 provider", http.StatusBadRequest)
+		return
+	}
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = prof.DefaultModel
+	}
+	if model == "" {
+		http.Error(w, "该 provider 没有默认模型，请手动填 model", http.StatusBadRequest)
+		return
+	}
+	allowed := map[string]bool{}
+	for _, t := range writeTools {
+		allowed[t] = true
+	}
+	tools := []string{}
+	for _, t := range req.Tools {
+		if allowed[t] {
+			tools = append(tools, t)
+		}
+	}
+	s.mu.Lock()
+	s.st.Settings = Settings{Provider: prof.Name, Model: model, Tools: tools}
+	// 密钥/端点单独落盘（0600）；不返回、不打印。
+	sec := s.secrets[prof.Name]
+	if strings.TrimSpace(req.APIKey) != "" {
+		sec.APIKey = strings.TrimSpace(req.APIKey)
+	}
+	if strings.TrimSpace(req.BaseURL) != "" {
+		sec.BaseURL = strings.TrimSpace(req.BaseURL)
+	}
+	if sec.APIKey != "" || sec.BaseURL != "" {
+		s.secrets[prof.Name] = sec
+		if err := s.saveSecrets(); err != nil {
+			s.mu.Unlock()
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	s.agentSesses = map[string]*agent.Session{} // 设置变更 → 下轮重建会话
+	if err := s.save(); err != nil {
+		s.mu.Unlock()
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	st := s.st.Settings
+	s.mu.Unlock()
+	s.writeJSON(w, st)
 }
 
 func avatarOK(a string) bool {

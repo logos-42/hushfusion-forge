@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
 <title>HUSHFUSION Forge</title>
 <style>
   :root{
@@ -12,78 +14,105 @@
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
   body{background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif}
-  #app{display:grid;grid-template-columns:280px 1fr;height:100vh}
-  aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0}
-  .brand{display:flex;align-items:center;gap:8px;padding:14px 14px 10px;font-weight:600}
-  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent)}
+  #app{display:grid;grid-template-columns:284px 1fr;height:100vh;transition:grid-template-columns .18s ease}
+  #app.collapsed{grid-template-columns:66px 1fr}
+  aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;overflow:hidden}
+  .brand{display:flex;align-items:center;gap:8px;padding:14px 12px 10px;font-weight:600;white-space:nowrap}
+  #app.collapsed .brand span:not(.dot),#app.collapsed .sec,#app.collapsed .item .txt,#app.collapsed .account .who{display:none}
+  #app.collapsed .side-actions{flex-direction:column}
+  #app.collapsed .account{justify-content:center}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent);flex:none}
   .side-actions{display:flex;gap:8px;padding:0 12px 10px}
   button{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:7px 10px;cursor:pointer}
   button:hover{border-color:#33404d}
   button.primary{background:linear-gradient(180deg,#2b6cb0,#1f4f80);border-color:#2b6cb0}
   #updateBtn{position:relative;margin-left:auto}
+  #app.collapsed #updateBtn{margin-left:0}
   #updateBtn.available{color:#1a1300;background:var(--glow);border-color:var(--glow);animation:pulse 1.6s infinite}
   @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,209,102,.55)}70%{box-shadow:0 0 0 10px rgba(255,209,102,0)}100%{box-shadow:0 0 0 0 rgba(255,209,102,0)}}
   .side-scroll{flex:1;overflow:auto;padding:0 8px 8px}
-  .sec{margin:6px 4px 2px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .sec{margin:8px 6px 4px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
   .item{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;cursor:pointer;color:var(--text)}
   .item:hover{background:#1b2029}
   .item.active{background:#1d2733;border:1px solid #2b3a4a}
-  .item .ava{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:#222a33;font-size:13px;overflow:hidden}
-  .item .ava img{width:100%;height:100%;;object-fit:cover}
+  .item .ava{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:#222a33;font-size:13px;overflow:hidden;flex:none}
+  .item .ava img{width:100%;height:100%;object-fit:cover}
   .item .txt{min-width:0;flex:1}
   .item .txt b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .item .txt small{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
   .account{border-top:1px solid var(--line);padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:pointer}
   .account:hover{background:#151a21}
-  .account .ava{width:34px;height:34px;border-radius:50%;background:#222a33;display:grid;place-items:center;overflow:hidden}
+  .account .ava{width:36px;height:36px;border-radius:50%;background:#222a33;display:grid;place-items:center;overflow:hidden;flex:none}
   .account .ava img{width:100%;height:100%;object-fit:cover}
   .account .who{min-width:0;flex:1}
   .account .who b{display:block;font-weight:600}
   .account .who small{color:var(--muted);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   main{display:flex;flex-direction:column;min-width:0}
-  header{height:52px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 16px;color:var(--muted)}
+  header{height:54px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;padding:0 14px;color:var(--muted)}
   header b{color:var(--text)}
+  .grow{flex:1}
   #chat{flex:1;overflow:auto;padding:24px 16px;display:flex;flex-direction:column;gap:14px}
   .empty{height:100%;display:grid;place-items:center;color:var(--muted)}
   .empty h1{font-size:28px;font-weight:600;color:var(--text);margin:0}
   .msg{max-width:min(760px,82%);padding:10px 12px;border-radius:12px;white-space:pre-wrap}
   .msg.user{align-self:flex-end;background:#1f4f80}
   .msg.bot{align-self:flex-start;background:var(--panel2);border:1px solid var(--line)}
-  .composer{border-top:1px solid var(--line);padding:12px 16px;display:flex;gap:8px}
+  .msg img{max-width:220px;border-radius:8px;display:block;margin-top:6px}
+  .composer{border-top:1px solid var(--line);padding:12px 16px;display:flex;gap:8px;align-items:flex-end}
   .composer textarea{flex:1;resize:none;height:46px;max-height:140px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:12px}
-  dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:16px;width:min(440px,92vw)}
+  #imgPreview{display:flex;gap:6px;padding:0 16px 8px}
+  #imgPreview img{height:44px;border-radius:8px;border:1px solid var(--line)}
+  dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;padding:16px;width:min(520px,92vw)}
   dialog::backdrop{background:rgba(0,0,0,.55)}
   label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
-  input{width:100%;background:#0e1216;border:1px solid var(--line);border-radius:10px;color:var(--text);padding:8px}
+  input,select{width:100%;background:#0e1216;border:1px solid var(--line);border-radius:10px;color:var(--text);padding:8px}
   .row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
-  .avatars{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-  .avatars button{padding:6px 8px;font-size:16px}
+  .avatars{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .avatars button{padding:0;border:none;background:none;width:44px;height:44px;border-radius:50%;overflow:hidden}
+  .avatars img{width:44px;height:44px;border-radius:50%}
+  .tools{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  .tools label{display:flex;align-items:center;gap:8px;color:var(--text);font-size:13px}
+  .tools input{width:auto}
+  .hint{color:var(--muted);font-size:12px;margin-top:8px}
 </style>
 </head>
 <body>
 <div id="app">
   <aside>
-    <div class="brand"><span class="dot"></span> HUSHFUSION Forge <span style="margin-left:auto;color:var(--muted);font-weight:400" id="ver"></span></div>
+    <div class="brand">
+      <button id="collapseBtn" title="折叠/展开侧边栏" style="padding:4px 8px">☰</button>
+      <span class="dot"></span><span>HUSHFUSION Forge</span>
+      <span style="margin-left:auto;color:var(--muted);font-weight:400" id="ver"></span>
+    </div>
     <div class="side-actions">
-      <button class="primary" id="newAgentBtn">＋ 创建新智能体</button>
+      <button class="primary" id="newAgentBtn">＋ 新智能体</button>
       <button id="updateBtn" title="检查/安装更新">⟳</button>
     </div>
     <div class="side-scroll">
-      <div class="sec">智能体（按身份区分）</div>
+      <div class="sec">智能体</div>
       <div id="agents"></div>
       <div class="sec">会话</div>
       <div id="sessions"></div>
     </div>
     <div class="account" id="account">
-      <div class="ava" id="accountAva">🙂</div>
+      <div class="ava" id="accountAva"></div>
       <div class="who"><b id="accountName">用户</b><small id="accountDid">did:…</small></div>
       <span style="color:var(--muted)">⚙</span>
     </div>
   </aside>
   <main>
-    <header><b id="agentName">智能体</b> <span id="agentDid" style="color:var(--muted)"></span></header>
+    <header>
+      <b id="agentName">智能体</b>
+      <span id="agentDid" style="color:var(--muted)"></span>
+      <span class="grow"></span>
+      <button id="modelBtn" title="选择模型">⚙ 模型：<span id="modelLabel">…</span></button>
+      <button id="toolsBtn" title="添加工具">🧰 工具</button>
+    </header>
     <div id="chat"><div class="empty"><h1>我们要做什么？</h1></div></div>
+    <div id="imgPreview"></div>
     <div class="composer">
+      <button id="imgBtn" title="添加图片">🖼</button>
+      <input type="file" id="imgFile" accept="image/*" multiple style="display:none" />
       <textarea id="input" placeholder="发送消息；Enter 发送，Shift+Enter 换行"></textarea>
       <button class="primary" id="send">发送</button>
     </div>
@@ -94,144 +123,242 @@
   <h3 style="margin:0 0 6px">创建新智能体</h3>
   <label>名字</label><input id="agentNameInput" placeholder="例如：等离子体研究智能体" />
   <label>人格 / 职责</label><input id="agentPersona" placeholder="可选" />
-  <label>头像（emoji）</label><input id="agentAvatar" value="🤖" />
-  <div class="row"><button onclick="agentDlg.close()">取消</button><button class="primary" id="agentSave">创建</button></div>
+  <label>头像（自动生成；也可上传图片）</label>
+  <div class="avatars" id="agentAvatarPresets"></div>
+  <input type="file" id="agentAvatarFile" accept="image/*" style="margin-top:8px" />
+  <div class="row"><button onclick="document.getElementById('agentDlg').close()">取消</button><button class="primary" id="agentSave">创建</button></div>
 </dialog>
 
 <dialog id="profileDlg">
   <h3 style="margin:0 0 6px">个人身份 / 头像</h3>
   <label>昵称</label><input id="profileName" />
-  <label>头像（emoji 或 data:image）</label><input id="profileAvatar" />
+  <label>头像（自动生成；也可上传图片）</label>
   <div class="avatars" id="avatarPresets"></div>
-  <div class="row"><button onclick="profileDlg.close()">取消</button><button class="primary" id="profileSave">保存</button></div>
+  <input type="file" id="profileAvatarFile" accept="image/*" style="margin-top:8px" />
+  <div class="row"><button onclick="document.getElementById('profileDlg').close()">取消</button><button class="primary" id="profileSave">保存</button></div>
+</dialog>
+
+<dialog id="modelDlg">
+  <h3 style="margin:0 0 6px">选择模型</h3>
+  <label>Provider</label><select id="providerSelect"></select>
+  <label>Model</label><input id="modelInput" placeholder="留空 = provider 默认" />
+  <label>API Key（可选；保存在本机 0600，不明文返回）</label><input id="apiKeyInput" type="password" placeholder="已保存则留空" />
+  <label>Base URL（可选；custom / 代理）</label><input id="baseUrlInput" placeholder="留空 = provider 默认" />
+  <div class="hint" id="modelHint"></div>
+  <div class="row"><button onclick="document.getElementById('modelDlg').close()">取消</button><button class="primary" id="modelSave">保存</button></div>
+</dialog>
+
+<dialog id="toolsDlg">
+  <h3 style="margin:0 0 6px">工具开关</h3>
+  <div class="hint">read / ls 等只读工具默认可用；下面是需要放行的写工具。</div>
+  <div class="tools" id="toolList"></div>
+  <div class="row"><button onclick="document.getElementById('toolsDlg').close()">取消</button><button class="primary" id="toolsSave">保存</button></div>
 </dialog>
 
 <script>
-let state = null, update = null, busy = false;
-const $ = (id) => document.getElementById(id);
-const avaHTML = (a) => (a && a.startsWith('data:image/')) ? `<img src="${a}" alt="">` : (a || '🙂');
+let state=null, update=null, models=null, busy=false, pendingImages=[];
 
-async function api(path, opts){
-  const r = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
-  const j = await r.json().catch(()=>({error:'响应不是 JSON'}));
-  if(!r.ok) throw new Error(j.error || ('HTTP '+r.status));
+const $=(id)=>document.getElementById(id);
+const escapeHTML=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const avaHTML=(a)=>(a&&a.startsWith('data:image/'))?`<img src="${a}" alt="">`:'';
+
+function svgAvatar(seed,label){
+  let h=0; for(const ch of String(seed||'x')) h=(h*31+ch.charCodeAt(0))%360;
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${h},82%,58%)"/><stop offset="1" stop-color="hsl(${(h+48)%360},72%,42%)"/></linearGradient></defs><rect width="96" height="96" rx="48" fill="url(#g)"/><circle cx="70" cy="26" r="10" fill="rgba(255,255,255,.28)"/><text x="48" y="60" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="38" font-weight="600" fill="#fff" text-anchor="middle">${escapeHTML(label)}</text></svg>`;
+  return 'data:image/svg+xml;utf8,'+encodeURIComponent(svg);
+}
+
+async function api(path,opts){
+  const r=await fetch(path,Object.assign({headers:{'Content-Type':'application/json'}},opts||{}));
+  const j=await r.json().catch(()=>({error:'响应不是 JSON'}));
+  if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
   return j;
 }
 
 async function boot(){
-  const j = await api('/api/bootstrap');
-  state = j.state; update = j.update;
-  $('ver').textContent = 'v' + j.version;
-  renderUpdate(); renderSidebar(); renderHeader(); renderChat();
+  const j=await api('/api/bootstrap');
+  state=j.state; update=j.update;
+  models=await api('/api/models');
+  $('ver').textContent='v'+j.version;
+  renderAll();
 }
 
+function renderAll(){ renderUpdate(); renderSidebar(); renderHeader(); renderChat(); renderModel(); }
+
 function renderUpdate(){
-  const b = $('updateBtn');
-  if(update && update.available){
-    b.classList.add('available');
-    b.title = '有新版本 ' + update.latest + '，点击自动更新';
-    b.textContent = '⟳ 更新';
-  } else {
-    b.classList.remove('available');
-    b.title = '已是最新';
-    b.textContent = '⟳';
-  }
+  const b=$('updateBtn');
+  if(update&&update.available){b.classList.add('available');b.title='有新版本 '+update.latest+'，点击自动更新';b.textContent='⟳ 更新';}
+  else{b.classList.remove('available');b.title='已是最新';b.textContent='⟳';}
 }
 
 function renderSidebar(){
-  $('agents').innerHTML = state.agents.map(a => `
+  $('agents').innerHTML=state.agents.map(a=>`
     <div class="item ${a.id===state.active_agent_id?'active':''}" onclick="pickAgent('${a.id}')">
       <div class="ava">${avaHTML(a.avatar)}</div>
-      <div class="txt"><b>${escapeHTML(a.name)}</b><small>${a.did.slice(0,18)}…</small></div>
+      <div class="txt"><b>${escapeHTML(a.name)}</b><small>${a.did.slice(0,20)}…</small></div>
     </div>`).join('');
-  const sess = state.sessions.filter(s => s.agent_id === state.active_agent_id);
-  $('sessions').innerHTML = sess.map(s => `
+  const sess=state.sessions.filter(s=>s.agent_id===state.active_agent_id);
+  $('sessions').innerHTML=sess.map(s=>`
     <div class="item ${s.id===state.active_session_id?'active':''}" onclick="pickSession('${s.id}')">
       <div class="ava">💬</div>
-      <div class="txt"><b>${escapeHTML(s.title||'新对话')}</b><small>${s.messages.length} 条消息</small></div>
+      <div class="txt"><b>${escapeHTML(s.title||'新对话')}</b><small>${s.messages.length} 条</small></div>
     </div>`).join('');
-  $('accountName').textContent = state.profile.name;
-  $('accountDid').textContent = state.profile.did;
-  $('accountAva').innerHTML = avaHTML(state.profile.avatar);
+  $('accountName').textContent=state.profile.name;
+  $('accountDid').textContent=state.profile.did;
+  $('accountAva').innerHTML=avaHTML(state.profile.avatar);
 }
 
 function renderHeader(){
-  const a = state.agents.find(x=>x.id===state.active_agent_id) || {};
-  $('agentName').textContent = a.name || '智能体';
-  $('agentDid').textContent = a.did || '';
+  const a=state.agents.find(x=>x.id===state.active_agent_id)||{};
+  $('agentName').textContent=a.name||'智能体';
+  $('agentDid').textContent=a.did||'';
 }
 
 function renderChat(){
-  const s = state.sessions.find(x=>x.id===state.active_session_id);
-  const chat = $('chat');
-  if(!s || s.messages.length===0){ chat.innerHTML = '<div class="empty"><h1>我们要做什么？</h1></div>'; return; }
-  chat.innerHTML = s.messages.map(m => `<div class="msg ${m.role==='user'?'user':'bot'}">${escapeHTML(m.text)}</div>`).join('');
-  chat.scrollTop = chat.scrollHeight;
+  const s=state.sessions.find(x=>x.id===state.active_session_id);
+  const chat=$('chat');
+  if(!s||s.messages.length===0){chat.innerHTML='<div class="empty"><h1>我们要做什么？</h1></div>';return;}
+  chat.innerHTML=s.messages.map(m=>`
+    <div class="msg ${m.role==='user'?'user':'bot'}">${escapeHTML(m.text)}
+      ${(m.images||[]).map(im=>`<img src="${im}" alt="">`).join('')}
+    </div>`).join('');
+  chat.scrollTop=chat.scrollHeight;
 }
 
-function escapeHTML(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function renderModel(){
+  $('modelLabel').textContent=state.settings.provider+' / '+(state.settings.model||'default');
+  const sel=$('providerSelect');
+  sel.innerHTML=models.providers.map(p=>`<option value="${p.name}" ${p.name===state.settings.provider?'selected':''}>${escapeHTML(p.display||p.name)}${p.has_key?'':'（无 key）'}</option>`).join('');
+  $('modelInput').value=state.settings.model||'';
+  const cur=models.providers.find(p=>p.name===state.settings.provider);
+  $('modelHint').textContent=cur?('默认模型：'+(cur.default||'未提供')+(cur.has_key?' · 已检测到 key':' · 未检测到 key（将发不出去）')):'';
+  const secretSet=(models.secret_set&&models.secret_set[state.settings.provider])||false;
+  $('apiKeyInput').value='';
+  $('apiKeyInput').placeholder=secretSet?'已保存密钥（留空不修改）':'粘贴 API Key';
+  $('baseUrlInput').value='';
+  $('baseUrlInput').placeholder=secretSet?'已保存端点（留空不修改）':'例如 https://api.deepseek.com/v1';
+  renderTools();
+}
+
+function renderTools(){
+  const box=$('toolList');
+  box.innerHTML=models.write_tools.map(t=>`
+    <label><input type="checkbox" value="${t}" ${(state.settings.tools||[]).includes(t)?'checked':''}> ${t}</label>`).join('');
+}
 
 async function pickAgent(id){
-  state.active_agent_id = id;
-  const existing = state.sessions.find(s=>s.agent_id===id);
-  if(existing){ state.active_session_id = existing.id; renderSidebar(); renderHeader(); renderChat(); return; }
-  const s = await api('/api/sessions', {method:'POST', body:JSON.stringify({agent_id:id})});
-  state.sessions.push(s); state.active_session_id = s.id; renderSidebar(); renderHeader(); renderChat();
+  state.active_agent_id=id;
+  let s=state.sessions.find(x=>x.agent_id===id);
+  if(!s){s=await api('/api/sessions',{method:'POST',body:JSON.stringify({agent_id:id})});state.sessions.push(s);}
+  state.active_session_id=s.id;renderSidebar();renderHeader();renderChat();
 }
-function pickSession(id){ state.active_session_id = id; renderSidebar(); renderChat(); }
+function pickSession(id){state.active_session_id=id;renderSidebar();renderChat();}
 
-$('newAgentBtn').onclick = () => { $('agentNameInput').value=''; $('agentPersona').value=''; $('agentAvatar').value='🤖'; agentDlg.showModal(); };
-$('agentSave').onclick = async () => {
+$('collapseBtn').onclick=()=>$('app').classList.toggle('collapsed');
+
+$('newAgentBtn').onclick=()=>{
+  $('agentNameInput').value='';$('agentPersona').value='';
+  const presets=['熔岩','等离子','星云','磁场','量子','混沌','曙光','深空'];
+  $('agentAvatarPresets').innerHTML=presets.map((n,i)=>`<button title="${n}"><img src="${svgAvatar(n,n[0])}" alt="${n}"></button>`).join('');
+  [...$('agentAvatarPresets').children].forEach((b,i)=>b.onclick=()=>{$('agentAvatarFile').dataset.avatar=svgAvatar(presets[i],presets[i][0]);});
+  delete $('agentAvatarFile').dataset.avatar;
+  document.getElementById('agentDlg').showModal();
+};
+$('agentSave').onclick=async()=>{
   try{
-    const j = await api('/api/agents', {method:'POST', body:JSON.stringify({
-      name:$('agentNameInput').value, avatar:$('agentAvatar').value, persona:$('agentPersona').value
+    const avatar=$('agentAvatarFile').dataset.avatar||svgAvatar($('agentNameInput').value||'agent',($('agentNameInput').value||'A')[0]);
+    const j=await api('/api/agents',{method:'POST',body:JSON.stringify({name:$('agentNameInput').value,avatar,persona:$('agentPersona').value})});
+    state.agents.push(j.agent);state.sessions.push(j.session);
+    state.active_agent_id=j.agent.id;state.active_session_id=j.session.id;
+    document.getElementById('agentDlg').close();renderAll();
+  }catch(e){alert(e.message);}
+};
+
+$('account').onclick=()=>{
+  $('profileName').value=state.profile.name;
+  const presets=['用户','开发者','探索者','工程师','观测者','架构师','协作者','思考者'];
+  $('avatarPresets').innerHTML=presets.map((n,i)=>`<button title="${n}"><img src="${svgAvatar(n,n[0])}" alt="${n}"></button>`).join('');
+  [...$('avatarPresets').children].forEach((b,i)=>b.onclick=()=>{$('profileAvatarFile').dataset.avatar=svgAvatar(presets[i],presets[i][0]);});
+  delete $('profileAvatarFile').dataset.avatar;
+  document.getElementById('profileDlg').showModal();
+};
+$('profileSave').onclick=async()=>{
+  try{
+    const avatar=$('profileAvatarFile').dataset.avatar||state.profile.avatar;
+    state.profile=await api('/api/profile',{method:'POST',body:JSON.stringify({name:$('profileName').value,avatar})});
+    document.getElementById('profileDlg').close();renderSidebar();
+  }catch(e){alert(e.message);}
+};
+
+function readImage(file,cb){
+  if(!file.type.startsWith('image/')){alert('请选择图片文件');return;}
+  if(file.size>1024*1024){alert('单张图片不能超过 1MB');return;}
+  const r=new FileReader();
+  r.onload=()=>cb(r.result);
+  r.readAsDataURL(file);
+}
+$('imgBtn').onclick=()=>$('imgFile').click();
+$('imgFile').onchange=e=>{
+  const files=[...e.target.files].slice(0,4);
+  files.forEach(f=>readImage(f,dataUrl=>{
+    if(pendingImages.length>=4)return;
+    pendingImages.push(dataUrl);renderImgPreview();
+  }));
+  e.target.value='';
+};
+function renderImgPreview(){
+  $('imgPreview').innerHTML=pendingImages.map((im,i)=>`<div style="position:relative"><img src="${im}"><button style="position:absolute;top:-8px;right:-8px;border-radius:50%;padding:0 6px" onclick="pendingImages.splice(${i},1);renderImgPreview()">×</button></div>`).join('');
+}
+
+$('modelBtn').onclick=()=>document.getElementById('modelDlg').showModal();
+$('modelSave').onclick=async()=>{
+  try{
+    state.settings=await api('/api/settings',{method:'POST',body:JSON.stringify({
+      provider:$('providerSelect').value,model:$('modelInput').value,tools:state.settings.tools||[],
+      api_key:$('apiKeyInput').value,base_url:$('baseUrlInput').value
     })});
-    state.agents.push(j.agent); state.sessions.push(j.session);
-    state.active_agent_id=j.agent.id; state.active_session_id=j.session.id;
-    agentDlg.close(); renderSidebar(); renderHeader(); renderChat();
-  }catch(e){ alert(e.message); }
+    document.getElementById('modelDlg').close();renderModel();
+  }catch(e){alert(e.message);}
+};
+$('toolsBtn').onclick=()=>document.getElementById('toolsDlg').showModal();
+$('toolsSave').onclick=async()=>{
+  try{
+    const tools=[...document.querySelectorAll('#toolList input:checked')].map(x=>x.value);
+    state.settings=await api('/api/settings',{method:'POST',body:JSON.stringify({
+      provider:state.settings.provider,model:state.settings.model,tools
+    })});
+    document.getElementById('toolsDlg').close();renderModel();
+  }catch(e){alert(e.message);}
 };
 
-$('account').onclick = () => {
-  $('profileName').value = state.profile.name;
-  $('profileAvatar').value = state.profile.avatar;
-  $('avatarPresets').innerHTML = ['🙂','🧠','🚀','⚛️','🧪','🛰️','🌌','🤖'].map(e=>`<button onclick="document.getElementById('profileAvatar').value='${e}'">${e}</button>`).join('');
-  profileDlg.showModal();
-};
-$('profileSave').onclick = async () => {
+$('updateBtn').onclick=async()=>{
+  if(!(update&&update.available)){update=await api('/api/update');renderUpdate();if(!update.available){alert('已是最新版本');return;}}
+  if(!confirm('发现新版本 '+update.latest+'，现在自动更新吗？'))return;
   try{
-    const p = await api('/api/profile', {method:'POST', body:JSON.stringify({name:$('profileName').value, avatar:$('profileAvatar').value})});
-    state.profile = p; profileDlg.close(); renderSidebar();
-  }catch(e){ alert(e.message); }
-};
-
-$('updateBtn').onclick = async () => {
-  if(!(update && update.available)){ update = await api('/api/update'); renderUpdate(); if(!update.available){ alert('已是最新版本'); return; } }
-  if(!confirm('发现新版本 '+update.latest+'，现在自动更新吗？')) return;
-  try{
-    const r = await api('/api/update/apply', {method:'POST'});
-    alert((r.restart_required ? '更新已下载，重启后生效。' : '更新完成，重启后生效。') + (r.staged?('\n路径: '+r.staged):''));
-  }catch(e){ alert('更新失败: '+e.message); }
+    const r=await api('/api/update/apply',{method:'POST'});
+    alert((r.restart_required?'更新已下载，重启后生效。':'更新完成，重启后生效。')+(r.staged?('\n路径: '+r.staged):''));
+  }catch(e){alert('更新失败: '+e.message);}
 };
 
 async function send(){
-  if(busy) return;
-  const text = $('input').value.trim();
-  if(!text) return;
-  busy = true; $('input').value='';
-  const s = state.sessions.find(x=>x.id===state.active_session_id);
-  s.messages.push({role:'user', text, time:new Date().toISOString()});
+  if(busy)return;
+  const text=$('input').value.trim();
+  if(!text&&pendingImages.length===0)return;
+  busy=true;$('input').value='';
+  const images=[...pendingImages];pendingImages=[];renderImgPreview();
+  const s=state.sessions.find(x=>x.id===state.active_session_id);
+  s.messages.push({role:'user',text,images,time:new Date().toISOString()});
   renderChat();
   try{
-    const j = await api('/api/chat', {method:'POST', body:JSON.stringify({session_id:s.id, agent_id:state.active_agent_id, message:text})});
-    if(j.error) throw new Error(j.error);
-    s.messages.push({role:'assistant', text:j.reply, time:new Date().toISOString()});
+    const j=await api('/api/chat',{method:'POST',body:JSON.stringify({session_id:s.id,agent_id:state.active_agent_id,message:text,images})});
+    if(j.error)throw new Error(j.error);
+    s.messages.push({role:'assistant',text:j.reply,time:new Date().toISOString()});
   }catch(e){
-    s.messages.push({role:'assistant', text:'（错误）'+e.message, time:new Date().toISOString()});
-  }finally{ busy=false; renderSidebar(); renderChat(); }
+    s.messages.push({role:'assistant',text:'（错误）'+e.message,time:new Date().toISOString()});
+  }finally{busy=false;renderSidebar();renderChat();}
 }
-$('send').onclick = send;
-$('input').addEventListener('keydown', e => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); } });
+$('send').onclick=send;
+$('input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
 
 boot();
 </script>

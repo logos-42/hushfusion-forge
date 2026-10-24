@@ -168,6 +168,11 @@ func (s *Session) ExecuteTool(ctx context.Context, name string, args map[string]
 	return s.registry.Execute(ctx, call, s.AllowWrites)
 }
 
+// LoadMessages 导入历史消息（Web/恢复场景用；会覆盖当前 messages）。
+func (s *Session) LoadMessages(msgs []Message) {
+	s.messages = append([]Message(nil), msgs...)
+}
+
 // Specs 返回模型可见的工具 schema 列表（model() 注入点）。
 func (r *ToolRegistry) Specs() []ai.ToolSpec {
 	out := make([]ai.ToolSpec, 0, len(r.tools))

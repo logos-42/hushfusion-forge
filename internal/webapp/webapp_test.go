@@ -2,6 +2,7 @@ package webapp
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -66,6 +67,88 @@ func TestCreateAgentAndProfile(t *testing.T) {
 	defer resp3.Body.Close()
 	if resp3.StatusCode == http.StatusOK {
 		t.Fatal("超长头像应被拒绝")
+	}
+}
+
+func TestModelsAndSettings(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + "/api/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var m struct {
+		Providers []struct {
+			Name   string `json:"name"`
+			HasKey bool   `json:"has_key"`
+		} `json:"providers"`
+		WriteTools []string `json:"write_tools"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Providers) == 0 || len(m.WriteTools) == 0 {
+		t.Fatalf("models = %+v", m)
+	}
+	resp2, err := http.Post(ts.URL+"/api/settings", "application/json",
+		strings.NewReader(`{"provider":"deepseek","model":"deepseek-chat","tools":["mem.set","not-a-tool"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var st Settings
+	if err := json.NewDecoder(resp2.Body).Decode(&st); err != nil {
+		t.Fatal(err)
+	}
+	if st.Provider != "deepseek" || st.Model != "deepseek-chat" || len(st.Tools) != 1 || st.Tools[0] != "mem.set" {
+		t.Fatalf("settings = %+v", st)
+	}
+}
+
+func TestImageValidation(t *testing.T) {
+	if err := imagesOK([]string{"data:image/png;base64,AAAA"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := imagesOK([]string{"https://x/y.png"}); err == nil {
+		t.Fatal("非 data:image 应拒绝")
+	}
+	if err := imagesOK([]string{"1", "2", "3", "4", "5"}); err == nil {
+		t.Fatal("超过 4 张应拒绝")
+	}
+	big := "data:image/png;base64," + strings.Repeat("A", maxImage+10)
+	if err := imagesOK([]string{big}); err == nil {
+		t.Fatal("超过 1MB 应拒绝")
+	}
+	if got := textWithImages(Message{Text: "hi", Images: []string{"data:image/png;base64,AA"}}); !strings.Contains(got, "![image](data:image/png;base64,AA)") {
+		t.Fatalf("textWithImages = %q", got)
+	}
+}
+
+func TestSettingsSecretNotReturned(t *testing.T) {
+	ts := newTestServer(t)
+	resp, err := http.Post(ts.URL+"/api/settings", "application/json",
+		strings.NewReader(`{"provider":"custom","model":"m","api_key":"sk-should-not-return","base_url":"http://127.0.0.1:9/v1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "sk-should-not-return") {
+		t.Fatal("设置响应不应返回密钥明文")
+	}
+	m, err := http.Get(ts.URL + "/api/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Body.Close()
+	var j struct {
+		SecretSet map[string]bool `json:"secret_set"`
+	}
+	if err := json.NewDecoder(m.Body).Decode(&j); err != nil {
+		t.Fatal(err)
+	}
+	if !j.SecretSet["custom"] {
+		t.Fatalf("secret_set = %+v", j.SecretSet)
 	}
 }
 
