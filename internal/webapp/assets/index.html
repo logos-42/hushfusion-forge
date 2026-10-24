@@ -29,7 +29,10 @@
   #app{display:grid;grid-template-columns:284px 1fr;height:100vh;transition:grid-template-columns .18s ease}
   #app.collapsed{grid-template-columns:66px 1fr}
   aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-width:0;overflow:hidden}
-  .brand{display:flex;align-items:center;gap:8px;padding:14px 12px 10px;font-weight:600;white-space:nowrap}
+  .brand{display:flex;align-items:center;gap:8px;padding:14px 12px 6px;font-weight:600;white-space:nowrap}
+  .collapse-row{padding:0 12px 8px}
+  #collapseBtn{display:grid;place-items:center;width:38px;height:30px;padding:0;border-radius:8px}
+  #app.collapsed .collapse-row{display:flex;justify-content:center;padding:0 0 8px}
   #app.collapsed .brand-ver,#app.collapsed .sec,#app.collapsed .item .txt,#app.collapsed .account .who{display:none}
   #app.collapsed .side-actions{flex-direction:column}
   #app.collapsed .account{justify-content:center}
@@ -136,9 +139,11 @@
 <div id="app">
   <aside>
     <div class="brand">
-      <button id="collapseBtn" title="折叠/展开侧边栏" style="padding:4px 8px">☰</button>
       <img class="brand-icon" src="/icons/apple-touch-icon.png" alt="HUSHFUSION Forge" />
       <span class="brand-ver" id="ver"></span>
+    </div>
+    <div class="collapse-row">
+      <button id="collapseBtn" title="折叠/展开侧边栏" aria-label="折叠/展开侧边栏">☰</button>
     </div>
     <div class="side-actions">
       <button class="primary icon-btn" id="newAgentBtn" title="创建新智能体" aria-label="创建新智能体">
