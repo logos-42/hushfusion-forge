@@ -99,6 +99,8 @@ type UpdateInfo struct {
 type Server struct {
 	addr        string
 	dir         string
+	root        string // workspace 根目录（工具/共享配置的锚点）
+	osDir       string // <root>/os 或 HUSHFUSION_OS_DIR
 	mu          sync.Mutex
 	st          State
 	http        *http.Server
@@ -119,6 +121,12 @@ var writeTools = []string{"shell", "mem.set", "mem.reset", "tasks.add", "tasks.s
 
 // New 构造服务器并加载/初始化状态。
 func New(addr, dir string) (*Server, error) {
+	root, _ := os.Getwd()
+	return NewWithRoot(addr, dir, root)
+}
+
+// NewWithRoot 指定 workspace 根目录；Web/App/CLI/TUI 共用 <os>/forge.config.json。
+func NewWithRoot(addr, dir, root string) (*Server, error) {
 	if dir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -129,13 +137,22 @@ func New(addr, dir string) (*Server, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	s := &Server{addr: addr, dir: dir, agentSesses: map[string]*agent.Session{}, secrets: map[string]Secret{}}
+	if strings.TrimSpace(root) == "" {
+		root, _ = os.Getwd()
+	}
+	osDir := strings.TrimSpace(os.Getenv("HUSHFUSION_OS_DIR"))
+	if osDir == "" {
+		osDir = filepath.Join(root, "os")
+	}
+	s := &Server{addr: addr, dir: dir, root: root, osDir: osDir,
+		agentSesses: map[string]*agent.Session{}, secrets: map[string]Secret{}}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
 	if err := s.loadSecrets(); err != nil {
 		return nil, err
 	}
+	s.applySharedConfig() // 共享配置优先于 Web 自己的旧 state
 	s.normalize()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/bootstrap", s.handleBootstrap)
@@ -144,6 +161,7 @@ func New(addr, dir string) (*Server, error) {
 	mux.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("POST /api/chat", s.handleChat)
+	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
 	mux.HandleFunc("POST /api/profile", s.handleProfile)
 	mux.HandleFunc("GET /api/update", s.handleUpdate)
 	mux.HandleFunc("POST /api/update/apply", s.handleUpdateApply)
@@ -192,6 +210,17 @@ func (s *Server) load() error {
 func (s *Server) normalize() {
 	if !strings.HasPrefix(s.st.Profile.Avatar, "data:image/") {
 		s.st.Profile.Avatar = svgAvatar("forge-user", firstRune(s.st.Profile.Name))
+	}
+	if v := strings.TrimSpace(os.Getenv("HUSHFUSION_AI_PROVIDER")); v != "" {
+		s.st.Settings.Provider = v // CLI/TUI 注入的共享 provider 优先
+	}
+	if v := strings.TrimSpace(os.Getenv("HUSHFUSION_AI_MODEL")); v != "" {
+		s.st.Settings.Model = v
+	}
+	if v := strings.TrimSpace(os.Getenv("HUSHFUSION_AI_BASE_URL")); v != "" {
+		sec := s.secrets[s.st.Settings.Provider]
+		sec.BaseURL = v
+		s.secrets[s.st.Settings.Provider] = sec
 	}
 	if s.st.Settings.Provider == "" {
 		s.st.Settings.Provider = defaultProvider()
@@ -329,6 +358,65 @@ func (s *Server) hasKey(provider string) bool {
 }
 
 func (s *Server) secretFor(provider string) Secret { return s.secrets[provider] }
+
+// sharedConfig 是 <os>/forge.config.json 的读取视图（与 TUI/CLI 共用）。
+type sharedConfig struct {
+	Provider     string `json:"provider,omitempty"`
+	Model        string `json:"model,omitempty"`
+	BaseURL      string `json:"base_url,omitempty"`
+	APIKey       string `json:"api_key,omitempty"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
+}
+
+func (s *Server) sharedConfigPath() string {
+	return filepath.Join(s.osDir, "forge.config.json")
+}
+
+// applySharedConfig 让 Web 启动时优先复用 TUI/CLI/SDK 的模型配置与 key。
+func (s *Server) applySharedConfig() {
+	b, err := os.ReadFile(s.sharedConfigPath())
+	if err != nil {
+		return
+	}
+	var c sharedConfig
+	if json.Unmarshal(b, &c) != nil {
+		return
+	}
+	if c.Provider != "" {
+		s.st.Settings.Provider = c.Provider
+	}
+	if c.Model != "" {
+		s.st.Settings.Model = c.Model
+	}
+	if c.APIKey != "" || c.BaseURL != "" {
+		s.secrets[c.Provider] = Secret{APIKey: c.APIKey, BaseURL: c.BaseURL}
+	}
+}
+
+// saveSharedConfig 把 Web 里选的模型/端点/密钥写回共享配置，CLI/TUI 下次启动即复用。
+func (s *Server) saveSharedConfig(settings Settings, apiKey, baseURL string) error {
+	path := s.sharedConfigPath()
+	m := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &m)
+	}
+	m["provider"] = settings.Provider
+	m["model"] = settings.Model
+	if strings.TrimSpace(apiKey) != "" {
+		m["api_key"] = strings.TrimSpace(apiKey)
+	}
+	if strings.TrimSpace(baseURL) != "" {
+		m["base_url"] = strings.TrimSpace(baseURL)
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(s.osDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
+}
 
 func (s *Server) snapshot() State {
 	s.mu.Lock()
@@ -471,6 +559,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "智能体不存在", http.StatusBadRequest)
 		return
 	}
+	history := append([]Message(nil), sess.Messages...) // 不含本轮新 user，避免 Turn 重复追加
 	sess.Messages = append(sess.Messages, Message{
 		Role: "user", Text: msg, Images: append([]string(nil), req.Images...), Time: time.Now(),
 	})
@@ -485,7 +574,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	as, err := s.agentSession(settings, sess, *agent)
+	as, err := s.agentSession(settings, sess, *agent, history)
 	if err != nil {
 		s.writeJSON(w, map[string]any{"error": err.Error()})
 		return
@@ -502,35 +591,124 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]any{"reply": reply})
 }
 
+// handleChatStream 是 SSE 版聊天：delta 事件逐字推送，done 事件给最终回复。
+func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
+	var req chatReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	msg := strings.TrimSpace(req.Message)
+	if msg == "" && len(req.Images) == 0 {
+		http.Error(w, "消息或图片不能为空", http.StatusBadRequest)
+		return
+	}
+	if err := imagesOK(req.Images); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	sess := s.findSession(req.SessionID)
+	if sess == nil {
+		s.mu.Unlock()
+		http.Error(w, "会话不存在", http.StatusBadRequest)
+		return
+	}
+	agentID := req.AgentID
+	if agentID == "" {
+		agentID = sess.AgentID
+	}
+	ag := s.findAgent(agentID)
+	if ag == nil {
+		s.mu.Unlock()
+		http.Error(w, "智能体不存在", http.StatusBadRequest)
+		return
+	}
+	history := append([]Message(nil), sess.Messages...)
+	sess.Messages = append(sess.Messages, Message{
+		Role: "user", Text: msg, Images: append([]string(nil), req.Images...), Time: time.Now(),
+	})
+	if sess.Title == "新对话" && len([]rune(msg)) > 4 {
+		sess.Title = string([]rune(msg)[:min(24, len([]rune(msg)))])
+	}
+	settings := s.st.Settings
+	if err := s.save(); err != nil {
+		s.mu.Unlock()
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.mu.Unlock()
+
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	send := func(event string, v any) {
+		b, _ := json.Marshal(v)
+		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	as, err := s.agentSession(settings, sess, *ag, history)
+	if err != nil {
+		send("error", map[string]string{"error": err.Error()})
+		return
+	}
+	reply, err := as.TurnStream(r.Context(), textWithImages(Message{Role: "user", Text: msg, Images: req.Images}), func(ev ai.StreamEvent) {
+		if ev.Type == ai.StreamContent && ev.Text != "" {
+			send("delta", map[string]string{"text": ev.Text})
+		}
+	})
+	if err != nil {
+		send("error", map[string]string{"error": err.Error()})
+		return
+	}
+	s.mu.Lock()
+	sess.Messages = append(sess.Messages, Message{Role: "assistant", Text: reply, Time: time.Now()})
+	_ = s.save()
+	s.mu.Unlock()
+	send("done", map[string]string{"reply": reply})
+}
+
 // agentSession 为 Web 会话构造/复用 agent Runtime（带工具；写工具按设置放行）。
-func (s *Server) agentSession(settings Settings, sess *Session, ag Agent) (*agent.Session, error) {
+// history 是「本轮 user 之前」的历史，避免 Turn/TurnStream 再追加时重复。
+func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, history []Message) (*agent.Session, error) {
 	if s.agentSesses == nil {
 		s.agentSesses = map[string]*agent.Session{}
 	}
 	if as, ok := s.agentSesses[sess.ID]; ok {
 		return as, nil
 	}
-	root, err := os.Getwd()
-	if err != nil {
-		root = "."
+	root := strings.TrimSpace(s.root)
+	if root == "" {
+		root, _ = os.Getwd()
 	}
 	cfg := agent.DefaultConfig()
 	cfg.Provider, cfg.Model = settings.Provider, settings.Model
 	cfg.MaxBudgetTokens = agent.BudgetFromEnv(agent.BudgetForModel(settings.Model, 0.6))
 	cfg.Root = root
-	chat := func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+	opts := func() ai.ClientOptions {
 		sec := s.secretFor(settings.Provider)
 		base := firstNonEmpty(sec.BaseURL, os.Getenv("HUSHFUSION_AI_BASE_URL"))
-		return ai.Chat(ctx, settings.Provider, req, ai.ClientOptions{BaseURL: base, APIKey: sec.APIKey})
+		return ai.ClientOptions{BaseURL: base, APIKey: sec.APIKey}
+	}
+	chat := func(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
+		return ai.Chat(ctx, settings.Provider, req, opts())
 	}
 	as := agent.NewSession(cfg, chat, agent.NewRegistry(), systemPrompt(ag))
+	as.SetStreamChat(func(ctx context.Context, req ai.ChatRequest, on func(ai.StreamEvent)) (*ai.ChatResponse, error) {
+		return ai.ChatStream(ctx, settings.Provider, req, on, opts())
+	})
 	_ = as.RegisterBuiltinTools(nil) // read/ls/shell/mem/tasks；skill.view 无技能目录不注册
 	as.AllowWrites = map[string]bool{}
 	for _, t := range settings.Tools {
 		as.AllowWrites[t] = true
 	}
 	var msgs []agent.Message
-	for _, m := range sess.Messages {
+	for _, m := range history {
 		if m.Role != "user" && m.Role != "assistant" {
 			continue
 		}
@@ -720,6 +898,12 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+	}
+	// 写回共享配置：Web/App/CLI/TUI/SDK 下次启动读到同一份 provider/model/key。
+	if err := s.saveSharedConfig(s.st.Settings, sec.APIKey, sec.BaseURL); err != nil {
+		s.mu.Unlock()
+		http.Error(w, "共享配置写入失败: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.agentSesses = map[string]*agent.Session{} // 设置变更 → 下轮重建会话
 	if err := s.save(); err != nil {

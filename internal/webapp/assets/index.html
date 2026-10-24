@@ -121,9 +121,7 @@
     <div id="chat"><div class="empty"><h1>我们要做什么？</h1></div></div>
     <div id="imgPreview"></div>
     <div class="composer">
-      <button id="imgBtn" title="添加图片">🖼</button>
-      <button id="toolsBtn" title="添加工具">＋</button>
-      <input type="file" id="imgFile" accept="image/*" multiple style="display:none" />
+      <button id="toolsBtn" title="添加图片 / 工具">＋</button>
       <textarea id="input" placeholder="发送消息；Enter 发送，Shift+Enter 换行"></textarea>
       <button class="primary" id="send">发送</button>
     </div>
@@ -163,7 +161,9 @@
 </dialog>
 
 <dialog id="toolsDlg">
-  <h3 style="margin:0 0 6px">工具开关</h3>
+  <h3 style="margin:0 0 6px">添加图片 / 工具</h3>
+  <label>图片（最多 4 张，单张 ≤1MB）</label>
+  <input type="file" id="imgFile" accept="image/*" multiple />
   <div class="hint">read / ls 等只读工具默认可用；下面是需要放行的写工具。</div>
   <div class="tools" id="toolList"></div>
   <div class="row"><button onclick="document.getElementById('toolsDlg').close()">取消</button><button class="primary" id="toolsSave">保存</button></div>
@@ -217,7 +217,7 @@ function renderSidebar(){
   $('sessions').innerHTML=sess.map(s=>`
     <div class="item ${s.id===state.active_session_id?'active':''}" onclick="pickSession('${s.id}')">
       <div class="ava">${iconChat()}</div>
-      <div class="txt"><b>${escapeHTML(s.title||'新对话')}</b><small>${s.messages.length} 条</small></div>
+      <div class="txt"><b>${escapeHTML(s.title||'新对话')}</b><small>${(s.messages||[]).length} 条</small></div>
     </div>`).join('');
   $('accountName').textContent=state.profile.name;
   $('accountDid').textContent=state.profile.did;
@@ -233,8 +233,9 @@ function renderHeader(){
 function renderChat(){
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   const chat=$('chat');
-  if(!s||s.messages.length===0){chat.innerHTML='<div class="empty"><h1>我们要做什么？</h1></div>';return;}
-  chat.innerHTML=s.messages.map(m=>`
+  const msgs=(s&&s.messages)||[];
+  if(!s||msgs.length===0){chat.innerHTML='<div class="empty"><h1>我们要做什么？</h1></div>';return;}
+  chat.innerHTML=msgs.map(m=>`
     <div class="msg ${m.role==='user'?'user':'bot'}">${escapeHTML(m.text)}
       ${(m.images||[]).map(im=>`<img src="${im}" alt="">`).join('')}
     </div>`).join('');
@@ -318,7 +319,23 @@ function readImage(file,cb){
   r.onload=()=>cb(r.result);
   r.readAsDataURL(file);
 }
-$('imgBtn').onclick=()=>$('imgFile').click();
+function readAvatar(file,cb){
+  if(!file.type.startsWith('image/')){alert('请选择图片文件');return;}
+  if(file.size>128*1024){alert('头像不能超过 128KB');return;}
+  const r=new FileReader();
+  r.onload=()=>cb(r.result);
+  r.readAsDataURL(file);
+}
+$('agentAvatarFile').onchange=e=>{
+  const f=e.target.files[0];
+  if(f) readAvatar(f,url=>{e.target.dataset.avatar=url;});
+  e.target.value='';
+};
+$('profileAvatarFile').onchange=e=>{
+  const f=e.target.files[0];
+  if(f) readAvatar(f,url=>{e.target.dataset.avatar=url;});
+  e.target.value='';
+};
 $('imgFile').onchange=e=>{
   const files=[...e.target.files].slice(0,4);
   files.forEach(f=>readImage(f,dataUrl=>{
@@ -361,21 +378,61 @@ $('updateBtn').onclick=async()=>{
   }catch(e){alert('更新失败: '+e.message);}
 };
 
+async function streamChat(payload,onDelta){
+  const r=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  if(!r.ok){const t=await r.text();throw new Error(t||('HTTP '+r.status));}
+  const reader=r.body.getReader(),dec=new TextDecoder();
+  let buf='',final='';
+  while(true){
+    const {value,done}=await reader.read();
+    if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let idx;
+    while((idx=buf.indexOf('\n\n'))>=0){
+      const raw=buf.slice(0,idx);buf=buf.slice(idx+2);
+      let event='message',data='';
+      raw.split('\n').forEach(line=>{
+        if(line.startsWith('event:'))event=line.slice(6).trim();
+        else if(line.startsWith('data:'))data+=line.slice(5).trim();
+      });
+      if(!data)continue;
+      let obj={};try{obj=JSON.parse(data)}catch{obj={text:data}}
+      if(event==='delta'&&obj.text)onDelta(obj.text);
+      else if(event==='error')throw new Error(obj.error||'流式错误');
+      else if(event==='done')final=obj.reply||'';
+    }
+  }
+  return final;
+}
+
 async function send(){
   if(busy)return;
   const text=$('input').value.trim();
   if(!text&&pendingImages.length===0)return;
+  const s=state.sessions.find(x=>x.id===state.active_session_id);
+  if(!s){alert('先创建一个会话');return;}
   busy=true;$('input').value='';
   const images=[...pendingImages];pendingImages=[];renderImgPreview();
-  const s=state.sessions.find(x=>x.id===state.active_session_id);
+  s.messages=s.messages||[];
   s.messages.push({role:'user',text,images,time:new Date().toISOString()});
+  const assistant={role:'assistant',text:'',time:new Date().toISOString()};
+  s.messages.push(assistant);
   renderChat();
+  const payload={session_id:s.id,agent_id:state.active_agent_id,message:text,images};
   try{
-    const j=await api('/api/chat',{method:'POST',body:JSON.stringify({session_id:s.id,agent_id:state.active_agent_id,message:text,images})});
-    if(j.error)throw new Error(j.error);
-    s.messages.push({role:'assistant',text:j.reply,time:new Date().toISOString()});
+    const reply=await streamChat(payload,delta=>{assistant.text+=delta;renderChat();});
+    if(reply)assistant.text=reply;
+    if(!assistant.text)throw new Error('模型没有返回内容');
   }catch(e){
-    s.messages.push({role:'assistant',text:'（错误）'+e.message,time:new Date().toISOString()});
+    if(!assistant.text){
+      try{
+        const j=await api('/api/chat',{method:'POST',body:JSON.stringify(payload)});
+        if(j.error)throw new Error(j.error);
+        assistant.text=j.reply;
+      }catch(e2){
+        assistant.text='（错误）'+(e.message||e2.message);
+      }
+    }
   }finally{busy=false;renderSidebar();renderChat();}
 }
 $('send').onclick=send;

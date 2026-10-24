@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/logos-42/hushfusion-forge/internal/config"
+	"github.com/logos-42/hushfusion-forge/internal/envload"
 	"github.com/logos-42/hushfusion-forge/internal/webapp"
 )
 
@@ -25,7 +27,17 @@ func cmdWeb(args []string) int {
 	if code := parseFlags(fs, args); code >= 0 {
 		return code
 	}
-	srv, err := webapp.New(*addr, *dir)
+	root := repoRoot()
+	base := os.Getenv("HUSHFUSION_OS_DIR")
+	if base == "" {
+		base = filepath.Join(root, "os")
+	}
+	// Web/App/CLI/TUI/SDK 共用同一份 workspace 模型配置与 .env。
+	applyWorkspaceConfig(base)
+	if _, err := envload.Load(root); err != nil {
+		note("web: .env 加载失败: %v", err)
+	}
+	srv, err := webapp.NewWithRoot(*addr, *dir, root)
 	if err != nil {
 		return fail("web: %v", err)
 	}

@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -121,6 +123,52 @@ func TestImageValidation(t *testing.T) {
 	}
 	if got := textWithImages(Message{Text: "hi", Images: []string{"data:image/png;base64,AA"}}); !strings.Contains(got, "![image](data:image/png;base64,AA)") {
 		t.Fatalf("textWithImages = %q", got)
+	}
+}
+
+// Web 必须复用 <os>/forge.config.json（CLI/TUI/SDK 的同一份配置）。
+func TestSharedWorkspaceConfig(t *testing.T) {
+	root := t.TempDir()
+	osDir := filepath.Join(root, "os")
+	if err := os.MkdirAll(osDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"provider":"deepseek","model":"deepseek-reasoner","api_key":"sk-shared","base_url":"https://api.deepseek.com/v1"}`
+	if err := os.WriteFile(filepath.Join(osDir, "forge.config.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewWithRoot("", t.TempDir(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := s.snapshot()
+	if st.Settings.Provider != "deepseek" || st.Settings.Model != "deepseek-reasoner" {
+		t.Fatalf("未复用共享配置: %+v", st.Settings)
+	}
+	if sec := s.secretFor("deepseek"); sec.APIKey != "sk-shared" || sec.BaseURL == "" {
+		t.Fatalf("未复用共享密钥/端点: %+v", sec)
+	}
+	ts := httptest.NewServer(s.http.Handler)
+	defer ts.Close()
+	resp, err := http.Post(ts.URL+"/api/settings", "application/json",
+		strings.NewReader(`{"provider":"custom","model":"m","api_key":"sk-new","base_url":"http://127.0.0.1:9/v1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("保存 settings HTTP %d", resp.StatusCode)
+	}
+	b, err := os.ReadFile(filepath.Join(osDir, "forge.config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]any
+	if err := json.Unmarshal(b, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved["provider"] != "custom" || saved["model"] != "m" || saved["api_key"] != "sk-new" {
+		t.Fatalf("共享配置未写回: %+v", saved)
 	}
 }
 
