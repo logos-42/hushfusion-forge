@@ -105,7 +105,7 @@
   .msg-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;padding:0 3px;opacity:.8}
   .msg-row.bot .msg-actions{opacity:1}
   .msg-row.user .msg-actions{display:none}
-  .msg-row.user.active .msg-actions{display:flex}
+  .msg-row.user:hover .msg-actions{display:flex}
   .msg-actions button{display:grid;place-items:center;width:32px;height:32px;padding:0;border-radius:9px;background:transparent;border:1px solid transparent;color:var(--muted)}
   .msg-actions button:hover{background:var(--panel2);border-color:var(--line);color:var(--text)}
   .msg-actions svg{width:18px;height:18px}
@@ -374,7 +374,7 @@ function renderChat(){
     const edit=m.role==='user'?`<button title="编辑" aria-label="编辑" onclick="editMessage(${i})">${iconPencil}</button>`:'';
     const streaming=m.streaming?' streaming':'';
     return `<div class="msg-row ${role}">
-      <div class="msg ${role}${streaming}" ${m.role==='user'?'onclick="toggleUserActions(this)"':''}>${body}
+      <div class="msg ${role}${streaming}">${body}
         ${(m.images||[]).map(im=>`<img src="${im}" alt="">`).join('')}
       </div>
       <div class="msg-actions">
@@ -437,12 +437,6 @@ async function copyText(text){
 async function copyMessage(i){
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   if(s&&s.messages&&s.messages[i])await copyText(s.messages[i].text||'');
-}
-function toggleUserActions(el){
-  const row=el.closest('.msg-row');
-  const open=row.classList.contains('active');
-  document.querySelectorAll('.msg-row.user.active').forEach(x=>x.classList.remove('active'));
-  if(!open)row.classList.add('active');
 }
 function editMessage(i){
   const s=state.sessions.find(x=>x.id===state.active_session_id);

@@ -2,6 +2,7 @@
 
 | 日期 | 主题 | 子题 | 变更 | 证据 / 门 |
 |---|---|---|---|---|
+| 2026-10-24 | HUSHFUSION Forge Desktop | **Web：用户消息操作改为悬停显示** | 用户气泡操作区不再需要点击气泡，鼠标移到气泡/附近区域即显示；AI 回复操作保持常显。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：气泡留白、操作图标放大、用户操作按需显示** | 聊天区左右 padding 提升到 `clamp(40px,10vw,180px)`；消息操作 SVG 按钮 26→32px、图标 14→18px；用户气泡操作按钮默认隐藏，点击气泡才展开；AI 回复操作按钮保持常显。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：放大气泡内边距与字号** | 用户气泡 padding `4px 10px`→`8px 14px`、字号 14→15px、行高 1.4、圆角 11px；对话气泡最大宽度 72%→78%；AI 气泡同步 15px 字号。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
 | 2026-10-24 | HUSHFUSION Forge Desktop | **Web：修复用户气泡多出两行空白** | 根因是 `.msg.user` 的 `white-space:pre-wrap` 把模板缩进换行也渲染成了空白行；改为 `white-space:normal`（换行已由 `<br>` 处理），气泡只保留真实文字行。 | `go build` 通过；`node --check` 通过；本地 `index=200`。 |
