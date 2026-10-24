@@ -308,6 +308,9 @@ func (s *Session) RegisterBuiltinTools(skills *SkillsDir) error {
 	if err := registerPythonTool(s.registry, s); err != nil {
 		return err
 	}
+	if err := registerTermTools(s.registry, s); err != nil {
+		return err
+	}
 	if err := registerPathTools(s.registry, s); err != nil {
 		return err
 	}

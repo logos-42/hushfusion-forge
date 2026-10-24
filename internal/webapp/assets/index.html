@@ -390,7 +390,11 @@ function renderRoomControls(){
 }
 function renderRoomMeta(st,members){
   const s=$('roomState'),m=$('roomMembers');
-  if(s)s.textContent=st&&st.active?`交流中 · 第 ${st.turn||0}/${st.max_turns||6} 轮 · ${st.topic||''}`:'未在主动交流';
+  if(s){
+    let base=st&&st.active?`交流中 · 第 ${st.turn||0}/${st.max_turns||6} 轮 · ${st.topic||''}`:'未在主动交流';
+    if(st&&st.channel)base+=` · orbitdb: ${st.orbit_status||'checking'}`;
+    s.textContent=base;
+  }
   if(m)m.innerHTML=(members||[]).map(x=>`<span><span class="dot ${x.status||''}"></span>${escapeHTML(x.agent_name||x.agent_id||'')}</span>`).join('');
 }
 function renderRoom(msgs){

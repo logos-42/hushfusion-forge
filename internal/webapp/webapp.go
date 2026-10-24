@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -29,6 +30,7 @@ import (
 	"github.com/logos-42/hushfusion-forge/internal/agent"
 	"github.com/logos-42/hushfusion-forge/internal/ai"
 	"github.com/logos-42/hushfusion-forge/internal/config"
+	"github.com/logos-42/hushfusion-forge/internal/dchat"
 	"github.com/logos-42/hushfusion-forge/internal/identity"
 	"github.com/logos-42/hushfusion-forge/internal/privacy"
 )
@@ -101,6 +103,12 @@ type RoomState struct {
 	MaxTurns     int       `json:"max_turns,omitempty"`
 	NextAgentID  string    `json:"next_agent_id,omitempty"`
 	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	// Channel 是交流的分布式维护频道（orbitdb）；空 = 不镜像。
+	Channel string `json:"channel,omitempty"`
+	// OrbitStatus 是最近一次 orbitdb 同步状态（ok / checking / 错误摘要）。
+	OrbitStatus string `json:"orbit_status,omitempty"`
+	// ArchiveCount 是已 git 存档的商议消息数（journal.jsonl 追加游标）。
+	ArchiveCount int `json:"archive_count,omitempty"`
 }
 
 // RoomMember 是参与商议的智能体心跳。
@@ -164,6 +172,10 @@ type Server struct {
 
 	roomMu     sync.Mutex
 	roomCancel context.CancelFunc
+
+	// dchat 是去中心化频道（orbitdb 等）的 Node 助手管理器（懒启动）。
+	dchatMu sync.Mutex
+	dchatM  *dchat.Manager
 }
 
 // chatRun 是一轮后台对话的共享状态（部分文本 + 取消）。
@@ -325,6 +337,7 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 	s.st.RoomState = RoomState{
 		Active: true, Topic: topic, Participants: participantIDs,
 		Turn: 0, MaxTurns: maxTurns, NextAgentID: participantIDs[0], UpdatedAt: time.Now(),
+		Channel: "orbitdb", OrbitStatus: "checking",
 	}
 	s.st.RoomMembers = []RoomMember{
 		{AgentID: agents[0].ID, AgentName: agents[0].Name, Status: "idle", LastBeat: time.Now()},
@@ -332,6 +345,7 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.save()
 	s.mu.Unlock()
+	go s.orbitProbe() // 异步探测 orbitdb 可用性，状态写回 RoomState.OrbitStatus
 	s.postRoom(agents[0], "内部商议", "", "invite", "开始内部商议："+topic)
 	s.startRoomLoop()
 	s.writeJSON(w, map[string]any{"ok": true, "state": s.roomStateSnapshot()})
@@ -350,7 +364,15 @@ func (s *Server) handleRoomStop(w http.ResponseWriter, r *http.Request) {
 	_ = s.save()
 	s.mu.Unlock()
 	s.postRoom(Agent{}, "", "", "discuss", "内部商议已停止")
+	go s.autoArchive()
 	s.writeJSON(w, map[string]any{"ok": true})
+}
+
+// autoArchive 商议结束时自动 git 存档；失败把错误摘要投递到 room（不假装成功）。
+func (s *Server) autoArchive() {
+	if _, err := s.roomArchive(); err != nil {
+		s.postRoom(Agent{}, "", "", "discuss", "（git 存档失败："+err.Error()+"）")
+	}
 }
 
 func (s *Server) roomStateSnapshot() RoomState {
@@ -414,6 +436,7 @@ func (s *Server) roomStep(ctx context.Context) {
 		_ = s.save()
 		s.mu.Unlock()
 		s.postRoom(Agent{}, "", "", "discuss", "内部商议达到轮次上限，已自动结束")
+		go s.autoArchive()
 		return
 	}
 	ag := s.findAgent(st.NextAgentID)
@@ -587,8 +610,12 @@ func (s *Server) postRoom(ag Agent, sessionTitle, sessionID, kind, text string) 
 			s.st.RoomMembers[i].Status = "idle"
 		}
 	}
+	mirror := s.st.RoomState.Channel != ""
 	_ = s.save()
 	s.mu.Unlock()
+	if mirror {
+		go s.roomMirror(msg) // best-effort 镜像到 orbitdb，不阻塞本地 room
+	}
 }
 
 const (
@@ -600,7 +627,7 @@ const (
 )
 
 // writeTools 是 Web 外壳里可放行的写工具（读工具默认可用）。
-var writeTools = []string{"shell", "python.run", "mem.set", "mem.reset", "tasks.add", "tasks.set_state"}
+var writeTools = []string{"shell", "python.run", "term.run", "mem.set", "mem.reset", "tasks.add", "tasks.set_state", "room.archive"}
 
 // New 构造服务器并加载/初始化状态。
 func New(addr, dir string) (*Server, error) {
@@ -700,7 +727,75 @@ func (s *Server) ListenAndServe() error {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.stopRoomLoop()
 	s.kernel.close()
+	s.dchatMu.Lock()
+	if s.dchatM != nil {
+		_ = s.dchatM.Close()
+		s.dchatM = nil
+	}
+	s.dchatMu.Unlock()
 	return s.http.Shutdown(ctx)
+}
+
+// dchatManager 懒启动去中心化频道助手；失败 fail-closed 返回错误。
+func (s *Server) dchatManager() (*dchat.Manager, error) {
+	s.dchatMu.Lock()
+	defer s.dchatMu.Unlock()
+	if s.dchatM != nil {
+		return s.dchatM, nil
+	}
+	m, err := dchat.NewManager()
+	if err != nil {
+		return nil, err
+	}
+	s.dchatM = m
+	return m, nil
+}
+
+// orbitProbe 异步探测 orbitdb 可用性并写回 RoomState.OrbitStatus。
+func (s *Server) orbitProbe() {
+	m, err := s.dchatManager()
+	if err != nil {
+		s.setOrbitStatus("不可用: " + err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := m.Status(ctx, "orbitdb"); err != nil {
+		s.setOrbitStatus("不可用: " + err.Error())
+		return
+	}
+	s.setOrbitStatus("ok")
+}
+
+func (s *Server) setOrbitStatus(status string) {
+	status = strings.TrimSpace(status)
+	if len([]rune(status)) > 200 {
+		status = string([]rune(status)[:200]) + "…"
+	}
+	s.mu.Lock()
+	s.st.RoomState.OrbitStatus = status
+	_ = s.save()
+	s.mu.Unlock()
+}
+
+// roomMirror 把一条商议消息镜像到 orbitdb（异步、best-effort，不阻塞本地 room）。
+func (s *Server) roomMirror(msg RoomMessage) {
+	m, err := s.dchatManager()
+	if err != nil {
+		s.setOrbitStatus("不可用: " + err.Error())
+		return
+	}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, err := m.Send(ctx, "orbitdb", "forge-room", string(b)); err != nil {
+		s.setOrbitStatus("同步失败: " + err.Error())
+		return
+	}
+	s.setOrbitStatus("ok")
 }
 
 func security(next http.Handler) http.Handler {
@@ -768,9 +863,14 @@ func (s *Server) normalize() {
 		s.st.Settings.Tools = append([]string(nil), writeTools...)
 		s.st.Settings.ToolsInitialized = true
 	}
-	// 0.3.0 新增 python.run：已有用户若开着 shell，则补上 Python 执行能力。
-	if s.st.Settings.ToolsInitialized && hasString(s.st.Settings.Tools, "shell") && !hasString(s.st.Settings.Tools, "python.run") {
-		s.st.Settings.Tools = append(s.st.Settings.Tools, "python.run")
+	// 0.3.0 新增 python.run；0.5.0 新增 term.run / room.archive：
+	// 已有用户若开着 shell，则补上这些执行/存档能力。
+	if s.st.Settings.ToolsInitialized && hasString(s.st.Settings.Tools, "shell") {
+		for _, t := range []string{"python.run", "term.run", "room.archive"} {
+			if !hasString(s.st.Settings.Tools, t) {
+				s.st.Settings.Tools = append(s.st.Settings.Tools, t)
+			}
+		}
 	}
 	for i := range s.st.Agents {
 		if needsNewAvatar(s.st.Agents[i].Avatar) {
@@ -1751,8 +1851,82 @@ func (s *Server) registerRoomTools(as *agent.Session, sess *Session, ag Agent) e
 			return "", fmt.Errorf("room.post: text 为空")
 		}
 		s.postRoom(ag, sess.Title, sess.ID, "discuss", text)
-		return "已发送到内部商议频道", nil
+		return "已发送到内部商议频道（本地 + orbitdb 镜像）", nil
 	}})
+}
+
+// registerRoomArchiveTool 注册 room.archive：把商议记录增量存档到独立 git 仓库。
+func registerRoomArchiveTool(as *agent.Session, s *Server) error {
+	archiveSpec := ai.ToolSpec{Type: "function"}
+	archiveSpec.Function.Name = "room.archive"
+	archiveSpec.Function.Description = "把内部商议记录增量写入 room-archive 独立 git 仓库并提交（只提交上次存档之后的新消息）"
+	return as.RegisterTool(agent.Tool{Spec: archiveSpec, Write: true, Executor: func(_ context.Context, _ string, _ map[string]any) (string, error) {
+		return s.roomArchive()
+	}})
+}
+
+// roomArchive 把 [ArchiveCount, len(Room)) 的新消息追加进
+// <data-dir>/room-archive/journal.jsonl 并 git commit（独立仓库，不碰用户项目）。
+func (s *Server) roomArchive() (string, error) {
+	s.mu.Lock()
+	msgs := make([]RoomMessage, 0, len(s.st.Room))
+	msgs = append(msgs, s.st.Room...)
+	count := s.st.RoomState.ArchiveCount
+	s.mu.Unlock()
+	if count >= len(msgs) {
+		return "无新增商议消息，跳过 git 存档", nil
+	}
+	newMsgs := msgs[count:]
+	dir := filepath.Join(s.dir, "room-archive")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		if out, err := runGit(dir, "init", "-q"); err != nil {
+			return "", fmt.Errorf("git init 失败: %v\n%s", err, out)
+		}
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "journal.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	for _, m := range newMsgs {
+		b, err := json.Marshal(m)
+		if err != nil {
+			_ = f.Close()
+			return "", err
+		}
+		if _, err := f.Write(append(b, '\n')); err != nil {
+			_ = f.Close()
+			return "", err
+		}
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	if out, err := runGit(dir, "add", "journal.jsonl"); err != nil {
+		return "", fmt.Errorf("git add 失败: %v\n%s", err, out)
+	}
+	summary := fmt.Sprintf("room archive: +%d messages (total %d)", len(newMsgs), len(msgs))
+	if out, err := runGit(dir, "-c", "user.name=forge-room", "-c", "user.email=forge@local",
+		"commit", "-q", "-m", summary); err != nil {
+		return "", fmt.Errorf("git commit 失败: %v\n%s", err, out)
+	}
+	s.mu.Lock()
+	s.st.RoomState.ArchiveCount = len(msgs)
+	_ = s.save()
+	s.mu.Unlock()
+	return summary + "（git 已提交）", nil
+}
+
+func runGit(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if len(out) > 8*1024 {
+		out = out[:8*1024]
+	}
+	return string(out), err
 }
 
 func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, history []Message) (*agent.Session, error) {
@@ -1807,6 +1981,7 @@ func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, histor
 	})
 	_ = as.RegisterBuiltinTools(nil) // read/ls/shell/mem/tasks；skill.view 无技能目录不注册
 	_ = s.registerRoomTools(as, sess, ag)
+	_ = registerRoomArchiveTool(as, s)
 	as.AllowWrites = map[string]bool{}
 	for _, t := range settings.Tools {
 		as.AllowWrites[t] = true

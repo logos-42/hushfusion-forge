@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/logos-42/hushfusion-forge/internal/ai"
@@ -125,6 +126,10 @@ type Session struct {
 
 	// tok 是 token 计数器（缺省 LenDiv4 估算；可注入精确实现）。
 	tok Tokenizer
+
+	// term 是常驻后端终端（bash）进程；term.run 之间保持 cwd/env 状态。
+	termMu sync.Mutex
+	term   *termProc
 }
 
 // Usage 返回会话累计的真实用量（provider 未上报则为空账本）。

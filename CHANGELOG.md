@@ -9,6 +9,13 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 
 ---
 
+## 0.5.0 — 2026-10-25（MINOR：TERM 后端终端 + OrbitDB 商议 + git 存档）
+
+- 新增 `term.run` / `term.reset`：后端常驻 bash 终端，cwd 与环境跨调用保持（`cd`/`export` 生效）；超时杀进程并自动重启回 workspace 根；输出 256KB 截断；受 workspace 锁与隐私围栏约束；Web 写工具默认开启。
+- 智能体内部商议接入 OrbitDB：`room.start` 后每条 `room_post`/自动汇报异步镜像到 orbitdb 频道（`forge-room`），状态写回 `RoomState.OrbitStatus`（ok / checking / 错误摘要）；缺 Node 依赖时 fail-closed，如实显示"不可用"，不假装已同步。
+- 新增 `room.archive`：把商议记录增量写入 `<data-dir>/room-archive` 独立 git 仓库（`journal.jsonl` 追加游标 + `git commit`），不碰用户项目仓库；商议结束（手动停止或轮次上限）自动存档，失败把错误投递回商议频道。
+- 商议面板状态行显示 `orbitdb: <状态>`。
+
 ## 0.4.0 — 2026-10-25（MINOR：隐私/注入围栏 + Python 执行 + 主动商议）
 
 - 用户消息进入会话前硬拒绝私钥、API key、GitHub/AWS/Slack token、Bearer 等凭据；拒绝的消息不落库、不发模型。旧历史/房间消息启动时也清洗。
