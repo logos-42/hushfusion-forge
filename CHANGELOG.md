@@ -9,6 +9,14 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 
 ---
 
+## 0.2.6 — 2026-10-24（MINOR：每智能体 workspace + 全局专属目录）
+
+- 智能体新增 `workspace`（工具根/`shell` cwd）与 `global_dir`（全局专属目录）；编辑智能体可直接填写，留空自动回落。
+- 默认全局目录为 `~/.forge/web/agents/<agent-id>`；`mem.set` 落盘到 `<global_dir>/memory.json`，跨会话保留。
+- `read` / `ls` 支持访问 workspace 或全局目录内的绝对路径；越界仍拒绝。
+- 系统提示自动注入 Workspace、全局目录、记忆文件路径；新增只读工具 `agent.paths` 供智能体自查。
+- 启动时把已有智能体补齐默认目录；重启/换会话后记忆自动加载并注入 system。
+
 ## 0.2.5 — 2026-10-24（PATCH：更新入口常驻检查，不改判据）
 
 - 启动后每 60 秒检查一次更新；新版本发布后，已打开的页面无需刷新即可出现底部更新按钮。

@@ -266,6 +266,22 @@ func registerSkillView(r *ToolRegistry, skills *SkillsDir) error {
 // 写工具（mem.set / mem.reset / tasks.add / tasks.set_state）全部标记 Write=true：
 // 模型调用它们需要会话白名单，否则 fail-closed 拒绝 —— 这正是「AI 只能提议」
 // 纪律的工具级落地。
+// registerPathTools 让智能体随时自查自己的路径，不依赖用户重复告知。
+func registerPathTools(r *ToolRegistry, s *Session) error {
+	return r.Register(Tool{
+		Spec:  mkSpec("agent.paths", "返回当前智能体的 workspace、全局专属目录、记忆文件路径（系统自动配置）", nil, nil),
+		Write: false,
+		Executor: func(_ context.Context, _ string, _ map[string]any) (string, error) {
+			memPath := s.Memory.Path()
+			if strings.TrimSpace(memPath) == "" {
+				memPath = "（当前为内存模式，未落盘）"
+			}
+			return fmt.Sprintf("workspace=%s\nglobal_dir=%s\nmemory_file=%s\nshell_cwd=%s",
+				s.workspaceRoot(), s.globalRoot(), memPath, s.workspaceRoot()), nil
+		},
+	})
+}
+
 func (s *Session) RegisterBuiltinTools(skills *SkillsDir) error {
 	// delegate 仅在根会话（nesting==0）注册；子会话不带它 → 结构上禁止无限委派。
 	if s.nesting == 0 {
@@ -280,6 +296,9 @@ func (s *Session) RegisterBuiltinTools(skills *SkillsDir) error {
 		return err
 	}
 	if err := registerFSTools(s.registry, s); err != nil {
+		return err
+	}
+	if err := registerPathTools(s.registry, s); err != nil {
 		return err
 	}
 	return registerSkillView(s.registry, skills)

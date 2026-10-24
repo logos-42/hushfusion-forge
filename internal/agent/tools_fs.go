@@ -35,28 +35,63 @@ func (s *Session) workspaceRoot() string {
 	return root
 }
 
-// safePath 把相对路径锚定到 workspace，拒绝越界。
+func (s *Session) globalRoot() string {
+	root := strings.TrimSpace(s.cfg.GlobalRoot)
+	if root == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		return abs
+	}
+	return root
+}
+
+func under(root, abs string) bool {
+	if root == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, abs)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// safePath 把相对路径锚定到 workspace；绝对路径允许落在 workspace
+// 或智能体的全局专属目录内，其余越界一律拒绝。
 func (s *Session) safePath(p string) (string, error) {
 	root := s.workspaceRoot()
 	if strings.TrimSpace(p) == "" {
 		return root, nil
 	}
-	abs, err := filepath.Abs(filepath.Join(root, p))
-	if err != nil {
-		return "", err
+	p = expandHome(strings.TrimSpace(p))
+	var abs string
+	var err error
+	if filepath.IsAbs(p) {
+		abs = filepath.Clean(p)
+	} else {
+		abs, err = filepath.Abs(filepath.Join(root, p))
+		if err != nil {
+			return "", err
+		}
 	}
-	rel, err := filepath.Rel(root, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("路径越出 workspace：%s", p)
+	if !under(root, abs) && !under(s.globalRoot(), abs) {
+		return "", fmt.Errorf("路径越出 workspace/global：%s", p)
 	}
 	return abs, nil
+}
+
+func expandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimLeft(p[1:], `/\`))
+		}
+	}
+	return p
 }
 
 // registerFSTools 注册 read / ls / shell 三个工具。
 func registerFSTools(r *ToolRegistry, s *Session) error {
 	if err := r.Register(Tool{
-		Spec: mkSpec("read", "读取 workspace 内的文本文件（超过 32KB 截断）",
-			map[string]string{"path": "相对 workspace 的路径"}, []string{"path"}),
+		Spec: mkSpec("read", "读取 workspace 或全局目录内的文本文件（超过 32KB 截断）",
+			map[string]string{"path": "相对 workspace 的路径，或 workspace/global 内的绝对路径"}, []string{"path"}),
 		Executor: func(_ context.Context, _ string, args map[string]any) (string, error) {
 			p, _ := args["path"].(string)
 			abs, err := s.safePath(p)
@@ -76,8 +111,8 @@ func registerFSTools(r *ToolRegistry, s *Session) error {
 		return err
 	}
 	if err := r.Register(Tool{
-		Spec: mkSpec("ls", "列出 workspace 内的目录（目录名带 /）",
-			map[string]string{"path": "相对路径（空 = workspace 根）"}, nil),
+		Spec: mkSpec("ls", "列出 workspace 或全局目录内的目录（目录名带 /）",
+			map[string]string{"path": "相对 workspace 的路径/绝对路径（空 = workspace 根）"}, nil),
 		Executor: func(_ context.Context, _ string, args map[string]any) (string, error) {
 			p, _ := args["path"].(string)
 			abs, err := s.safePath(p)

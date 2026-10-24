@@ -62,6 +62,9 @@ type Config struct {
 	BaseURL  string
 	// Root 是 read/ls/shell 工具的工作区根（空 = 当前目录；越界路径一律拒绝）。
 	Root string
+	// GlobalRoot 是智能体的全局专属目录（记忆/跨项目资料）。
+	// read/ls 允许绝对路径访问该目录；shell 仍以 Root 为 cwd。
+	GlobalRoot string
 	// Tokenizer 是可注入的 token 计数器（nil = 默认 len/4 估算，见 tokenizer.go）。
 	// 注入精确实现后，预算判断与压缩触发都按真实 token 数走。
 	Tokenizer Tokenizer

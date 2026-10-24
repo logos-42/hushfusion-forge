@@ -213,6 +213,8 @@
   <h3 style="margin:0 0 6px" id="agentDlgTitle">创建新智能体</h3>
   <label>名字</label><input id="agentNameInput" placeholder="例如：等离子体研究智能体" />
   <label>人格 / 职责</label><input id="agentPersona" placeholder="可选" />
+  <label>Workspace 目录</label><input id="agentWorkspace" placeholder="留空 = 当前项目根目录；支持 ~/path" />
+  <label>全局专属目录</label><input id="agentGlobalDir" placeholder="留空 = ~/.forge/web/agents/&lt;id&gt;；支持 ~/path" />
   <label>头像（自动生成；也可上传图片）</label>
   <div class="avatars" id="agentAvatarPresets"></div>
   <input type="file" id="agentAvatarFile" accept="image/*" style="margin-top:8px" />
@@ -577,6 +579,8 @@ function editAgent(id){
   $('agentSave').textContent='保存';
   $('agentNameInput').value=a.name||'';
   $('agentPersona').value=a.persona||'';
+  $('agentWorkspace').value=a.workspace||'';
+  $('agentGlobalDir').value=a.global_dir||'';
   const presets=['熔岩','等离子','星云','磁场','量子','混沌','曙光','深空'];
   $('agentAvatarPresets').innerHTML=presets.map((n,i)=>`<button title="${n}"><img src="${svgAvatar(n+a.id,n[0])}" alt="${n}"></button>`).join('');
   [...$('agentAvatarPresets').children].forEach((b,i)=>b.onclick=()=>{$('agentAvatarFile').dataset.avatar=svgAvatar(presets[i]+a.id,presets[i][0]);});
@@ -587,7 +591,7 @@ $('newAgentBtn').onclick=()=>{
   editingAgentId='';
   $('agentDlgTitle').textContent='创建新智能体';
   $('agentSave').textContent='创建';
-  $('agentNameInput').value='';$('agentPersona').value='';
+  $('agentNameInput').value='';$('agentPersona').value='';$('agentWorkspace').value='';$('agentGlobalDir').value='';
   const presets=['熔岩','等离子','星云','磁场','量子','混沌','曙光','深空'];
   $('agentAvatarPresets').innerHTML=presets.map((n,i)=>`<button title="${n}"><img src="${svgAvatar(n+Date.now(),n[0])}" alt="${n}"></button>`).join('');
   [...$('agentAvatarPresets').children].forEach((b,i)=>b.onclick=()=>{$('agentAvatarFile').dataset.avatar=svgAvatar(presets[i]+Date.now(),presets[i][0]);});
@@ -597,7 +601,7 @@ $('newAgentBtn').onclick=()=>{
 $('agentSave').onclick=async()=>{
   try{
     const avatar=$('agentAvatarFile').dataset.avatar||svgAvatar($('agentNameInput').value||'agent',($('agentNameInput').value||'A')[0]);
-    const payload={name:$('agentNameInput').value,avatar,persona:$('agentPersona').value};
+    const payload={name:$('agentNameInput').value,avatar,persona:$('agentPersona').value,workspace:$('agentWorkspace').value,global_dir:$('agentGlobalDir').value};
     if(editingAgentId){
       const a=await api('/api/agents/update',{method:'POST',body:JSON.stringify(Object.assign({id:editingAgentId},payload))});
       const i=state.agents.findIndex(x=>x.id===a.id);

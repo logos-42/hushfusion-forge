@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/logos-42/hushfusion-forge/internal/agent"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
@@ -109,6 +112,93 @@ func TestUpdateAgentNameAndAvatar(t *testing.T) {
 	}
 	if updated.DID == "" || updated.ID != created.Agent.ID {
 		t.Fatal("更新不应改变 ID/DID")
+	}
+}
+
+func TestAgentDirectories(t *testing.T) {
+	root := t.TempDir()
+	appDir := t.TempDir()
+	s, err := NewWithRoot("", appDir, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.http.Handler)
+	defer ts.Close()
+
+	ws := t.TempDir()
+	gd := filepath.Join(t.TempDir(), "agent-global")
+	body, _ := json.Marshal(map[string]string{
+		"name": "目录测试", "workspace": ws, "global_dir": gd,
+	})
+	resp, err := http.Post(ts.URL+"/api/agents", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("创建智能体 HTTP %d", resp.StatusCode)
+	}
+	var created struct {
+		Agent   Agent   `json:"agent"`
+		Session Session `json:"session"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if created.Agent.Workspace != ws || created.Agent.GlobalDir != gd {
+		t.Fatalf("智能体目录 = %+v", created.Agent)
+	}
+	if _, err := os.Stat(gd); err != nil {
+		t.Fatalf("全局目录未创建: %v", err)
+	}
+
+	// 不传目录时：workspace 回落到项目根，全局目录回落到应用数据目录。
+	body, _ = json.Marshal(map[string]string{"name": "默认目录"})
+	resp, err = http.Post(ts.URL+"/api/agents", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fallback struct {
+		Agent Agent `json:"agent"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&fallback); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if fallback.Agent.Workspace != root {
+		t.Fatalf("默认 workspace = %q, want %q", fallback.Agent.Workspace, root)
+	}
+	wantGlobal := filepath.Join(appDir, "agents", fallback.Agent.ID)
+	if fallback.Agent.GlobalDir != wantGlobal {
+		t.Fatalf("默认 global = %q, want %q", fallback.Agent.GlobalDir, wantGlobal)
+	}
+
+	// 不存在的 workspace 必须拒绝，而不是悄悄回落到默认目录。
+	resp, err = http.Post(ts.URL+"/api/agents/update", "application/json",
+		bytes.NewReader([]byte(`{"id":"`+created.Agent.ID+`","name":"目录测试","workspace":"/definitely/not/here"}`)))
+	if err == nil {
+		resp.Body.Close()
+	}
+	if err != nil || resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("非法 workspace 应 400, err=%v", err)
+	}
+
+	// Runtime 必须把记忆写到智能体的全局目录，而不是进程内存。
+	as, err := s.agentSession(Settings{}, &Session{ID: "memory-test"}, created.Agent, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMem := filepath.Join(gd, "memory.json")
+	if as.Memory.Path() != wantMem {
+		t.Fatalf("记忆文件 = %q, want %q", as.Memory.Path(), wantMem)
+	}
+	as.Memory.Set("soul_design", "ok")
+	reloaded, err := agent.NewMemStoreFile(wantMem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := reloaded.Get("soul_design"); got != "ok" {
+		t.Fatalf("记忆未落盘: %q", got)
 	}
 }
 

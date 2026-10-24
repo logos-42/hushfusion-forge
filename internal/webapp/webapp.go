@@ -46,6 +46,8 @@ type Agent struct {
 	Avatar    string    `json:"avatar"`
 	DID       string    `json:"did"`
 	Persona   string    `json:"persona,omitempty"`
+	Workspace string    `json:"workspace,omitempty"`  // 工具根目录（read/ls/shell 的 cwd）
+	GlobalDir string    `json:"global_dir,omitempty"` // 全局专属目录（记忆/跨项目资料）
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -279,8 +281,54 @@ func (s *Server) normalize() {
 		if needsNewAvatar(s.st.Agents[i].Avatar) {
 			s.st.Agents[i].Avatar = svgAvatar(s.st.Agents[i].ID, firstRune(s.st.Agents[i].Name))
 		}
+		if strings.TrimSpace(s.st.Agents[i].Workspace) == "" {
+			s.st.Agents[i].Workspace = s.root
+		}
+		if strings.TrimSpace(s.st.Agents[i].GlobalDir) == "" {
+			s.st.Agents[i].GlobalDir = s.globalDirFor(s.st.Agents[i].ID)
+		}
+		_ = os.MkdirAll(s.st.Agents[i].GlobalDir, 0o700)
 	}
 	_ = s.save()
+}
+
+// globalDirFor 返回智能体在用户级 Forge 数据目录下的专属目录。
+func (s *Server) globalDirFor(agentID string) string {
+	if strings.TrimSpace(agentID) == "" {
+		agentID = "default"
+	}
+	return filepath.Join(s.dir, "agents", filepath.Base(agentID))
+}
+
+// resolveAgentDir 把用户输入解析成绝对目录；空值用 fallback，支持 ~。
+func resolveAgentDir(input, fallback string) (string, error) {
+	p := strings.TrimSpace(input)
+	if p == "" {
+		p = strings.TrimSpace(fallback)
+	}
+	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		p = filepath.Join(home, strings.TrimLeft(p[1:], `/\`))
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
+}
+
+func requireWorkspaceDir(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("workspace 不存在：%w", err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("workspace 不是目录：%s", path)
+	}
+	return nil
 }
 
 func firstRune(s string) string {
@@ -492,9 +540,11 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 type createAgentReq struct {
-	Name    string `json:"name"`
-	Avatar  string `json:"avatar"`
-	Persona string `json:"persona"`
+	Name      string `json:"name"`
+	Avatar    string `json:"avatar"`
+	Persona   string `json:"persona"`
+	Workspace string `json:"workspace"`
+	GlobalDir string `json:"global_dir"`
 }
 
 func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
@@ -516,6 +566,15 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "头像非法（data:image，≤128KB）", http.StatusBadRequest)
 		return
 	}
+	workspace, err := resolveAgentDir(req.Workspace, s.root)
+	if err != nil {
+		http.Error(w, "workspace 路径非法: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := requireWorkspaceDir(workspace); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id, err := identity.Generate()
@@ -523,12 +582,24 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	agentID := fmt.Sprintf("agent-%d", time.Now().UnixNano())
+	globalDir, err := resolveAgentDir(req.GlobalDir, s.globalDirFor(agentID))
+	if err != nil {
+		http.Error(w, "全局目录路径非法: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := os.MkdirAll(globalDir, 0o700); err != nil {
+		http.Error(w, "创建全局目录失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	agent := Agent{
-		ID:        fmt.Sprintf("agent-%d", time.Now().UnixNano()),
+		ID:        agentID,
 		Name:      name,
 		Avatar:    avatar,
 		DID:       id.DID(),
 		Persona:   strings.TrimSpace(req.Persona),
+		Workspace: workspace,
+		GlobalDir: globalDir,
 		CreatedAt: time.Now(),
 	}
 	sess := Session{ID: fmt.Sprintf("sess-%d", time.Now().UnixNano()), AgentID: agent.ID, Title: "新对话", CreatedAt: time.Now()}
@@ -544,10 +615,12 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateAgentReq struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Avatar  string `json:"avatar"`
-	Persona string `json:"persona"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Avatar    string `json:"avatar"`
+	Persona   string `json:"persona"`
+	Workspace string `json:"workspace"`
+	GlobalDir string `json:"global_dir"`
 }
 
 func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
@@ -576,10 +649,30 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "头像非法（data:image，≤128KB）", http.StatusBadRequest)
 		return
 	}
+	workspace, err := resolveAgentDir(req.Workspace, s.root)
+	if err != nil {
+		http.Error(w, "workspace 路径非法: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := requireWorkspaceDir(workspace); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	globalDir, err := resolveAgentDir(req.GlobalDir, s.globalDirFor(ag.ID))
+	if err != nil {
+		http.Error(w, "全局目录路径非法: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := os.MkdirAll(globalDir, 0o700); err != nil {
+		http.Error(w, "创建全局目录失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	ag.Name = name
 	ag.Avatar = avatar
 	ag.Persona = strings.TrimSpace(req.Persona)
-	s.agentSesses = map[string]*agent.Session{} // 人格/名字变更 → 下轮重建系统提示
+	ag.Workspace = workspace
+	ag.GlobalDir = globalDir
+	s.agentSesses = map[string]*agent.Session{} // 人格/目录变更 → 下轮重建系统提示
 	if err := s.save(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1014,14 +1107,25 @@ func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, histor
 	if as, ok := s.agentSesses[sess.ID]; ok {
 		return as, nil
 	}
-	root := strings.TrimSpace(s.root)
+	root := strings.TrimSpace(ag.Workspace)
+	if root == "" {
+		root = strings.TrimSpace(s.root)
+	}
 	if root == "" {
 		root, _ = os.Getwd()
+	}
+	globalDir := strings.TrimSpace(ag.GlobalDir)
+	if globalDir == "" {
+		globalDir = s.globalDirFor(ag.ID)
+	}
+	if err := os.MkdirAll(globalDir, 0o700); err != nil {
+		return nil, fmt.Errorf("创建全局目录失败: %w", err)
 	}
 	cfg := agent.DefaultConfig()
 	cfg.Provider, cfg.Model = settings.Provider, settings.Model
 	cfg.MaxBudgetTokens = agent.BudgetFromEnv(agent.BudgetForModel(settings.Model, 0.6))
 	cfg.Root = root
+	cfg.GlobalRoot = globalDir
 	opts := func() ai.ClientOptions {
 		sec := s.secretFor(settings.Provider)
 		base := firstNonEmpty(sec.BaseURL, os.Getenv("HUSHFUSION_AI_BASE_URL"))
@@ -1031,6 +1135,14 @@ func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, histor
 		return ai.Chat(ctx, settings.Provider, req, opts())
 	}
 	as := agent.NewSession(cfg, chat, agent.NewRegistry(), systemPrompt(ag))
+	mem, err := agent.NewMemStoreFile(filepath.Join(globalDir, "memory.json"))
+	if err != nil {
+		return nil, fmt.Errorf("加载智能体记忆失败: %w", err)
+	}
+	as.Memory = mem
+	if mem.Len() > 0 {
+		as.AppendSystem(mem.Summary())
+	}
 	as.SetStreamChat(func(ctx context.Context, req ai.ChatRequest, on func(ai.StreamEvent)) (*ai.ChatResponse, error) {
 		return ai.ChatStream(ctx, settings.Provider, req, on, opts())
 	})
@@ -1075,11 +1187,19 @@ func imagesOK(imgs []string) error {
 }
 
 func systemPrompt(a Agent) string {
+	memFile := ""
+	if strings.TrimSpace(a.GlobalDir) != "" {
+		memFile = filepath.Join(a.GlobalDir, "memory.json")
+	}
 	return fmt.Sprintf(`你是 HUSHFUSION Forge 的智能体 %q。
 身份 DID：%s
 人格：%s
+Workspace：%s（read/ls 的相对路径从这里解析；shell 的 cwd）
+全局专属目录：%s（跨项目的记忆/资料；read/ls 允许访问这里的绝对路径）
+记忆文件：%s（mem.set 会写入这里；跨会话保留）
+路径规则：以上路径由系统自动注入，不需要问用户；不确定时调用 agent.paths 自查。不要声称存在未经验证的文件。
 核心特质（内在持有，不表演）：去成长、去爱；去合作、去分享、去探索；极致专注，在矛盾中找平衡，在混沌中找秩序。
-诚实纪律：不知道就说不知道；完成只能被证据证明。`, a.Name, a.DID, a.Persona)
+诚实纪律：不知道就说不知道；完成只能被证据证明。`, a.Name, a.DID, a.Persona, a.Workspace, a.GlobalDir, memFile)
 }
 
 func (s *Server) findAgent(id string) *Agent {
