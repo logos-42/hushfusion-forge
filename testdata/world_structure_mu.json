@@ -1,6 +1,6 @@
 {
  "schema": "world_structure_mu",
- "generated_by": "python/aux/world_structure.py --world mu",
+ "generated_by": "python/auxiliary/world_structure.py --world mu",
  "documents": [
   "docs/world-commutator-candidates.md",
   "docs/world-structure.md (section 1: the ruler)"

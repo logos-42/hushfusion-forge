@@ -1,6 +1,6 @@
 {
  "schema": "world_structure_v2",
- "generated_by": "python/aux/world_structure.py",
+ "generated_by": "python/auxiliary/world_structure.py",
  "documents": [
   "docs/world-structure.md (sections 1, 3, 4, 5)",
   "docs/world-protocol.md (section 8)"

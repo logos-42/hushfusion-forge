@@ -1629,7 +1629,7 @@ type probe struct {
 func cmdXcheck(args []string) int {
 	fs := newFlagSet("xcheck", "xcheck [--out FILE] [--set probes|golden] [--designs N] [--points]",
 		"Export Br, Bz and |B| for several designs × sample points in exactly the JSON\n"+
-			"schema of testdata/golden_field_samples.json, so that python/aux/oracle.py can\n"+
+			"schema of testdata/golden_field_samples.json, so that python/auxiliary/oracle.py can\n"+
 			"recompute them independently (acceptance gate G5 input).\n\n"+
 			"--set probes (default): the frozen golden baseline design, a deterministic in-box\n"+
 			"  perturbation, and the box centre, all on the same 32-point layout.\n"+

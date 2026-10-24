@@ -7,7 +7,7 @@ import (
 )
 
 // TestEmitSchemaParityFixture 通过真实的写入方产出一个小的 registry, 这样独立的
-// Python 检查器 (python/aux/schema_check.py, 验收门 G9) 可以对 Go 实际写出的字节
+// Python 检查器 (python/auxiliary/schema_check.py, 验收门 G9) 可以对 Go 实际写出的字节
 // 运行, 而不是对 Go 自己以为的 schema 运行。Python 检查器从外部重新声明了字段名、
 // metric 键、param 块以及 “design_id == experiment_id 的 D%04d” 规则, 所以这里改名
 // 会被一个与 Go 不共享任何代码的东西抓住。
@@ -16,7 +16,7 @@ import (
 // 临时目录之外。用法:
 //
 //	FORGE_FIXTURE_DIR=/tmp/forge-fix go test ./internal/registry/ -run TestEmitSchemaParityFixture
-//	python3 python/aux/schema_check.py /tmp/forge-fix/registry.jsonl
+//	python3 python/auxiliary/schema_check.py /tmp/forge-fix/registry.jsonl
 func TestEmitSchemaParityFixture(t *testing.T) {
 	dir := os.Getenv("FORGE_FIXTURE_DIR")
 	if dir == "" {

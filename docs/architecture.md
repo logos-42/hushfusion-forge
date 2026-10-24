@@ -42,7 +42,7 @@ flowchart TB
     end
 
     subgraph L5["辅助层 — Python 独立复核"]
-        PY["python/aux<br/>scipy oracle · schema 校验<br/>规则对账 · 出图 · 世界客户端"]
+        PY["python/auxiliary<br/>scipy oracle · schema 校验<br/>规则对账 · 出图 · 世界客户端"]
     end
 
     subgraph L6["证据层 — 唯一权威"]
@@ -117,7 +117,7 @@ flowchart TB
 | 内核层 | `internal/oskernel/` | syscall 分发 + 子系统驱动 + 写前守卫 | 进程内审计，不替代 `oscheck` 日门 |
 | 执行引擎 | `internal/kernel/` | 串行 FIFO 执行、生命周期记录、模型租约（Bolloon kernel 的 Go 原生移植） | 只暴露机制，不判「该不该继续」 |
 | 引擎层 | `internal/physics` `objective` `search` `runner` `registry` `knowledge` `design` `mu` `rlenv` `harness` `world` | 设计 → 评分 → 记录 → 学习闭环 | 分数可位级回算（`internal/objective`） |
-| 辅助层 | `python/aux/` | 独立 scipy oracle、schema 校验、规则对账、出图、世界客户端 | **不 import 任何 Go 代码**（G8/G10 的前提） |
+| 辅助层 | `python/auxiliary/` | 独立 scipy oracle、schema 校验、规则对账、出图、世界客户端 | **不 import 任何 Go 代码**（G8/G10 的前提） |
 | 证据层 | `runs/<tag>/` `scripts/verify.sh` `docs/wiki/` | 唯一权威：原始记录 + 门禁 + 当前共识 | SKIP ≠ 通过；红门就是红 |
 | 治理 | `internal/owners/` `AGENTS.md` `CONTRACT.md` | 所有权冻结门（变异会红）、wiki-first 范式、写回纪律 | 合同变更须同 commit 同步 CONTRACT.md |
 

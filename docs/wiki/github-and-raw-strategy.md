@@ -32,8 +32,8 @@ tags: [strategy, git]
 ## 为什么把 14 MB 的 JSONL 也提交（而不是只交聚合表）
 
 聚合表（`results.json` 的 aggregate 块）是**结论**；registry 是**证据**。本仓的立场是：
-结论必须能被人从证据独立重算出来。`python3 python/aux/schema_check.py runs/phase0/registry.jsonl`
-与 `python3 python/aux/analyze.py runs/phase0` 就是给外部复核者准备的两条命令，
+结论必须能被人从证据独立重算出来。`python3 python/auxiliary/schema_check.py runs/phase0/registry.jsonl`
+与 `python3 python/auxiliary/analyze.py runs/phase0` 就是给外部复核者准备的两条命令，
 它们只需要这个文件 + 代码。用 14 MB 换"任何人都能复核"，值。
 
 若将来预算涨到十万级评估，再改为压缩归档 + 摘要（届时 `analyze.py` 仍能从聚合块复核）。

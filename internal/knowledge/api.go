@@ -58,7 +58,7 @@ const (
 )
 
 // Rule 是一条挖掘出来的设计规则。JSON 键是冻结的（与 Python 辅助层
-// python/aux/analyze.py 共享）。
+// python/auxiliary/analyze.py 共享）。
 type Rule struct {
 	RuleID        string  `json:"rule_id"`
 	Parameter     string  `json:"parameter"`

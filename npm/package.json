@@ -1,0 +1,40 @@
+{
+  "name": "hushfusion-forge",
+  "version": "0.2.1",
+  "description": "HUSHFUSION Forge desktop/web launcher and Node.js SDK",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "lib/index.js",
+  "bin": {
+    "hushfusion-forge": "bin/hushfusion-forge.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --check bin/hushfusion-forge.js && node --check lib/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/logos-42/hushfusion-forge.git",
+    "directory": "npm"
+  },
+  "homepage": "https://github.com/logos-42/hushfusion-forge",
+  "bugs": {
+    "url": "https://github.com/logos-42/hushfusion-forge/issues"
+  },
+  "keywords": [
+    "hushfusion",
+    "forge",
+    "ai-agent",
+    "desktop",
+    "sdk",
+    "cli"
+  ]
+}

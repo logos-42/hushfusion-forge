@@ -19,9 +19,9 @@
     任何运行数量上的不一致都会作为警告上报。
 
 用法：
-    python3 python/aux/rules_check.py --rules knowledge/design_rules.md \\
+    python3 python/auxiliary/rules_check.py --rules knowledge/design_rules.md \\
                                       --registry runs/phase0/registry.jsonl
-    python3 python/aux/rules_check.py --selftest     # 把这道门本身跑一遍
+    python3 python/auxiliary/rules_check.py --selftest     # 把这道门本身跑一遍
 """
 
 from __future__ import annotations

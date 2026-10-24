@@ -165,7 +165,7 @@ G18 是**三条一起**判:
 
 1. **Go 回放**:`forge world serve --replay testdata/world_trace_golden.jsonl` —— 把 trace 里的每条 `req`
    喂给一个新建的世界,产出的响应必须与 `resp` **逐字节**相同。任一行不同即红,并打印该行的行号与差异。
-2. **Python 回放**:`python3 python/aux/world_client.py --replay testdata/world_trace_golden.jsonl` ——
+2. **Python 回放**:`python3 python/auxiliary/world_client.py --replay testdata/world_trace_golden.jsonl` ——
    同样逐字节比对。**这条才是跨语言证据**:它证明 Python 客户端看到的世界与 Go 写下的是同一个世界。
 3. **握手自校验(反向断言)**:把一个**故意改坏**的 hello 喂给客户端(维度或 spec 哈希不符),客户端
    **必须非零退出**。只测好消息的门不算门。

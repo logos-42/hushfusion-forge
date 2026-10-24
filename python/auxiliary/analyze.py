@@ -22,7 +22,7 @@ Go 写下的 aggregate 块会由 ``runs`` 独立重算，任何不一致都会�
 绘图栈不应该把整个分析拖垮。
 
 用法：
-    python3 python/aux/analyze.py runs/phase0
+    python3 python/auxiliary/analyze.py runs/phase0
 """
 
 from __future__ import annotations

@@ -98,7 +98,7 @@ bash scripts/verify.sh phase0
 # 世界协议（G18）：serve / 逐字节回放 / 另一种语言里的客户端
 printf '%s\n' '{"op":"hello"}' '{"op":"reset","seed":12345}' '{"op":"close"}' | go run ./cmd/forge world serve
 go run ./cmd/forge world serve --replay testdata/world_trace_golden.jsonl
-python3 python/aux/world_client.py --replay testdata/world_trace_golden.jsonl
+python3 python/auxiliary/world_client.py --replay testdata/world_trace_golden.jsonl
 
 # 单次运行
 go run ./cmd/forge baseline

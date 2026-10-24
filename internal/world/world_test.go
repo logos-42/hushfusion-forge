@@ -159,7 +159,7 @@ func TestDefaultsComeFromConfig(t *testing.T) {
 //     的**字面量**写死在测试里, 因此任何一次键序、分隔符或浮点格式的漂移都会变红;
 //  2. 同一份 spec 每次都得到同一个串。
 //
-// 客户端(Python)复算的就是同一段字节: 见 python/aux/world_client.py 的
+// 客户端(Python)复算的就是同一段字节: 见 python/auxiliary/world_client.py 的
 // canonical_spec_json。这条哈希是跨语言握手自校验的锚点。
 func TestHelloHashIsStableAndPinned(t *testing.T) {
 	const canonical = `{"lower":[0.1,0.1,0.1,0.1,-1.2,-1.2,-1.2,-1.2,10000,10000,10000,10000],` +

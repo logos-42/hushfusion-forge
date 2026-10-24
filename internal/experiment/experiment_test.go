@@ -442,7 +442,7 @@ func TestLoadReportMalformedJSON(t *testing.T) {
 }
 
 // TestReportJSONSchemaKeysFrozen 锁定 Python 辅助层
-// (python/aux/analyze.py) 所读取的键。在这里改名就是一次 schema 迁移，
+// (python/auxiliary/analyze.py) 所读取的键。在这里改名就是一次 schema 迁移，
 // 必须变红 (red)。
 func TestReportJSONSchemaKeysFrozen(t *testing.T) {
 	data, err := json.Marshal(sampleReport())

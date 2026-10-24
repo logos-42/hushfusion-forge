@@ -20,7 +20,7 @@ tags: [data, raw]
 | **派生的知识与图表** | `knowledge/design_rules.md`、`runs/phase0/{report.md,figures/}` | Go 报告层 + Python 分析层 | 中：规则由 G14 与 scipy 对账，图表是渲染产物（可重生） |
 
 `testdata/` 是**唯一真源**：任何 Go 侧数字与它对不上就是 Go 侧错。
-`python/aux/oracle.py --emit-golden` 可以重算它，但默认拒绝写入 `testdata/`（要 `--force`），
+`python/auxiliary/oracle.py --emit-golden` 可以重算它，但默认拒绝写入 `testdata/`（要 `--force`），
 避免"用新实现悄悄改真值"。
 
 ## raw 根目录（不在此仓）

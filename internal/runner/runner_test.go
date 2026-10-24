@@ -324,11 +324,11 @@ func TestScorePanicsWhenTheRunnerHasNoDependencies(t *testing.T) {
 
 // TestEmitScoredRegistryFixture 用真实的评分路径 (objective.Evaluator ->
 // runner.Score -> registry) 产出一个 registry, 这样独立的 Python 检查器
-// (python/aux/schema_check.py, 门 G9) 可以对真正被求值过的 record 运行, 而不是对
+// (python/auxiliary/schema_check.py, 门 G9) 可以对真正被求值过的 record 运行, 而不是对
 // 手写的夹具运行:
 //
 //	FORGE_FIXTURE_DIR=/tmp/forge-fix go test ./internal/runner/ -run TestEmitScoredRegistryFixture
-//	python3 python/aux/schema_check.py /tmp/forge-fix/registry.jsonl
+//	python3 python/auxiliary/schema_check.py /tmp/forge-fix/registry.jsonl
 //
 // 除非设置了 FORGE_FIXTURE_DIR 否则跳过; 在 stage A/B 仍是骨架期间也跳过 (以上游
 // panic 为原因) —— 它从不伪造一次求值。

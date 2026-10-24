@@ -16,27 +16,27 @@ Python **不是** 引擎的一部分；它是引擎的独立检查。这里不 i
 
 ```bash
 # gate G5: recompute the golden numbers and compare
-python3 python/aux/oracle.py --check-golden testdata/
+python3 python/auxiliary/oracle.py --check-golden testdata/
 
 # compare a Go field export with the scipy oracle, point by point.
 # `forge xcheck` writes runs/scratch/field_samples.json in exactly this shape.
-python3 python/aux/oracle.py --compare-go runs/scratch/field_samples.json
+python3 python/auxiliary/oracle.py --compare-go runs/scratch/field_samples.json
 # ... and like-for-like against Go's 5 mm near-wire clamp (see below)
-python3 python/aux/oracle.py --compare-go runs/scratch/field_samples.json --proximity-floor 0.005
+python3 python/auxiliary/oracle.py --compare-go runs/scratch/field_samples.json --proximity-floor 0.005
 
 # regenerate golden files into a scratch dir for human review (refuses testdata/)
-python3 python/aux/oracle.py --emit-golden /tmp/golden_review
+python3 python/auxiliary/oracle.py --emit-golden /tmp/golden_review
 
 # gate G9
-python3 python/aux/schema_check.py runs/phase0/registry.jsonl
+python3 python/auxiliary/schema_check.py runs/phase0/registry.jsonl
 
 # rule reconciliation (needs what stage E writes); --selftest exercises the gate itself
-python3 python/aux/rules_check.py --rules knowledge/design_rules.md \
+python3 python/auxiliary/rules_check.py --rules knowledge/design_rules.md \
                                  --registry runs/phase0/registry.jsonl
-python3 python/aux/rules_check.py --selftest
+python3 python/auxiliary/rules_check.py --selftest
 
 # figures + table for one run
-python3 python/aux/analyze.py runs/phase0
+python3 python/auxiliary/analyze.py runs/phase0
 
 # tests
 python3 -m pytest python/tests -q

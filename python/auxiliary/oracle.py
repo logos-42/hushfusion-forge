@@ -16,9 +16,9 @@
 本文件必须命中的锚点见 CONTRACT.md §5。
 
 CLI
-    python3 python/aux/oracle.py --check-golden testdata/     # 验收门 G5
-    python3 python/aux/oracle.py --compare-go <go_xcheck.json>
-    python3 python/aux/oracle.py --emit-golden <dir>          # 供人工复核
+    python3 python/auxiliary/oracle.py --check-golden testdata/     # 验收门 G5
+    python3 python/auxiliary/oracle.py --compare-go <go_xcheck.json>
+    python3 python/auxiliary/oracle.py --emit-golden <dir>          # 供人工复核
 """
 
 from __future__ import annotations
@@ -766,7 +766,7 @@ def emit_golden(out_dir, force=False):
     spec_path = REPO_ROOT / "testdata" / "golden_spec.json"
     spec = Spec.load(spec_path)
     grids = Grids(spec)
-    prov = {"generated_by": "python/aux/oracle.py --emit-golden",
+    prov = {"generated_by": "python/auxiliary/oracle.py --emit-golden",
             "spec_source": str(spec_path), "numpy": np.__version__,
             "python": sys.version.split()[0], "note": "independent scipy recomputation"}
 

@@ -69,7 +69,7 @@ NVIDIA 厉害的不是 GPU，而是把 GPU 经营成一个自我强化的工业�
 | 目标函数（场强/镜比/体积/纹波/造价/约束） | `internal/objective` | ✅ 分数可位级回算（`Σweighted − w·Σpenalties`） |
 | 随机/分层/进化/热启动进化 | `internal/search` | ✅ 等预算整数性、位级复现性、Workers 不变性全绿 |
 | 每次评估落盘（含 term 分解 + 谱系） | `internal/registry`+`runner` | ✅ 100 goroutine 并发无缺口；截断尾部自修复 |
-| performance vs iteration 曲线 | `internal/report` + `python/aux/analyze.py` | ✅ 报告 7 章节 + 出图 + 独立复评 |
+| performance vs iteration 曲线 | `internal/report` + `python/auxiliary/analyze.py` | ✅ 报告 7 章节 + 出图 + 独立复评 |
 | 一页"我们学到了什么" | `internal/knowledge` → `knowledge/design_rules.md` | ✅ 规则由「每个 run 同号」硬过滤挖出，scipy 独立对账 |
 
 **Phase 0 实测结果**（2026-09-26，`runs/phase0/`，12001 条记录，4 方法 × 3 seed × 1000 次评估，纯计算 5.5 s）：

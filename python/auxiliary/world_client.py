@@ -22,8 +22,8 @@
 
 用法::
 
-    python3 python/aux/world_client.py --replay testdata/world_trace_golden.jsonl
-    python3 python/aux/world_client.py --requests runs/scratch/reqs.jsonl
+    python3 python/auxiliary/world_client.py --replay testdata/world_trace_golden.jsonl
+    python3 python/auxiliary/world_client.py --requests runs/scratch/reqs.jsonl
 
 退出码：0 通过；1 校验失败（握手 / 逐字节 / 世界异常）；2 用法错误。
 """
@@ -516,7 +516,7 @@ def trace_protocol(lines: list[TraceLine]) -> int:
 class Session:
     """一个已经握手过的新世界：一行请求换一行响应，外加维度表。
 
-    计量脚本（``python/aux/world_structure.py``）用它驱动真的世界转移；它也把"协议版本
+    计量脚本（``python/auxiliary/world_structure.py``）用它驱动真的世界转移；它也把"协议版本
     决定维度表"这件事钉在唯一一个地方。
     """
 

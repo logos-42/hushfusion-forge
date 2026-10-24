@@ -85,8 +85,8 @@ _run "G7  无伪造策略（反造假门）" go test ./internal/rlenv/ -run Test
 
 # G8: 独立的 Python oracle（scipy，不 import 任何 Go 代码）必须复现 Go 引擎
 #     用来标定自己的那批冻结 golden 数字。
-_opt "G8  python oracle 对 golden" '[ -f python/aux/oracle.py ]' \
-  python3 python/aux/oracle.py --check-golden testdata/
+_opt "G8  python oracle 对 golden" '[ -f python/auxiliary/oracle.py ]' \
+  python3 python/auxiliary/oracle.py --check-golden testdata/
 
 # G9: CLI 端到端集成：基线 -> 评估 -> 与 testdata/golden_baseline.json 比对
 #     （分数 1e-6 内）-> 注册表往返。
@@ -97,16 +97,16 @@ _opt "G9  forge verify（端到端）" '[ -f cmd/forge/main.go ]' \
 #      **必须带 --proximity-floor 0.005**: Go 求解器对任何距离导线 5 mm 以内的
 #      采样点都钳住 alpha2，而精确闭式解不钳。不加这个开关，任何把线圈摆到采样
 #      点毫米级的设计都会产生量级 1e-2 的"分歧"——那是约定不一致，不是 bug。
-_opt "G10 跨语言场一致性" '[ -f cmd/forge/main.go ] && [ -f python/aux/oracle.py ]' \
-  bash -c 'set -e; tmp=$(mktemp -d); go run ./cmd/forge xcheck --out "$tmp/go_xcheck.json" >/dev/null; python3 python/aux/oracle.py --compare-go "$tmp/go_xcheck.json" --proximity-floor 0.005'
+_opt "G10 跨语言场一致性" '[ -f cmd/forge/main.go ] && [ -f python/auxiliary/oracle.py ]' \
+  bash -c 'set -e; tmp=$(mktemp -d); go run ./cmd/forge xcheck --out "$tmp/go_xcheck.json" >/dev/null; python3 python/auxiliary/oracle.py --compare-go "$tmp/go_xcheck.json" --proximity-floor 0.005'
 
 # G11: 产出的 run 的注册表完整性（id 连续、父设计存在、必需字段齐全）。
 _opt "G11 注册表完整性 ($TAG)" "[ -f runs/$TAG/registry.jsonl ]" \
   go run ./cmd/forge registry --check --registry "runs/$TAG/registry.jsonl"
 
 # G12: schema 一致性 —— Go 写出的记录必须符合 Python 辅助层读取的那套冻结 schema。
-_opt "G12 go/python schema 一致 ($TAG)" "[ -f runs/$TAG/registry.jsonl ] && [ -f python/aux/schema_check.py ] && $SAME_JUDGE" \
-  python3 python/aux/schema_check.py "runs/$TAG/registry.jsonl"
+_opt "G12 go/python schema 一致 ($TAG)" "[ -f runs/$TAG/registry.jsonl ] && [ -f python/auxiliary/schema_check.py ] && $SAME_JUDGE" \
+  python3 python/auxiliary/schema_check.py "runs/$TAG/registry.jsonl"
 
 # G13: Python 辅助层自己的测试。（辅助层的唯一职责是独立复核 Go，所以它自己也得有门。）
 _opt "G13 python 辅助层测试" '[ -d python/tests ]' \
@@ -117,14 +117,14 @@ _opt "G13 python 辅助层测试" '[ -d python/tests ]' \
 #      所以对账必须用 phase1 registry, 不能跟 $TAG —— 拿 phase0 (0.1.0 判据) 对
 #      phase1 规则 = 用错了尺子 (0.1.2 版本模型, docs/version-0.1.2.md §3)。
 _opt "G14 规则对账（scipy）" "[ -f knowledge/design_rules.md ] && [ -f runs/phase1/registry.jsonl ]" \
-  python3 python/aux/rules_check.py --rules knowledge/design_rules.md --registry "runs/phase1/registry.jsonl"
+  python3 python/auxiliary/rules_check.py --rules knowledge/design_rules.md --registry "runs/phase1/registry.jsonl"
 
 # G15: 出图 + 最强的一次廉价复核：报告声称基线和机器最优各得了多少分，这里用
 #      numpy/scipy 从设计向量重新算一遍（并对齐 Go 的 5 mm 钳位半径）。两者不一致
 #      就意味着"机器打败人类"这句话所依赖的定义已经不唯一了。
 #      输出同时打印落在钳位半径内的采样点数——那是"最优点在靠奇异性得分"的证据。
 _opt "G15 出图 + 独立复评最优/基线 ($TAG)" "[ -f runs/$TAG/results.json ] && $SAME_JUDGE" \
-  python3 python/aux/analyze.py "runs/$TAG"
+  python3 python/auxiliary/analyze.py "runs/$TAG"
 
 # G16: 复现门 —— 用 runs/<tag>/results.json 里记录的参数（不硬编码）重跑一次，逐位比对。
 #      只排除 tag 与 timestamp；任何数字、id、谱系、term 变动都算红。没有这道门，
@@ -153,7 +153,7 @@ _opt "G17 内部设计锚点门" "[ -n \"$PP_DIR\" ] && [ -d \"$PP_DIR\" ] && [ 
 #   三道子检查共用同一份 testdata/world_trace_golden.jsonl, 缺任一条即整门红。
 WORLD_TRACE="testdata/world_trace_golden.jsonl"
 _opt "G18 世界协议门（§6 三条：Go/Python 逐字节回放 + 握手反向断言）" \
-  "[ -f \"$WORLD_TRACE\" ] && [ -f cmd/forge/main.go ] && [ -f python/aux/world_client.py ]" \
+  "[ -f \"$WORLD_TRACE\" ] && [ -f cmd/forge/main.go ] && [ -f python/auxiliary/world_client.py ]" \
   bash -c "set -e
 tmp=\$(mktemp -d)
 trap 'rm -rf \"\$tmp\"' EXIT
@@ -162,7 +162,7 @@ echo '  G18.1 Go 逐字节回放: 把 trace 的每条 req 喂给一个新世界'
 go run ./cmd/forge world serve --replay \"$WORLD_TRACE\"
 
 echo '  G18.2 Python 客户端逐字节回放: 跨语言证据'
-python3 python/aux/world_client.py --replay \"$WORLD_TRACE\"
+python3 python/auxiliary/world_client.py --replay \"$WORLD_TRACE\"
 
 echo '  G18.3 反向断言: 改坏的 hello 必须让客户端非零退出'
 # 只做纯字符串替换(不重新序列化): 除 action_dim 的值以外一个字节都不许动。
@@ -174,7 +174,7 @@ if broken == src:
     sys.exit('the probe changed nothing: the recorded hello no longer has action_dim:12')
 open(sys.argv[2], 'w').write(broken)
 PY
-if python3 python/aux/world_client.py --replay \"\$tmp/broken.jsonl\" >\"\$tmp/out\" 2>\"\$tmp/err\"; then
+if python3 python/auxiliary/world_client.py --replay \"\$tmp/broken.jsonl\" >\"\$tmp/out\" 2>\"\$tmp/err\"; then
   echo 'G18.3: the client accepted a hello whose action_dim contradicts the spec (exit 0)'
   exit 1
 fi
@@ -193,19 +193,19 @@ echo '  G18.3: the broken hello was refused with a handshake mismatch (non-zero 
 #         黑名单第 1 条: 在 A ≡ 0 的世界上对 option 下任何结论;
 #     (c) regime 参数没进动力学 —— 四档只换常数(§3: 四档全同即红);
 #     (d) 证据漂移 —— 提交的 testdata/world_structure_v2.json 与现场重跑的计量不一致。
-#   判据的数字全部写死在 python/aux/world_structure.py 里(§4 的预注册值), 门不传任何
+#   判据的数字全部写死在 python/auxiliary/world_structure.py 里(§4 的预注册值), 门不传任何
 #   覆盖参数: 能靠命令行调绿的门不是门。G19 的颜色**就是**这次计量的结论 ——
 #   零档/弱档时它必须是红的, 那是一个真结果, 不是待修的 bug。
 WORLD_STRUCTURE="testdata/world_structure_v2.json"
 _opt "G19 世界结构门（§5 三条 + 证据漂移）" \
-  "[ -f \"$WORLD_STRUCTURE\" ] && [ -f python/aux/world_structure.py ]" \
+  "[ -f \"$WORLD_STRUCTURE\" ] && [ -f python/auxiliary/world_structure.py ]" \
   bash -c "set -e
 tmp=\$(mktemp -d)
 trap 'rm -rf \"\$tmp\"' EXIT
 echo '  G19: 现场跑一份新计量（K 个动作 / ≥5 seed / 四档 regime 全部由脚本里的预注册值决定）'
-WORLD_CLIENT_QUIET=1 python3 python/aux/world_structure.py --write --out \"\$tmp/fresh.json\"
+WORLD_CLIENT_QUIET=1 python3 python/auxiliary/world_structure.py --write --out \"\$tmp/fresh.json\"
 echo '  G19a/b/c: 从原始数字重新推导三条子门, 并核对提交的证据没有漂移'
-WORLD_CLIENT_QUIET=1 python3 python/aux/world_structure.py --check --out \"\$tmp/fresh.json\" --against \"$WORLD_STRUCTURE\""
+WORLD_CLIENT_QUIET=1 python3 python/auxiliary/world_structure.py --check --out \"\$tmp/fresh.json\" --against \"$WORLD_STRUCTURE\""
 
 # G20: 世界协议 v2 门 (docs/world-protocol.md §8) —— 与 G18 同一个形状, 换的是 v2 的黄金 trace。
 #   抓的失败模式:
@@ -217,7 +217,7 @@ WORLD_CLIENT_QUIET=1 python3 python/aux/world_structure.py --check --out \"\$tmp
 #         (由 internal/world 的用例钉住)。
 V2_TRACE="testdata/world_trace_golden_v2.jsonl"
 _opt "G20 世界协议 v2 门（§8: Go/Python 回放 + 维度表反向断言 + 版本隔离）" \
-  "[ -f \"$V2_TRACE\" ] && [ -f cmd/forge/main.go ] && [ -f python/aux/world_client.py ]" \
+  "[ -f \"$V2_TRACE\" ] && [ -f cmd/forge/main.go ] && [ -f python/auxiliary/world_client.py ]" \
   bash -c "set -e
 tmp=\$(mktemp -d)
 trap 'rm -rf \"\$tmp\"' EXIT
@@ -226,7 +226,7 @@ echo '  G20.1 Go 按 trace 自己的协议逐字节回放 v2 trace'
 go run ./cmd/forge world serve --replay \"$V2_TRACE\"
 
 echo '  G20.2 Python 客户端逐字节回放 v2 trace（跨语言证据）'
-python3 python/aux/world_client.py --replay \"$V2_TRACE\"
+python3 python/auxiliary/world_client.py --replay \"$V2_TRACE\"
 
 echo '  G20.3 反向断言: 改坏的 v2 hello（observation_dim 26→25）必须让客户端非零退出'
 python3 - \"$V2_TRACE\" \"\$tmp/broken.jsonl\" <<'PY'
@@ -237,7 +237,7 @@ if broken == src:
     sys.exit('the probe changed nothing: the recorded v2 hello no longer has observation_dim:26')
 open(sys.argv[2], 'w').write(broken)
 PY
-if python3 python/aux/world_client.py --replay \"\$tmp/broken.jsonl\" >\"\$tmp/out\" 2>\"\$tmp/err\"; then
+if python3 python/auxiliary/world_client.py --replay \"\$tmp/broken.jsonl\" >\"\$tmp/out\" 2>\"\$tmp/err\"; then
   echo 'G20.3: the client accepted a v2 hello whose observation_dim contradicts its own obs_keys_v2 (exit 0)'
   exit 1
 fi
@@ -261,14 +261,14 @@ echo
 #         任何一对不一致都红 —— 这一条把"结构与定理"钉在一起, 不给人挑动作集合的空间。
 WORLD_STRUCTURE_MU="testdata/world_structure_mu.json"
 _opt "G21 交换子世界门（实测 A 对定理：控制组 ≡ 0 + A_meas==A_pred + 两世界可分辨）" \
-  "[ -f \"$WORLD_STRUCTURE_MU\" ] && [ -f python/aux/world_structure.py ]" \
+  "[ -f \"$WORLD_STRUCTURE_MU\" ] && [ -f python/auxiliary/world_structure.py ]" \
   bash -c "set -e
 tmp=\$(mktemp -d)
 trap 'rm -rf \"\$tmp\"' EXIT
 echo '  G21: 现场跑一份新计量（动作从世界自己声明的动作空间取；控制组在旧世界上）'
-WORLD_CLIENT_QUIET=1 python3 python/aux/world_structure.py --write --world mu --out \"\$tmp/fresh.json\"
+WORLD_CLIENT_QUIET=1 python3 python/auxiliary/world_structure.py --write --world mu --out \"\$tmp/fresh.json\"
 echo '  G21a/b/c: 从原始数字重推三条子门, 并核对提交的证据没有漂移'
-WORLD_CLIENT_QUIET=1 python3 python/aux/world_structure.py --check --world mu --out \"\$tmp/fresh.json\" --against \"$WORLD_STRUCTURE_MU\""
+WORLD_CLIENT_QUIET=1 python3 python/auxiliary/world_structure.py --check --world mu --out \"\$tmp/fresh.json\" --against \"$WORLD_STRUCTURE_MU\""
 
 # G22: 世界协议 v3 门（mu 世界）—— 与 G18/G20 同形状, 换的是 mu 的黄金 trace。
 #   抓的失败模式:
@@ -278,7 +278,7 @@ WORLD_CLIENT_QUIET=1 python3 python/aux/world_structure.py --check --world mu --
 #     (4) 改坏的 hello（declaration.sha256 改一位）必须让回放非零退出。
 MU_TRACE="testdata/world_trace_golden_mu.jsonl"
 _opt "G22 世界协议 v3 门（mu 世界: Go/Python 逐字节回放 + 握手反向断言 + 版本隔离）" \
-  "[ -f \"$MU_TRACE\" ] && [ -f cmd/forge/main.go ] && [ -f python/aux/world_client.py ]" \
+  "[ -f \"$MU_TRACE\" ] && [ -f cmd/forge/main.go ] && [ -f python/auxiliary/world_client.py ]" \
   bash -c "set -e
 tmp=\$(mktemp -d)
 trap 'rm -rf \"\$tmp\"' EXIT
@@ -287,7 +287,7 @@ echo '  G22.1 Go 逐字节回放 mu trace'
 go run ./cmd/forge world serve --replay \"$MU_TRACE\"
 
 echo '  G22.2 Python 客户端逐字节回放 mu trace（跨语言证据, 按字节比）'
-python3 python/aux/world_client.py --replay \"$MU_TRACE\"
+python3 python/auxiliary/world_client.py --replay \"$MU_TRACE\"
 
 echo '  G22.3 版本隔离: mu 世界必须拒绝 protocol 2 的 hello'
 out=\$(printf '{\"op\":\"hello\",\"protocol\":2}\n' | go run ./cmd/forge world serve --world mu || true)
@@ -298,7 +298,7 @@ esac
 
 echo '  G22.4 反向断言: 改坏的 mu hello（declaration.sha256 改一位）必须非零退出'
 python3 scripts/world_hello_tamper.py "$MU_TRACE" "\$tmp/broken.jsonl"
-if python3 python/aux/world_client.py --replay \"\$tmp/broken.jsonl\" >/dev/null 2>&1; then
+if python3 python/auxiliary/world_client.py --replay \"\$tmp/broken.jsonl\" >/dev/null 2>&1; then
   echo '        → 客户端接受了改坏的 hello: 这就是握手没在看的证据'; exit 1
 fi
 echo '        → 已非零退出 ✓'"

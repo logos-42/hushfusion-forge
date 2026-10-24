@@ -34,8 +34,8 @@ regime 与 seed 都是同一批；起点由世界自己的 `seed` 决定，脚�
 
 用法::
 
-    python3 python/aux/world_structure.py --write           # 跑计量并写证据
-    python3 python/aux/world_structure.py --check           # 只读证据 + 判定三条子门
+    python3 python/auxiliary/world_structure.py --write           # 跑计量并写证据
+    python3 python/auxiliary/world_structure.py --check           # 只读证据 + 判定三条子门
 
 退出码：0 三条子门全过；1 有子门红；2 用法/证据文件错误。
 """
@@ -615,7 +615,7 @@ def run_metering(world_cmd: str, extra: list[str]) -> dict:
 
     return {
         "schema": SCHEMA,
-        "generated_by": "python/aux/world_structure.py",
+        "generated_by": "python/auxiliary/world_structure.py",
         "documents": ["docs/world-structure.md (sections 1, 3, 4, 5)",
                       "docs/world-protocol.md (section 8)"],
         "protocol": world_client.PROTOCOL_V2,
@@ -1158,7 +1158,7 @@ def run_metering_mu(world_cmd: str, extra: list[str]) -> dict:
               f"{witness['max_abs_residual']:.3g}", file=sys.stderr)
         evidence = {
             "schema": MU_SCHEMA,
-            "generated_by": "python/aux/world_structure.py --world mu",
+            "generated_by": "python/auxiliary/world_structure.py --world mu",
             "documents": ["docs/world-commutator-candidates.md",
                           "docs/world-structure.md (section 1: the ruler)"],
             "protocol": world_client.PROTOCOL_V3,

@@ -193,7 +193,7 @@ func TestBaselineRecordShape(t *testing.T) {
 
 // TestXcheckSchemaMatchesGolden 是交给 oracle 的交接中的 schema 那一半: 导出的场
 // 采样的 JSON 键必须与 testdata/golden_field_samples.json 的键完全一致, 否则
-// python/aux/oracle.py 无法重算它们 (验收门 G5)。
+// python/auxiliary/oracle.py 无法重算它们 (验收门 G5)。
 func TestXcheckSchemaMatchesGolden(t *testing.T) {
 	path, err := findFile(goldenSamples)
 	if err != nil {

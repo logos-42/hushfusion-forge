@@ -117,7 +117,7 @@ bash scripts/verify.sh phase0
 # the world protocol (G18): serve / byte-exact replay / a client in another language
 printf '%s\n' '{"op":"hello"}' '{"op":"reset","seed":12345}' '{"op":"close"}' | go run ./cmd/forge world serve
 go run ./cmd/forge world serve --replay testdata/world_trace_golden.jsonl
-python3 python/aux/world_client.py --replay testdata/world_trace_golden.jsonl
+python3 python/auxiliary/world_client.py --replay testdata/world_trace_golden.jsonl
 
 go run ./cmd/forge baseline
 go run ./cmd/forge benchmark --budget 1000 --seeds 0,1,2 --methods random,lhs,evolution,evolution_warm

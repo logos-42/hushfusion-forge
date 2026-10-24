@@ -25,7 +25,7 @@ func TestScanCategorizesWorkspace(t *testing.T) {
 	write(t, root, "os/acceptance/t01.md")
 	write(t, root, "os/kernel_receipts/T-01.json")
 	write(t, root, "docs/design/loop.md")
-	write(t, root, "python/aux/x.py")
+	write(t, root, "python/auxiliary/x.py")
 	idx := Scan(root)
 	got := map[string]int{}
 	for _, c := range idx.Categories {

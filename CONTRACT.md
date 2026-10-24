@@ -23,7 +23,7 @@ Phase 0 的验收问题只有一个：
 | `internal/*/api.go` | **冻结接口**：类型 + 函数签名 + 语义定义 | parent（已完成，勿改签名） |
 | `internal/owners/owners.go` + `owners_test.go` | 文件所有权名册 + 冻结门（互不重叠 / 无遗漏 / 变异会红） | parent（已完成，勿改） |
 | `testdata/golden_*.json` | 跨语言数值锚点（Python 参考实现产出） | parent（已完成，勿改数值） |
-| `python/aux/oracle.py` | **独立**数值 oracle（scipy 实现，不 import Go 的任何东西） | stage G |
+| `python/auxiliary/oracle.py` | **独立**数值 oracle（scipy 实现，不 import Go 的任何东西） | stage G |
 | `scripts/verify.sh` | 总验收脚本 | parent |
 | `docs/version-0.1.3.md` | **0.1.3 的契约**：一次真缺陷修复（v1 trace 标错 protocol ⟹ G18 假绿）+ 版本税第二笔 + 计划 v3 对齐 | parent（2026-10-02） |
 | `docs/version-0.1.2.md` | **0.1.2 的判据契约**：可造性口径 · 世界语义重做方案 · 版本语义与发版模型 · 对旧证据的影响 | parent（2026-10-01） |
@@ -153,18 +153,18 @@ Python 参考实现（已逐条验证过解析锚点）产出的 golden 数值�
 | G5 单元测试 | `go test ./...` | 全绿（含解析锚点：轴上闭式解 / Helmholtz 幅值与均匀度 / 离散-解析 / div-curl） |
 | G6 基线在搜索盒内 | `go test ./internal/baseline/ -run TestBaselineInsideSearchBox` | 人工基线解码后**不被裁剪**（否则人机对比比的不是同一个设计） |
 | G7 无伪造策略（反造假门） | `go test ./internal/rlenv/ -run TestNoLearnedPolicy` | 未实现的策略必须显式报错，不许返回编造数值 |
-| G8 python oracle 对 golden | `python3 python/aux/oracle.py --check-golden testdata/` | 独立 oracle（不 import Go）复现 Go 引擎 |
+| G8 python oracle 对 golden | `python3 python/auxiliary/oracle.py --check-golden testdata/` | 独立 oracle（不 import Go）复现 Go 引擎 |
 | G9 forge verify（端到端） | `go run ./cmd/forge verify` | CLI 端到端 |
 | G10 跨语言场一致性 | `forge xcheck` + `oracle.py --compare-go --proximity-floor 0.005` | 带 5 mm 钳位开关（约定不一致会稳定复现 4.05e-02） |
 | G11 注册表完整性 ($TAG) | `forge registry --check --registry runs/$TAG/registry.jsonl` | id 连续、parent 存在、必填字段齐全 |
-| G12 go/python schema 一致 ($TAG) | `python3 python/aux/schema_check.py runs/$TAG/registry.jsonl` | Go 记录与冻结 schema 一致（`^D(\d{4,})$`） |
+| G12 go/python schema 一致 ($TAG) | `python3 python/auxiliary/schema_check.py runs/$TAG/registry.jsonl` | Go 记录与冻结 schema 一致（`^D(\d{4,})$`） |
 | G13 python 辅助层测试 | `python3 -m pytest python/tests -q` | 全绿 |
-| G14 规则对账（scipy） | `python3 python/aux/rules_check.py --rules knowledge/design_rules.md --registry runs/$TAG/registry.jsonl` | 规则表与实际记录对账 |
-| G15 出图 + 独立复评最优/基线 ($TAG) | `python3 python/aux/analyze.py runs/$TAG` | 独立复评最优与基线 |
+| G14 规则对账（scipy） | `python3 python/auxiliary/rules_check.py --rules knowledge/design_rules.md --registry runs/$TAG/registry.jsonl` | 规则表与实际记录对账 |
+| G15 出图 + 独立复评最优/基线 ($TAG) | `python3 python/auxiliary/analyze.py runs/$TAG` | 独立复评最优与基线 |
 | G16 逐位复现 ($TAG) | `python3 scripts/repro_check.py $TAG` | `registry.jsonl` 剔 `tag`/`timestamp` 后 sha256 完全相同 |
 | **G23 可造性门**（0.1.2） | `python3 scripts/check_buildability.py` | 三条一起判：(a) 人工基线可行且 `clearance` 罚项**精确**为 0（抓「把真装置也判死」）；(b) 0.1.0 的最优退化解在 0.1.2 下**不可行**且罚项 > 0（抓「约束没咬住它要咬的东西」——这是本版存在的全部理由）；(c) 净空的闭式解 == 圆环面密采样的独立路径（< 1e-9），且侵入时精确 = −t_pack/2（抓「几何算错」）。它是**判据门**，不依赖某个 run，故不受版本前置条件约束 |
 | G17 内部设计锚点门 | `python3 scripts/emit_pp_anchors.py --check && go test ./internal/design/` | 上游 ProjectionPhysics（`logos-42/Hibs-Physics`）的闭式解逐条复现；锚点来自工作区重跑产物（上游 `artifacts/` 不入 git），出处见 `testdata/projectionphysics_anchors.json` 的 `provenance` |
-| G18 世界协议门（三条一起判） | `forge world serve --replay testdata/world_trace_golden.jsonl` + `python3 python/aux/world_client.py --replay testdata/world_trace_golden.jsonl` + 故意改坏的 hello 必须让客户端非零退出 | (a) Go 把 trace 的每条 req 喂给新世界，响应逐字节相同；(b) Python 客户端同样逐字节相同（**跨语言证据**：证明客户端看到的世界与 Go 写下的是同一个）；(c) 反向断言：改坏的 hello 必须让客户端非零退出且理由是握手。证据 = `testdata/world_trace_golden.jsonl`（由 `--record` 生成；trace 的 `runs/` 目录不入仓，契约 §4） |
+| G18 世界协议门（三条一起判） | `forge world serve --replay testdata/world_trace_golden.jsonl` + `python3 python/auxiliary/world_client.py --replay testdata/world_trace_golden.jsonl` + 故意改坏的 hello 必须让客户端非零退出 | (a) Go 把 trace 的每条 req 喂给新世界，响应逐字节相同；(b) Python 客户端同样逐字节相同（**跨语言证据**：证明客户端看到的世界与 Go 写下的是同一个）；(c) 反向断言：改坏的 hello 必须让客户端非零退出且理由是握手。证据 = `testdata/world_trace_golden.jsonl`（由 `--record` 生成；trace 的 `runs/` 目录不入仓，契约 §4） |
 | G24 Bolloon kernel 原生 + 双核冗余（真跑） | `go test ./internal/kernel/...` | 原生内核 internal/kernel（进程内，无 Node）：(a) channel 串行性（先 sleep 后 0 必须按提交顺序完成）；(b) 跨 channel 隔离（慢任务不拖住别的 channel）；(c) 端口未注入 ⇒ fail-closed；(d) 命名端口注入 ⇒ 真走端口；(e) 未知名端口必须拒；(f) model.acquire 缺 openConnection ⇒ 内核抛错；(g) 响应都是合法 JSON；(h) bolloon.exec 经内核 ChannelActor 编排；(i) 端口缺失 ⇒ 内核拒（fail-closed）；(j) ha 纯函数仲裁（缺失/过期心跳 ⇒ 接管）；(k) DualKernel 默认路由 primary；(l) DualKernel 主核过期切 secondary；(m) 主核健康不切换。双核模块在 `internal/kernel/ha/`。前置：无（原生内核，进程内即跑） |
 | G25 OS↔kernel 双向门 | `bash scripts/verify.sh phase0` 内 `forge os sync` + 证据 JSON 断言 + 独立会话 peek 反向断言 | CLI 端到端（不是单元测试）：(a) `forge os sync` 退出 0 且打印「双向核对通过」（channel.submit + channel.peek + marker/task 逐字核对，kernel 记住了本次提交）；(b) 证据目录出现 `sync-*.json` 且 `verified == true`（可核对落盘是「双向打通」的唯一证物）；(c) 独立会话 peek 不存在的 channel 必须非零退出（actor 状态进程内，跨进程读回不存在，不许假装成功——与 G24c 同一 fail-closed 哲学，走 CLI 层）。前置同 G24（缺前置 SKIP） |
 

@@ -35,7 +35,7 @@ tags: [world, gate, measurement, structure]
 | CI | seed-cluster bootstrap 95%，10000 次重采样，固定 seed 424242（可复现） | §4 |
 | 一步 = | 世界的**真转移**（reset → step → step），不是纯 Python 复算 | §4 |
 
-跑一次计量：`python3 python/aux/world_structure.py --write`（约 13 s）。门自己跑**新**计量并与提交的证据逐位核对（漂移即红）：`python3 python/aux/world_structure.py --check --against testdata/world_structure_v2.json`。
+跑一次计量：`python3 python/auxiliary/world_structure.py --write`（约 13 s）。门自己跑**新**计量并与提交的证据逐位核对（漂移即红）：`python3 python/auxiliary/world_structure.py --check --against testdata/world_structure_v2.json`。
 
 ## 2. 实测数字（每档每 seed）
 
@@ -141,9 +141,9 @@ tags: [world, gate, measurement, structure]
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH" && export GOTOOLCHAIN=local
-python3 python/aux/world_structure.py --write            # 重跑计量（约 13 s），写 testdata/world_structure_v2.json
-python3 python/aux/world_structure.py --check            # 从原始 A 值重新推导三条子门并打印档位
-python3 python/aux/world_structure.py --check --against testdata/world_structure_v2.json   # 门 G19 的用法（含漂移核对）
+python3 python/auxiliary/world_structure.py --write            # 重跑计量（约 13 s），写 testdata/world_structure_v2.json
+python3 python/auxiliary/world_structure.py --check            # 从原始 A 值重新推导三条子门并打印档位
+python3 python/auxiliary/world_structure.py --check --against testdata/world_structure_v2.json   # 门 G19 的用法（含漂移核对）
 bash scripts/verify.sh phase0                            # 全门（G19 红、G20 绿）
 ```
 

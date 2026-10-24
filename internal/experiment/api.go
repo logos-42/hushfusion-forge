@@ -15,7 +15,7 @@
 //	                          的一部分。
 //
 // Report 的 JSON schema 由 Python 辅助层消费
-// (python/aux/analyze.py)；键名是冻结的 (FROZEN)。
+// (python/auxiliary/analyze.py)；键名是冻结的 (FROZEN)。
 package experiment
 
 import (

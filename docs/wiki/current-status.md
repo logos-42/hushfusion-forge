@@ -126,7 +126,7 @@ Forge v0.1 的评分只问「中平面的场均不均匀」。那让一个把线
 
 判据：`docs/world-structure.md`（**预注册，不得改阈值**）；线协议：`docs/world-protocol.md` §8（v2）。
 交付：`internal/world` 的 v2 语义（R1 预算 / R2 夹取 / R3 前提门 / R4 换源）+ `set_source` + 26 维观测 +
-`python/aux/world_client.py` 的 v2 客户端 + 计量脚本 `python/aux/world_structure.py` + v2 黄金 trace
+`python/auxiliary/world_client.py` 的 v2 客户端 + 计量脚本 `python/auxiliary/world_structure.py` + v2 黄金 trace
 `testdata/world_trace_golden_v2.jsonl`（10 行，覆盖"被拒步"与换源）+ 门 **G19 / G20**。
 
 **门 G19 = FAIL（红）。如实记录，不调任何东西去变绿：**

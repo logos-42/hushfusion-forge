@@ -504,7 +504,7 @@ func sectionHonestLimits(b *strings.Builder, rep *experiment.Report) {
 	b.WriteString("- 人工基线在解码后被搜索盒裁剪:比较的就不是同一个设计(由 `TestBaselineInsideSearchBox` 专门守门)。\n")
 	b.WriteString("- 解析解与独立实现的离散 Biot-Savart 求和不一致,或 Python oracle(scipy)与 Go 的相对差 > 1e-9 / score > 1e-6(合同 §6 的 G5):数值栈不可信,所有 field 数字作废。\n")
 	b.WriteString("- 同 seed 两次运行 `best_score` 不一致(合同 §6 的 G7):随机性叙述是假的。\n")
-	b.WriteString("- registry 完整性检查(`registry --check`)或 schema parity(`python/aux/schema_check.py`,合同 §6 的 G8/G9)失败:本报告的 runs / aggregate 无法被独立复算,结论退化为自述。\n\n")
+	b.WriteString("- registry 完整性检查(`registry --check`)或 schema parity(`python/auxiliary/schema_check.py`,合同 §6 的 G8/G9)失败:本报告的 runs / aggregate 无法被独立复算,结论退化为自述。\n\n")
 
 	b.WriteString("### 6.3 哪些数字是实测、哪些是假设\n\n")
 	b.WriteString("**实测**(由 solver / evaluator 算出,可从 `registry.jsonl` 逐条复算):\n\n")

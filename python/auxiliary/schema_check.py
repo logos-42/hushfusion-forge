@@ -19,7 +19,7 @@ registry schema 冻结在 ``internal/registry/api.go`` (Record/Params) 和
   * 仅警告：parent_design 指向了一个未知的 design_id。
 
 用法：
-    python3 python/aux/schema_check.py runs/phase0/registry.jsonl
+    python3 python/auxiliary/schema_check.py runs/phase0/registry.jsonl
 """
 
 from __future__ import annotations
