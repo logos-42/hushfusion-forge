@@ -21,7 +21,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -165,7 +164,7 @@ func (m *Manager) Start(ctx context.Context, id, name string, args []string, opt
 	cmd.Env = opts.Env
 	cmd.Stdout = opts.Stdout
 	cmd.Stderr = opts.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // 独立进程组
+	setGroup(cmd) // 独立进程组（Unix Setpgid；Windows 退化为杀本体）
 	// 取消时杀**整个进程组**（负 pgid），而不是只杀直接子进程。
 	// 为什么必须这样：exec.CommandContext 的默认取消只杀直接子进程；若子进程是
 	// shell（bash -c 'sleep 30'  fork 出 sleep），杀 shell 后 sleep 仍继承着
@@ -175,7 +174,7 @@ func (m *Manager) Start(ctx context.Context, id, name string, args []string, opt
 		if cmd.Process == nil {
 			return os.ErrProcessDone
 		}
-		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+		if err := killGroup(cmd.Process.Pid); err != nil {
 			return cmd.Process.Kill() // 组杀失败（可能已退出）退化为杀本体
 		}
 		return nil
@@ -229,7 +228,7 @@ func (m *Manager) watchTimeout(p *Proc, d time.Duration) {
 		p.killedByUs = true
 		m.mu.Unlock()
 		if p.cmd.Process != nil {
-			_ = syscall.Kill(-p.PID, syscall.SIGKILL) // 负 pgid = 整组
+			_ = killGroup(p.PID) // 负 pgid = 整组
 		}
 	case <-p.done:
 	}
@@ -273,7 +272,7 @@ func (m *Manager) Stop(id string) error {
 		p.cancel()
 	}
 	if p.cmd.Process != nil {
-		_ = syscall.Kill(-p.PID, syscall.SIGKILL) // 负 pgid = 整组
+		_ = killGroup(p.PID) // 负 pgid = 整组
 	}
 	return nil
 }

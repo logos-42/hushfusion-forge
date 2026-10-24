@@ -27,7 +27,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -137,7 +136,7 @@ func Apply(cmd *exec.Cmd, p Policy) (wrapped []string, err error) {
 		cmd.Dir = p.Root
 	}
 	cmd.Env = buildEnv(p)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setGroup(cmd) // 独立进程组（Unix Setpgid；Windows 退化为杀本体）
 
 	if p.NetIsolate || !p.Limits.IsZero() {
 		path, argv, kinds, wErr := wrapForIsolation(cmd.Path, cmd.Args[1:], p)
@@ -225,12 +224,22 @@ func Run(ctx context.Context, p Policy, name string, args ...string) (Result, er
 		timeout = t.C
 	}
 
-	kill := func(sig syscall.Signal) {
+	kill := func() {
 		if cmd.Process == nil {
 			return
 		}
-		// 负 pgid = 整个进程组
-		_ = syscall.Kill(-cmd.Process.Pid, sig)
+		// 负 pgid = 整个进程组；平台不支持组杀时退化为杀本体。
+		if err := killGroup(cmd.Process.Pid); err != nil {
+			_ = cmd.Process.Kill()
+		}
+	}
+	term := func() {
+		if cmd.Process == nil {
+			return
+		}
+		if err := termGroup(cmd.Process.Pid); err != nil {
+			_ = cmd.Process.Kill()
+		}
 	}
 
 	select {
@@ -239,18 +248,18 @@ func Run(ctx context.Context, p Policy, name string, args ...string) (Result, er
 		res.ExitCode = exitCodeOf(err)
 	case <-ctx.Done():
 		res.Killed = true
-		kill(syscall.SIGKILL)
+		kill()
 		<-done
 		res.Duration = time.Since(start)
 		res.ExitCode = exitCodeOf(ctx.Err())
 	case <-timeout:
 		res.TimedOut = true
 		res.Killed = true
-		kill(syscall.SIGTERM)
+		term()
 		select {
 		case <-done:
 		case <-time.After(grace):
-			kill(syscall.SIGKILL)
+			kill()
 			<-done
 		}
 		res.Duration = time.Since(start)
