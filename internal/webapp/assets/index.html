@@ -46,7 +46,9 @@
   .room-msg .body p:last-child{margin-bottom:0}
   .room-foot{flex:none;padding:10px 12px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
   .room-controls{display:flex;gap:6px;align-items:center;margin-bottom:8px}
-  .room-controls select{flex:1;min-width:0;font-size:11px;padding:5px 6px;border-radius:8px;background:var(--btn-bg);color:var(--btn-text);border:1px solid var(--btn-border)}
+  .room-agent-bar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+  .agent-chip{cursor:pointer;padding:3px 10px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:.5;user-select:none;background:var(--btn-bg);color:var(--btn-text)}
+  .agent-chip.on{opacity:1;border-color:var(--accent);color:var(--accent);font-weight:600}
   .room-controls button{font-size:11px;padding:5px 8px;border-radius:8px;white-space:nowrap}
   .room-members{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;color:var(--muted)}
   .room-members .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--muted);margin-right:3px}
@@ -246,7 +248,7 @@
     <div id="roomMessages" class="room-messages"></div>
     <div class="room-foot">
       <div class="room-controls">
-        <select id="roomAgents" multiple size="2" title="按住 Cmd/Ctrl 可多选；至少选两个"></select>
+        <div id="roomAgents" class="room-agent-bar" title="点击名字加入/移出，至少选两个"></div>
         <button id="roomStartBtn">发起交流</button><button id="roomStopBtn">结束</button>
       </div>
       <div id="roomState" class="hint"></div>
@@ -401,21 +403,23 @@ async function boot(){
 function renderAll(){ renderUpdate(); renderSidebar(); renderHeader(); renderChat(); renderModel(); renderRoomControls(); }
 
 let roomTimer=null;
+let roomPicked=new Set(); // 已选参与商议的智能体 id（芯片栏）
 function renderRoomControls(){
-  const el=$('roomAgents');
-  if(!el||!state)return;
-  const opts=(state.agents||[]).map(x=>`<option value="${x.id}">${escapeHTML(x.name)}</option>`).join('');
-  const keep=[...el.selectedOptions].map(o=>o.value);
-  el.innerHTML=opts;
-  for(const o of el.options){if(keep.includes(o.value))o.selected=true;}
-  if(el.selectedOptions.length===0&&(state.agents||[]).length){
-    state.agents.slice(0,2).forEach(a=>{const o=[...el.options].find(x=>x.value===a.id);if(o)o.selected=true;});
-  }
+  const bar=$('roomAgents');
+  if(!bar||!state)return;
+  if(roomPicked.size===0){(state.agents||[]).slice(0,2).forEach(a=>roomPicked.add(a.id));} // 首次缺省选前两个
+  const alive=new Set((state.agents||[]).map(x=>x.id));
+  for(const id of [...roomPicked])if(!alive.has(id))roomPicked.delete(id);
+  bar.innerHTML=(state.agents||[]).map(x=>`<span class="agent-chip${roomPicked.has(x.id)?' on':''}" onclick="toggleRoomAgent('${x.id}')">${escapeHTML(x.name)}</span>`).join('');
+}
+function toggleRoomAgent(id){
+  if(roomPicked.has(id))roomPicked.delete(id);else roomPicked.add(id);
+  renderRoomControls();
 }
 function renderRoomMeta(st,members){
   const s=$('roomState'),m=$('roomMembers');
   if(s){
-    let base=st&&st.active?`交流中 · 第 ${st.turn||0}/${st.max_turns||6} 轮 · ${st.topic||''}`:'未在主动交流';
+    let base=st&&st.active?(st.max_turns>0?`交流中 · 第 ${st.turn||0}/${st.max_turns} 轮 · ${st.topic||''}`:`交流中 · 第 ${st.turn||0} 轮 · 不限轮次 · ${st.topic||''}`):'未在主动交流';
     if(st&&st.channel)base+=` · orbitdb: ${st.orbit_status||'checking'}`;
     s.textContent=base;
   }
@@ -449,8 +453,8 @@ function setRoomOpen(open){
 $('roomBtn').onclick=()=>setRoomOpen(!$('app').classList.contains('room-open'));
 $('roomClose').onclick=()=>setRoomOpen(false);
 $('roomStartBtn').onclick=async()=>{
-  const ids=[...$('roomAgents').selectedOptions].map(o=>o.value).filter(Boolean);
-  if(new Set(ids).size<2){alert('请至少选择两个不同的智能体（Cmd/Ctrl 多选）');return;}
+  const ids=[...roomPicked];
+  if(ids.length<2){alert('请至少选择两个智能体（点击名字加入/移出）');return;}
   try{await api('/api/room/start',{method:'POST',body:JSON.stringify({agent_ids:ids})});await loadRoom();}
   catch(e){alert(e.message);}
 };

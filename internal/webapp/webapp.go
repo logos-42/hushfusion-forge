@@ -327,12 +327,9 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "内部商议至少需要两个智能体（已支持任意多个）", http.StatusBadRequest)
 		return
 	}
-	maxTurns := req.MaxTurns
-	if maxTurns <= 0 {
-		maxTurns = 6
-	}
-	if maxTurns > 5000 {
-		maxTurns = 5000
+	maxTurns := req.MaxTurns // 0 = 不限轮次（手动停止为止）；正数 = 到轮自动结束
+	if maxTurns < 0 {
+		maxTurns = 0
 	}
 	topic := strings.TrimSpace(req.Topic)
 	if topic == "" {
@@ -434,7 +431,7 @@ func (s *Server) roomStep(ctx context.Context) {
 		s.mu.Unlock()
 		return
 	}
-	if st.Turn >= st.MaxTurns {
+	if st.MaxTurns > 0 && st.Turn >= st.MaxTurns { // MaxTurns=0：不限轮次，直到手动停止
 		st.Active = false
 		st.UpdatedAt = time.Now()
 		s.st.RoomState = st
