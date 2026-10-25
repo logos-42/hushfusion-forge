@@ -267,6 +267,8 @@ type Server struct {
 	// roomStepping 防止同一群组并发步进（心跳 tick 与用户消息立即触发竞争）。
 	roomStepMu   sync.Mutex
 	roomStepping map[string]bool
+	// roomBackoff 群组级退避：模型连续不可用时心跳暂停，到期自动恢复。
+	roomBackoff map[string]time.Time
 }
 
 // groupByID 返回群组指针（调用方需已持有 s.mu）。
