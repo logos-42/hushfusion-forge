@@ -81,6 +81,10 @@ type Session struct {
 
 	// AllowWrites 是本次会话的写工具白名单（工具注册时的 Write=true 才受它约束）。
 	AllowWrites map[string]bool
+	// AuthGate 是越界路径的 clarity 验证闸门：路径越出 workspace/global 时被调用，
+	// 返回 (已授权?, 请求ID)。未授权时工具返回"待授权(ID=…)"，用户在 Web 端三档
+	// 授权（仅一次/本项目/完全访问）后重试即可。nil = 维持硬拒（无授权流程）。
+	AuthGate func(path string) (bool, string)
 
 	// System 是 system 消息（skills 注入 + 指令，装配时放在最前）。
 	System string

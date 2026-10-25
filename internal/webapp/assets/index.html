@@ -63,6 +63,11 @@
   @keyframes blinktd{0%{opacity:.2}50%{opacity:1}100%{opacity:.2}}
   .room-controls{display:flex;gap:6px;align-items:center;margin-bottom:8px}
   .room-agent-bar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+  .auth-item{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:8px;font-size:12px}
+  .auth-item .auth-path{font-family:ui-monospace,monospace;font-size:11px;word-break:break-all;color:var(--muted);margin:4px 0}
+  .auth-item.sensitive{opacity:.55}
+  .auth-item .row{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+  .auth-item button{font-size:11px;padding:4px 8px}
   .agent-chip{cursor:pointer;padding:3px 10px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:.5;user-select:none;background:var(--btn-bg);color:var(--btn-text)}
   .agent-chip.on{opacity:1;border-color:var(--accent);color:var(--accent);font-weight:600}
   .room-controls button{font-size:11px;padding:5px 8px;border-radius:8px;white-space:nowrap}
@@ -242,6 +247,7 @@
       <span id="agentDid" style="color:var(--muted)"></span>
       <span class="grow"></span>
       <button id="roomBtn" class="mini" title="打开内部商议">内部商议</button>
+      <button id="authBell" class="mini" title="clarity 验证授权" style="position:relative">🔔<span id="authBadge" style="display:none;position:absolute;top:-4px;right:-4px;background:#e5534b;color:#fff;border-radius:999px;font-size:9px;padding:0 4px;min-width:14px;text-align:center">0</span></button>
     </header>
     <div id="chat"><div class="empty"><h1>我们要做什么？</h1></div></div>
     <div id="imgPreview"></div>
@@ -284,6 +290,12 @@
   </aside>
 </div>
 
+<dialog id="authDlg">
+  <h3 style="margin:0 0 6px">clarity 验证授权</h3>
+  <div class="hint" style="margin-bottom:8px">智能体请求访问 workspace 之外的路径。仅一次=本次操作；本项目=项目期间该路径可反复使用；完全访问=电脑所有路径（敏感路径不可授权）。</div>
+  <div id="authList"></div>
+  <div style="margin-top:10px;text-align:right"><button onclick="authDlg.close()">关闭</button></div>
+</dialog>
 <dialog id="agentDlg">
   <h3 style="margin:0 0 6px" id="agentDlgTitle">创建新智能体</h3>
   <label>名字</label><input id="agentNameInput" placeholder="例如：等离子体研究智能体" />
@@ -419,6 +431,34 @@ async function api(path,opts){
   return j;
 }
 
+async function pollAuth(){
+  try{const j=await api('/api/auth/requests');renderAuth(j.requests||[]);}catch(_){}
+}
+function renderAuth(list){
+  const badge=$('authBadge'),dlgList=$('authList');
+  if(!badge)return;
+  badge.style.display=list.length?'':'none';badge.textContent=list.length;
+  const dlg=$('authDlg');
+  if(list.length&&dlg&&dlg.open)return; // 弹窗打开时不重绘，防打断操作
+  if(dlgList)dlgList.innerHTML=list.map(function(r){
+    const dis=r.sensitive?'disabled title=\'敏感路径不可授权\'':'';
+    return `<div class='auth-item${r.sensitive?' sensitive':''}'>`+
+      `<b>${escapeHTML(r.agent_name||r.agent_id||'智能体')}</b> 请求访问（${r.op||'fs'}）：`+
+      `<div class='auth-path'>${escapeHTML(r.path)}</div>`+
+      `<div class='row'>`+
+        `<button class='primary' onclick=\"decideAuth('${r.id}','allow_once')\">仅一次</button>`+
+        `<button ${dis} onclick=\"decideAuth('${r.id}','allow_project')\">本项目</button>`+
+        `<button ${dis} onclick=\"decideAuth('${r.id}','allow_full')\">完全访问</button>`+
+        `<button onclick=\"decideAuth('${r.id}','deny')\">拒绝</button>`+
+      `</div>${r.sensitive?'<div class=\'hint\'>敏感路径：系统禁止授权，智能体也无法读取。</div>':''}`+
+    `</div>`;
+  }).join('');
+}
+async function decideAuth(id,decision){
+  try{await api('/api/auth/decide',{method:'POST',body:JSON.stringify({id,decision})});await pollAuth();}
+  catch(e){alert(e.message);}
+}
+$('authBell').onclick=()=>{pollAuth();$('authDlg').showModal();};
 async function boot(){
   const j=await api('/api/bootstrap');
   state=j.state; update=j.update;
@@ -1146,6 +1186,7 @@ $('input').addEventListener('keydown',e=>{
 boot().finally(()=>{
   setTimeout(refreshUpdate,5000);
   setInterval(refreshUpdate,60000);
+  setInterval(pollAuth,5000);pollAuth(); // clarity 验证：待授权轮询
   resumeRunning();
 });
 </script>

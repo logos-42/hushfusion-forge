@@ -74,16 +74,33 @@ func (s *Session) safePath(p string) (string, error) {
 		}
 	}
 	if !under(root, abs) && !under(s.globalRoot(), abs) {
-		return "", fmt.Errorf("路径越出 workspace/global：%s", p)
+		return "", s.authorizePath(p, abs)
 	}
 	// 解析符号链接后再检查一次，防止用 notes -> .env 绕过 basename 围栏。
 	if real, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = real
 		if !under(root, abs) && !under(s.globalRoot(), abs) {
-			return "", fmt.Errorf("符号链接越出 workspace/global：%s", p)
+			return "", s.authorizePath(p, real)
 		}
 	}
 	return abs, nil
+}
+
+// authorizePath 越界路径的 clarity 验证：敏感路径永远硬拒（fail-closed，不可授权）；
+// 其余越界路径经 AuthGate 检查既有授权（once/project/full），未授权则创建待授权请求，
+// 工具返回"待授权(ID=…)"，用户在 Web 端批准后重试即可。
+func (s *Session) authorizePath(origP, abs string) error {
+	if privacy.SensitivePath(abs) {
+		return fmt.Errorf("敏感路径禁止访问（不可授权）：%s", origP)
+	}
+	if s.AuthGate == nil {
+		return fmt.Errorf("路径越出 workspace/global：%s", origP)
+	}
+	allowed, id := s.AuthGate(abs)
+	if !allowed {
+		return fmt.Errorf("待授权（ID=%s）：路径 %s 越出 workspace/global，请在 Web 端「验证授权」中批准后重试", id, origP)
+	}
+	return nil
 }
 
 func expandHome(p string) string {

@@ -267,8 +267,13 @@ type Server struct {
 	// roomStepping 防止同一群组并发步进（心跳 tick 与用户消息立即触发竞争）。
 	roomStepMu   sync.Mutex
 	roomStepping map[string]bool
-	// roomBackoff 群组级退避：模型连续不可用时心跳暂停，到期自动恢复。
-	roomBackoff map[string]time.Time
+	// roomDownNotified 群组级"模型不可用"已提示标记（网络抖动不间断重试，不退避）。
+	roomDownNotified map[string]bool
+	// clarity 验证授权：待授权请求与已授权条目（内存态，fail-closed）。
+	authMu      sync.Mutex
+	authPending map[string]*AuthRequest
+	// authGrants: agentID -> 路径或 "*" -> scope（once 用后即焚 / project / full）。
+	authGrants map[string]map[string]string
 }
 
 // groupByID 返回群组指针（调用方需已持有 s.mu）。
@@ -574,6 +579,106 @@ func (s *Server) handleRoomStop(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]any{"ok": true})
 }
 
+// AuthRequest 是一次越界路径的 clarity 验证请求（内存态；fail-closed：重启即失效）。
+type AuthRequest struct {
+	ID             string    `json:"id"`
+	AgentID        string    `json:"agent_id,omitempty"`
+	AgentName      string    `json:"agent_name,omitempty"`
+	Path           string    `json:"path"`
+	Op             string    `json:"op,omitempty"`
+	Sensitive      bool      `json:"sensitive"` // 敏感路径：前端灰显禁授权，后端硬拒
+	RequestedAt    time.Time `json:"requested_at"`
+	SuggestedScope string    `json:"suggested_scope,omitempty"` // once / project / full
+}
+
+// authGate 返回该智能体的越界路径验证闸门：查既有授权（once 用后即焚 / project / full），
+// 未授权则登记待授权请求并返回请求 ID（工具层返回"待授权(ID=…)"）。
+func (s *Server) authGate(agentID, agentName string) func(path string) (bool, string) {
+	return func(path string) (bool, string) {
+		s.authMu.Lock()
+		defer s.authMu.Unlock()
+		if g := s.authGrants[agentID]; g != nil {
+			if scope, ok := g[path]; ok {
+				if scope == "once" {
+					delete(g, path) // 仅一次：用后即焚
+				}
+				return true, ""
+			}
+			if scope, ok := g["*"]; ok && scope == "full" {
+				return true, "" // 完全访问：电脑所有路径（敏感路径在 agent 层仍硬拒）
+			}
+		}
+		id := fmt.Sprintf("auth-%d", time.Now().UnixNano())
+		s.authPending[id] = &AuthRequest{
+			ID: id, AgentID: agentID, AgentName: agentName, Path: path, Op: "fs",
+			Sensitive: privacy.SensitivePath(path), RequestedAt: time.Now(), SuggestedScope: "once",
+		}
+		return false, id
+	}
+}
+
+// handleAuthRequests GET：待授权请求列表（前端铃铛轮询）。
+func (s *Server) handleAuthRequests(w http.ResponseWriter, r *http.Request) {
+	s.authMu.Lock()
+	list := make([]AuthRequest, 0, len(s.authPending))
+	for _, req := range s.authPending {
+		list = append(list, *req)
+	}
+	s.authMu.Unlock()
+	sort.Slice(list, func(i, j int) bool { return list[i].RequestedAt.Before(list[j].RequestedAt) })
+	s.writeJSON(w, map[string]any{"requests": list})
+}
+
+// handleAuthDecide POST：用户裁决 {id, decision}：
+// allow_once=仅一次（用后即焚）| allow_project=本项目（该路径项目期间持久）|
+// allow_full=完全访问（电脑所有路径）| deny=拒绝。敏感路径 fail-closed：任何决定都拒绝。
+func (s *Server) handleAuthDecide(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID       string `json:"id"`
+		Decision string `json:"decision"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	s.authMu.Lock()
+	req0 := s.authPending[req.ID]
+	if req0 == nil {
+		s.authMu.Unlock()
+		http.Error(w, "请求不存在或已处理", http.StatusNotFound)
+		return
+	}
+	delete(s.authPending, req.ID)
+	agentID, path := req0.AgentID, req0.Path
+	if req0.Sensitive {
+		s.authMu.Unlock()
+		http.Error(w, "敏感路径不可授权", http.StatusForbidden)
+		return
+	}
+	switch req.Decision {
+	case "allow_once", "allow_project", "allow_full":
+		if s.authGrants[agentID] == nil {
+			s.authGrants[agentID] = map[string]string{}
+		}
+		switch req.Decision {
+		case "allow_once":
+			s.authGrants[agentID][path] = "once"
+		case "allow_project":
+			s.authGrants[agentID][path] = "project"
+		case "allow_full":
+			s.authGrants[agentID]["*"] = "full"
+		}
+	case "deny":
+		// 拒绝：仅删除请求，无任何授权
+	default:
+		s.authMu.Unlock()
+		http.Error(w, "未知 decision", http.StatusBadRequest)
+		return
+	}
+	s.authMu.Unlock()
+	s.writeJSON(w, map[string]any{"ok": true})
+}
+
 // handleRoomGuide 用户向群组内所有智能体一次性下发引导/目标；
 // 指导消息以 guide 类别进入频道，智能体在最近消息里看到并在下一轮遵循。
 func (s *Server) handleRoomGuide(w http.ResponseWriter, r *http.Request) {
@@ -797,10 +902,6 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 		return
 	}
 	settings := s.st.Settings
-	if !s.roomBackoff[groupID].IsZero() && time.Now().Before(s.roomBackoff[groupID]) {
-		s.mu.Unlock()
-		return // 模型不可用退避中，心跳暂停；用户发消息仍可强制尝试
-	}
 	if g.MaxTurns > 0 && g.Turn >= g.MaxTurns { // MaxTurns=0：不限轮次，直到手动停止
 		g.Running = false
 		g.UpdatedAt = time.Now()
@@ -968,17 +1069,14 @@ func (s *Server) agentTurn(ctx context.Context, groupID string, agentCopy Agent,
 		}
 	}
 	if err != nil {
-		// 失败不逐条刷屏：只在"可用→不可用"第一跳发一条提示，群组退避 2 分钟后自动恢复。
+		// 失败不逐条刷屏：只在"可用→不可用"第一跳发一条提示；随后不间断重试（8s 心跳与用户消息均触发）。
 		s.mu.Lock()
-		if s.roomBackoff == nil { // 防御：任何路径下都不允许 nil map 写入 panic
-			s.roomBackoff = map[string]time.Time{}
-		}
-		first := s.roomBackoff[groupID].IsZero()
-		s.roomBackoff[groupID] = time.Now().Add(2 * time.Minute)
+		first := !s.roomDownNotified[groupID]
+		s.roomDownNotified[groupID] = true
 		s.mu.Unlock()
 		fmt.Fprintf(os.Stderr, "room: %s 模型调用失败(%s): %v\n", agentCopy.Name, groupID, err)
 		if first {
-			s.postRoom(groupID, Agent{}, "", "", "discuss", "（模型调用暂时不可用，已暂停商议，2 分钟后自动重试）")
+			s.postRoom(groupID, Agent{}, "", "", "discuss", "（模型调用暂时不可用，正在持续重试，恢复后自动继续）")
 		}
 	} else if s.roomLen() == before && strings.TrimSpace(reply) != "" && !strings.EqualFold(strings.TrimSpace(reply), "PASS") {
 		s.postRoom(groupID, agentCopy, "内部商议", sess.ID, "discuss", reply)
@@ -987,7 +1085,7 @@ func (s *Server) agentTurn(ctx context.Context, groupID string, agentCopy Agent,
 	// 成功才计数（并行分发没有全局顺序，按完成轮数计）；失败不烧轮次。
 	s.mu.Lock()
 	if cur := s.groupByID(groupID); cur != nil && err == nil {
-		delete(s.roomBackoff, groupID)
+		delete(s.roomDownNotified, groupID)
 		cur.Turn++
 		cur.UpdatedAt = time.Now()
 		_ = s.save()
@@ -1346,8 +1444,9 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	}
 	s := &Server{addr: addr, dir: dir, root: root, osDir: osDir,
 		agentSesses: map[string]*agent.Session{}, secrets: map[string]Secret{},
-		roomBackoff: map[string]time.Time{},
-		runs:        map[string]*chatRun{}, workspaceLocks: map[string]*sync.Mutex{},
+		roomDownNotified: map[string]bool{}, authPending: map[string]*AuthRequest{},
+		authGrants: map[string]map[string]string{},
+		runs:       map[string]*chatRun{}, workspaceLocks: map[string]*sync.Mutex{},
 		kernel: newDualKernel(dir, 4)}
 	if err := s.load(); err != nil {
 		return nil, err
@@ -1384,6 +1483,8 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	mux.HandleFunc("POST /api/room/guide", s.handleRoomGuide)
 	mux.HandleFunc("POST /api/room/start", s.handleRoomStart)
 	mux.HandleFunc("POST /api/room/stop", s.handleRoomStop)
+	mux.HandleFunc("GET /api/auth/requests", s.handleAuthRequests)
+	mux.HandleFunc("POST /api/auth/decide", s.handleAuthDecide)
 	mux.HandleFunc("GET /api/kernel", s.handleKernel)
 	mux.HandleFunc("POST /api/profile", s.handleProfile)
 	mux.HandleFunc("GET /api/update", s.handleUpdate)
@@ -2725,6 +2826,7 @@ func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, histor
 		return nil, fmt.Errorf("加载智能体记忆失败: %w", err)
 	}
 	as.Memory = mem
+	as.AuthGate = s.authGate(ag.ID, ag.Name) // clarity 验证：越界路径三档授权
 	if mem.Len() > 0 {
 		as.AppendSystem(mem.Summary())
 	}
