@@ -112,6 +112,12 @@ D9857 把两个线圈摆在 `a=0.10 m`、`z=−0.058 / +0.0042 m`，其中一圈
 
 **因此 Phase 1 的第一件事不是新算法，而是补一条"可造性"约束**（导体到约束区域的净空）：
 
+---
+
+> **基础设施注记（不属于 Phase 1–3 任何一项）**：`OrbitDB/dchat` 链路收口已完成——
+> 提交 c9c561d（含 live_test 真实连通测试）等三提交（fda2513 / 12bb0c9），
+> 归属 = 仓库开发者 liuyuanjie，各 AI 智能体不认领。此项是仓库基建，不进 Phase 1–3 交付清单。
+
 ### Phase 1 — 让系统学会设计（Day 8–30）
 
 **目标：让搜索带着上一轮的知识跑。** 产物：**Fusion Design Agent v0.1**
@@ -127,6 +133,19 @@ D9857 把两个线圈摆在 `a=0.10 m`、`z=−0.058 / +0.0042 m`，其中一圈
 - [ ] `rlenv` 观测槽 6（`cost_proxy`）改为按基线 cost 归一——现在是原始量级的 1.8e12，对策略是量纲极差的特征（需同步改冻结的 `ObsMetricRefs`）
 - [ ] 报告 §4 接入 `registry.BranchImprovement()` 的分支增益表（报告 schema 冻结，加字段需同步 schema_check 与报告测试）
 - [ ] 小预算阶梯（50/100/200）重测热启动增益——1000 次预算下它落在噪声里（+0.004，方差更大）
+
+**任务映射（文档 ↔ 任务系统）**：编号以本文件为准，各智能体按「各自立账 + 文本同步编号」维护，跨会话可重建。
+- A-001 · OrbitDB/dchat 收口 — done（归属仓库开发者 liuyuanjie，证据 c9c561d 等三提交 + live_test）
+- A-002 · B': PLAN.md 同步 — done（本提交落地）
+- A-003 · 补可造性约束（Phase 1.1）
+- A-004 · Bayesian optimization 等预算对比（Phase 1.2）
+- A-005 · rlenv 接 OaK/持续学习（Phase 1.3）
+- A-006 · 设计规则先验消融（Phase 1.4）
+- A-007 · benchmark 泛化列（Phase 1.5）
+- A-008 · 谱系分析：哪个分支改进最多（Phase 1.6）
+- A-009 · rlenv 观测槽 6 cost_proxy 归一（Phase 1.7）
+- A-010 · 报告 §4 分支增益表（Phase 1.8）
+- A-011 · 小预算阶梯重测热启动增益（Phase 1.9）
 
 判据：多 seed、等预算、消融齐全；RL 必须与 random policy 与 evolution 同时对比，不允许"RL=一切"。
 
