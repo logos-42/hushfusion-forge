@@ -43,3 +43,7 @@ dist/
 
 # Crush 编辑器状态（不入库；名册门 IsTracked 亦跳过 .crush/）
 .crush/
+.forge/
+.npm/
+Library/
+.cache/

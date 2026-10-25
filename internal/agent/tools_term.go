@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -48,12 +49,19 @@ func startTermProc(root string) (*termProc, error) {
 	cmd := exec.Command(bin, "--noprofile", "--norc")
 	cmd.Dir = root
 	// 不继承宿主完整 env：避免把 API key/代理凭据带进常驻终端。
+	// HOME 指向 workspace 防读真实 ~/.ssh 等；npm/go 等工具的缓存重定向到
+	// /tmp，防止 npm cache、Go telemetry、go-build 把杂物写进仓库目录。
+	cacheRoot := filepath.Join(os.TempDir(), "forge-term-cache")
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"LANG=C.UTF-8",
 		"TERM=dumb",
 		"HOME=" + root,
 		"PS1=",
+		"npm_config_cache=" + filepath.Join(cacheRoot, "npm"),
+		"XDG_CACHE_HOME=" + filepath.Join(cacheRoot, "xdg"),
+		"GOCACHE=" + filepath.Join(cacheRoot, "go-build"),
+		"GOTELEMETRY=off",
 	}
 	in, err := cmd.StdinPipe()
 	if err != nil {

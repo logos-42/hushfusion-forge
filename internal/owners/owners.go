@@ -263,6 +263,8 @@ func IsTracked(rel string) bool {
 	for _, frag := range []string{
 		"runs/", "__pycache__/", ".pytest_cache/", ".venv/", "node_modules/", ".DS_Store",
 		".egg-info/", "go-build/", ".kilo/", ".kilocode/", ".hermes/", ".crush/",
+		// 本机运行时杂物（进程把 HOME/缓存落在仓里产生的）：不是本仓资产。
+		".npm/", "Library/", ".forge/", ".cache/",
 	} {
 		if strings.Contains(rel, frag) {
 			return false
