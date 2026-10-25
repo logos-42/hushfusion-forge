@@ -245,7 +245,7 @@
     <div id="roomMessages" class="room-messages"></div>
     <div class="room-foot">
       <div class="room-controls">
-        <select id="roomA"></select><select id="roomB"></select>
+        <select id="roomAgents" multiple size="2" title="按住 Cmd/Ctrl 可多选；至少选两个"></select>
         <button id="roomStartBtn">发起交流</button><button id="roomStopBtn">结束</button>
       </div>
       <div id="roomState" class="hint"></div>
@@ -378,15 +378,15 @@ function renderAll(){ renderUpdate(); renderSidebar(); renderHeader(); renderCha
 
 let roomTimer=null;
 function renderRoomControls(){
-  const a=$('roomA'),b=$('roomB');
-  if(!a||!b||!state)return;
+  const el=$('roomAgents');
+  if(!el||!state)return;
   const opts=(state.agents||[]).map(x=>`<option value="${x.id}">${escapeHTML(x.name)}</option>`).join('');
-  const keepA=a.value,keepB=b.value;
-  a.innerHTML=opts;b.innerHTML=opts;
-  if([...a.options].some(o=>o.value===keepA))a.value=keepA;
-  if([...b.options].some(o=>o.value===keepB))b.value=keepB;
-  if(!a.value&&state.agents[0])a.value=state.agents[0].id;
-  if(!b.value){const other=(state.agents||[]).find(x=>x.id!==a.value);if(other)b.value=other.id;}
+  const keep=[...el.selectedOptions].map(o=>o.value);
+  el.innerHTML=opts;
+  for(const o of el.options){if(keep.includes(o.value))o.selected=true;}
+  if(el.selectedOptions.length===0&&(state.agents||[]).length){
+    state.agents.slice(0,2).forEach(a=>{const o=[...el.options].find(x=>x.value===a.id);if(o)o.selected=true;});
+  }
 }
 function renderRoomMeta(st,members){
   const s=$('roomState'),m=$('roomMembers');
@@ -425,8 +425,8 @@ function setRoomOpen(open){
 $('roomBtn').onclick=()=>setRoomOpen(!$('app').classList.contains('room-open'));
 $('roomClose').onclick=()=>setRoomOpen(false);
 $('roomStartBtn').onclick=async()=>{
-  const ids=[$('roomA').value,$('roomB').value].filter(Boolean);
-  if(new Set(ids).size<2){alert('请选择两个不同的智能体');return;}
+  const ids=[...$('roomAgents').selectedOptions].map(o=>o.value).filter(Boolean);
+  if(new Set(ids).size<2){alert('请至少选择两个不同的智能体（Cmd/Ctrl 多选）');return;}
   try{await api('/api/room/start',{method:'POST',body:JSON.stringify({agent_ids:ids})});await loadRoom();}
   catch(e){alert(e.message);}
 };

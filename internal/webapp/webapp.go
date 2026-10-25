@@ -307,22 +307,24 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 	}
 	ids := append([]string(nil), req.AgentIDs...)
 	if len(ids) == 0 {
-		for _, a := range s.st.Agents {
+		for _, a := range s.st.Agents { // 缺省：全部智能体参与
 			ids = append(ids, a.ID)
-			if len(ids) == 2 {
-				break
-			}
 		}
 	}
 	var agents []Agent
+	seen := map[string]bool{}
 	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		if ag := s.findAgent(id); ag != nil {
 			agents = append(agents, *ag)
 		}
 	}
 	if len(agents) < 2 {
 		s.mu.Unlock()
-		http.Error(w, "至少选择两个智能体", http.StatusBadRequest)
+		http.Error(w, "内部商议至少需要两个智能体（已支持任意多个）", http.StatusBadRequest)
 		return
 	}
 	maxTurns := req.MaxTurns
@@ -336,15 +338,18 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 	if topic == "" {
 		topic = "自由商议：同步各自进展、阻塞点和下一步"
 	}
-	participantIDs := []string{agents[0].ID, agents[1].ID}
+	participantIDs := make([]string, 0, len(agents))
+	for _, a := range agents {
+		participantIDs = append(participantIDs, a.ID)
+	}
 	s.st.RoomState = RoomState{
 		Active: true, Topic: topic, Participants: participantIDs,
 		Turn: 0, MaxTurns: maxTurns, NextAgentID: participantIDs[0], UpdatedAt: time.Now(),
 		Channel: "orbitdb", OrbitStatus: "checking",
 	}
-	s.st.RoomMembers = []RoomMember{
-		{AgentID: agents[0].ID, AgentName: agents[0].Name, Status: "idle", LastBeat: time.Now()},
-		{AgentID: agents[1].ID, AgentName: agents[1].Name, Status: "idle", LastBeat: time.Now()},
+	s.st.RoomMembers = make([]RoomMember, 0, len(agents))
+	for _, a := range agents {
+		s.st.RoomMembers = append(s.st.RoomMembers, RoomMember{AgentID: a.ID, AgentName: a.Name, Status: "idle", LastBeat: time.Now()})
 	}
 	_ = s.save()
 	s.mu.Unlock()
