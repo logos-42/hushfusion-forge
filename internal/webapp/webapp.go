@@ -881,9 +881,13 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 	as, err := s.agentSession(settings, &sess, agentCopy, nil)
 	if err == nil {
 		as.LoadMessages(nil)
-		// 频道只做过程汇报：本轮全部写工具关闭（room.post/room.read 非写不受影响），
+		// 频道以过程汇报为主：写工具收敛到最小集（全局记忆/任务登记各一条），
+		// 重执行类（shell/term/python/git/subagents/hook/cron 等）保持关闭，
 		// 任务执行留在各智能体自己的 workspace 后台，不在这里耗费执行时间。
 		as.ClearAllowWrites()
+		for _, w := range []string{"mem.set", "tasks.add", "tasks.set_state"} {
+			as.AllowWrites[w] = true
+		}
 	}
 	before := s.roomLen()
 	var reply string
