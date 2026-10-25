@@ -614,17 +614,8 @@ func (s *Server) handleRoomGuide(w http.ResponseWriter, r *http.Request) {
 				g.Members[i].Status = "idle"
 			}
 		}
-		if len(g.Participants) > 0 {
-			next := g.Participants[0]
-			if g.LeaderAgentID != "" {
-				for _, id := range g.Participants {
-					if id == g.LeaderAgentID {
-						next = id
-						break
-					}
-				}
-			}
-			g.NextAgentID = next
+		if len(g.Participants) > 0 && g.NextAgentID == "" {
+			g.NextAgentID = g.Participants[0] // 心跳轮转指针（并行分发不依赖它）
 		}
 		_ = s.save()
 	}
@@ -633,7 +624,7 @@ func (s *Server) handleRoomGuide(w http.ResponseWriter, r *http.Request) {
 	if needStart {
 		s.startRoomLoop()
 	}
-	go s.kickRoomStep(context.Background(), gid) // 立即步进，不等心跳
+	go s.dispatchRoomAll(gid) // 并行分发：全体成员各起一轮独立汇报，不按顺序
 	s.writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -765,33 +756,36 @@ func (s *Server) roomLoop(ctx context.Context) {
 				if ctx.Err() != nil {
 					return
 				}
-				s.kickRoomStep(ctx, gid)
+				s.stepGroup(ctx, gid)
 			}
 		}
 	}
 }
 
-// kickRoomStep 立即步进指定群组（防重入）：用户发消息后即时响应，不等 8s 心跳。
-func (s *Server) kickRoomStep(ctx context.Context, groupID string) {
+// roomStepKey 群组+成员 的步进防重入键（并行分发下按成员维度去重）。
+func roomStepKey(groupID, agentID string) string { return groupID + "\x00" + agentID }
+
+// tryLockAgentStep 对（群组,成员）加防重入锁；抢到返回解锁函数，未抢到返回 nil。
+func (s *Server) tryLockAgentStep(groupID, agentID string) func() {
 	s.roomStepMu.Lock()
 	if s.roomStepping == nil {
 		s.roomStepping = map[string]bool{}
 	}
-	if s.roomStepping[groupID] {
+	k := roomStepKey(groupID, agentID)
+	if s.roomStepping[k] {
 		s.roomStepMu.Unlock()
-		return
+		return nil
 	}
-	s.roomStepping[groupID] = true
+	s.roomStepping[k] = true
 	s.roomStepMu.Unlock()
-	defer func() {
+	return func() {
 		s.roomStepMu.Lock()
-		delete(s.roomStepping, groupID)
+		delete(s.roomStepping, k)
 		s.roomStepMu.Unlock()
-	}()
-	s.stepGroup(ctx, groupID)
+	}
 }
 
-// stepGroup 唤醒群组里的下一个智能体：读最近商议、决定是否 room_post 发言，然后轮转。
+// stepGroup 心跳步进：推举警长（首轮）→ 取轮转中的下一位成员执行一轮汇报。
 func (s *Server) stepGroup(ctx context.Context, groupID string) {
 	s.mu.Lock()
 	g := s.groupByID(groupID)
@@ -829,8 +823,7 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 		s.electLeader(ctx, groupID, settings, cands, topic)
 		return // 推举消耗一轮，下一 tick 进入正常商议
 	}
-	// 找到当前应发言的智能体；失效（已删除）则从其位置顺延到下一个存活者，
-	// 而不是永远回退到第一位（否则一位失效会挤占全部发言）。
+	// 取轮转中的下一位成员；失效（已删除）则顺延到下一个存活者。
 	ag := s.findAgent(g.NextAgentID)
 	if ag == nil {
 		idx := 0
@@ -849,29 +842,83 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 		agentCopy = *ag
 	}
 	topic := g.Topic
+	locked := g.TitleLocked
 	s.mu.Unlock()
 	if ag == nil {
 		return
 	}
-	run, _, ok := s.beginRun("room-" + agentCopy.ID)
-	if !ok {
-		// 该智能体正忙（如正在与用户会话）：本轮跳过，把发言权顺延给下一位，
-		// 避免 busy 成员卡住整组轮转（表现就是"4 人只有 3 人在交流"）。
-		s.mu.Lock()
-		if cur := s.groupByID(groupID); cur != nil && len(cur.Participants) > 0 {
-			next := cur.Participants[0]
-			for i, id := range cur.Participants {
-				if id == agentCopy.ID && i+1 < len(cur.Participants) {
-					next = cur.Participants[i+1]
-					break
-				}
-			}
-			cur.NextAgentID = next
-			cur.UpdatedAt = time.Now()
-			_ = s.save()
-		}
+	unlock := s.tryLockAgentStep(groupID, agentCopy.ID)
+	if unlock == nil {
+		return // 该成员已有进行中的一轮（并行分发中）
+	}
+	defer unlock()
+	s.agentTurn(ctx, groupID, agentCopy, settings, locked, topic)
+	// 轮转指针：按参与者顺序指向下一位（并行分发下仅作心跳选取用）。
+	s.mu.Lock()
+	cur := s.groupByID(groupID)
+	if cur == nil {
 		s.mu.Unlock()
 		return
+	}
+	next := cur.Participants[0]
+	for i, id := range cur.Participants {
+		if id == agentCopy.ID && i+1 < len(cur.Participants) {
+			next = cur.Participants[i+1]
+			break
+		}
+	}
+	cur.NextAgentID = next
+	cur.UpdatedAt = time.Now()
+	_ = s.save()
+	s.mu.Unlock()
+	go s.maybeAutoTitle(groupID, settings, agentCopy) // AI 按内容定名/刷新 tab 简称
+}
+
+// dispatchRoomAll 用户消息并行分发：全体存活成员各起一轮独立汇报（并发、不按顺序），
+// 完成后各自来频道汇报。任务执行仍在各成员自己的 workspace 后台进行。
+func (s *Server) dispatchRoomAll(groupID string) {
+	s.mu.Lock()
+	g := s.groupByID(groupID)
+	if g == nil || len(g.Participants) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	ids := append([]string(nil), g.Participants...)
+	settings := s.st.Settings
+	topic := g.Topic
+	locked := g.TitleLocked
+	s.mu.Unlock()
+	for _, id := range ids {
+		go func(agentID string) {
+			unlock := s.tryLockAgentStep(groupID, agentID)
+			if unlock == nil {
+				return // 该成员已有进行中的一轮
+			}
+			defer unlock()
+			s.mu.Lock()
+			g := s.groupByID(groupID)
+			if g == nil || !g.Running {
+				s.mu.Unlock()
+				return
+			}
+			var agentCopy Agent
+			if a := s.findAgent(agentID); a != nil {
+				agentCopy = *a
+			} else {
+				s.mu.Unlock()
+				return
+			}
+			s.mu.Unlock()
+			s.agentTurn(context.Background(), groupID, agentCopy, settings, locked, topic)
+		}(id)
+	}
+}
+
+// agentTurn 单个成员的一轮汇报（并行安全）：写工具最小集、60s 上限、瞬时失败重试一次。
+func (s *Server) agentTurn(ctx context.Context, groupID string, agentCopy Agent, settings Settings, titleLocked bool, topic string) {
+	run, _, ok := s.beginRun("room-" + agentCopy.ID)
+	if !ok {
+		return // 该智能体正忙（与用户会话中或已有进行中的一轮）
 	}
 	defer s.endRun("room-"+agentCopy.ID, run)
 	s.setRoomAgentGroup(agentCopy.ID, groupID)
@@ -881,9 +928,9 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 	as, err := s.agentSession(settings, &sess, agentCopy, nil)
 	if err == nil {
 		as.LoadMessages(nil)
-		// 频道以过程汇报为主：写工具收敛到最小集（全局记忆/任务登记各一条），
-		// 重执行类（shell/term/python/git/subagents/hook/cron 等）保持关闭，
-		// 任务执行留在各智能体自己的 workspace 后台，不在这里耗费执行时间。
+		// 频道以过程汇报为主：写工具收敛到最小集（全局记忆/任务登记），
+		// 重执行类（shell/term/python/git/subagents 等）保持关闭，
+		// 任务执行留在各智能体自己的 workspace 后台，完成后来这里汇报。
 		as.ClearAllowWrites()
 		for _, w := range []string{"mem.set", "tasks.add", "tasks.set_state"} {
 			as.AllowWrites[w] = true
@@ -915,27 +962,16 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 		s.postRoom(groupID, agentCopy, "内部商议", sess.ID, "discuss", reply)
 	}
 	s.setRoomMember(groupID, agentCopy, "idle")
-	// 轮转：按参与者顺序找下一个。
+	// 完成即计数（并行分发没有全局顺序，按完成轮数计）。
 	s.mu.Lock()
-	cur := s.groupByID(groupID)
-	if cur == nil {
-		s.mu.Unlock()
-		return
+	if cur := s.groupByID(groupID); cur != nil {
+		cur.Turn++
+		cur.UpdatedAt = time.Now()
+		_ = s.save()
 	}
-	cur.Turn++
-	next := cur.Participants[0]
-	for i, id := range cur.Participants {
-		if id == agentCopy.ID && i+1 < len(cur.Participants) {
-			next = cur.Participants[i+1]
-			break
-		}
-	}
-	cur.NextAgentID = next
-	cur.UpdatedAt = time.Now()
-	_ = s.save()
 	s.mu.Unlock()
-	go s.maybeAutoTitle(groupID, settings, agentCopy) // 轮转后触发：AI 按内容定名/刷新 tab 简称
 }
+
 func (s *Server) roomPrompt(ag Agent, groupID, topic string, isLeader bool) string {
 	s.mu.Lock()
 	var msgs []RoomMessage
