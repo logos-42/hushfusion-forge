@@ -472,7 +472,6 @@ async function newRoomGroup(){
   try{const r=await api('/api/room/new',{method:'POST',body:JSON.stringify({topic})});activeRoomGroup=r.id;await loadRoom();}catch(e){alert(e.message);}
 }
 async function closeRoomGroup(id){
-  if(!confirm('关闭该群组商议？运行中的会先停止（消息保留在 git 存档）。'))return;
   try{const r=await api('/api/room/close',{method:'POST',body:JSON.stringify({group_id:id})});if(activeRoomGroup===id)activeRoomGroup=r.active_group_id||'';await loadRoom();}catch(e){alert(e.message);}
 }
 function setRoomOpen(open){

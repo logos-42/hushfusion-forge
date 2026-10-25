@@ -122,7 +122,8 @@ type RoomState struct {
 // RoomGroup 是一个群组商议（tab），可独立运行/停止/关闭。
 type RoomGroup struct {
 	ID           string       `json:"id"`
-	Topic        string       `json:"topic,omitempty"`
+	Topic        string       `json:"topic,omitempty"`        // tab 简称；未锁定时由 AI 按内容定名/刷新
+	TitleLocked  bool         `json:"title_locked,omitempty"` // 用户显式给过主题 = 锁定，AI 不再改名
 	Running      bool         `json:"running"`
 	Participants []string     `json:"participants,omitempty"`
 	Turn         int          `json:"turn"`
@@ -485,9 +486,6 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 		maxTurns = 0
 	}
 	topic := strings.TrimSpace(req.Topic)
-	if topic == "" {
-		topic = "自由商议：同步各自进展、阻塞点和下一步"
-	}
 	gid := strings.TrimSpace(req.GroupID)
 	if gid == "" {
 		// 重新发起：当前选中的群组若已结束，就在它上面重启（不新建）。
@@ -503,6 +501,15 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 		gid = fmt.Sprintf("room-%d", time.Now().UnixNano())
 		s.st.RoomState.Groups = append(s.st.RoomState.Groups, RoomGroup{ID: gid})
 		g = s.groupByID(gid)
+		if topic == "" {
+			topic = "自由商议：同步各自进展、阻塞点和下一步" // 新群组的占位主题，AI 定名后会覆盖
+		}
+	}
+	if topic != "" {
+		g.Topic = topic
+		g.TitleLocked = true // 用户显式给的主题锁定，AI 不改名
+	} else if g.Topic == "" {
+		g.Topic = "自由商议：同步各自进展、阻塞点和下一步"
 	}
 	participants := make([]string, 0, len(agents))
 	g.Members = make([]RoomMember, 0, len(agents))
@@ -510,7 +517,6 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 		participants = append(participants, a.ID)
 		g.Members = append(g.Members, RoomMember{AgentID: a.ID, AgentName: a.Name, Status: "idle", LastBeat: time.Now()})
 	}
-	g.Topic = topic
 	g.Participants = participants
 	g.Turn = 0
 	g.MaxTurns = maxTurns
@@ -578,6 +584,7 @@ func (s *Server) handleRoomNew(w http.ResponseWriter, r *http.Request) {
 	g := RoomGroup{
 		ID:           fmt.Sprintf("room-%d", time.Now().UnixNano()),
 		Topic:        strings.TrimSpace(req.Topic),
+		TitleLocked:  strings.TrimSpace(req.Topic) != "", // 新建时给了主题就锁定
 		Participants: ids,
 		UpdatedAt:    time.Now(),
 	}
@@ -769,6 +776,7 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 	cur.UpdatedAt = time.Now()
 	_ = s.save()
 	s.mu.Unlock()
+	go s.maybeAutoTitle(groupID, settings, agentCopy) // 轮转后触发：AI 按内容定名/刷新 tab 简称
 }
 func (s *Server) roomPrompt(ag Agent, groupID, topic string) string {
 	s.mu.Lock()
@@ -798,6 +806,83 @@ func (s *Server) roomLen() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.st.Room)
+}
+
+// maybeAutoTitle 用 AI 按商议内容定名/刷新群组 tab 简称：
+// 首次发言后定名，之后每 5 轮随内容刷新；用户显式给过主题（TitleLocked）则跳过。
+func (s *Server) maybeAutoTitle(groupID string, settings Settings, ag Agent) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	s.mu.Lock()
+	g := s.groupByID(groupID)
+	if g == nil {
+		fmt.Fprintf(os.Stderr, "room: 定名跳过(%s): 群组不存在\n", groupID)
+		s.mu.Unlock()
+		return
+	}
+	if g.TitleLocked || g.Turn == 0 || !(g.Turn == 1 || g.Turn%5 == 0) {
+		fmt.Fprintf(os.Stderr, "room: 定名跳过(%s) turn=%d locked=%v\n", groupID, g.Turn, g.TitleLocked)
+		s.mu.Unlock()
+		return
+	}
+	var msgs []RoomMessage
+	for i := range s.st.Room {
+		if s.st.Room[i].GroupID == groupID {
+			msgs = append(msgs, s.st.Room[i])
+		}
+	}
+	cur := g.Topic
+	s.mu.Unlock()
+	if len(msgs) == 0 {
+		return
+	}
+	if len(msgs) > 8 {
+		msgs = msgs[len(msgs)-8:]
+	}
+	var b strings.Builder
+	for _, m := range msgs {
+		who := m.AgentName
+		if who == "" {
+			who = "系统"
+		}
+		fmt.Fprintf(&b, "%s：%s\n", who, m.Text)
+	}
+	prompt := fmt.Sprintf("根据下面群组商议的最近内容，给出一个不超过 10 个字的群组标题，只输出标题本身，不要引号、句号或解释。\n当前标题：%s\n\n%s", cur, b.String())
+	req := ai.ChatRequest{Model: settings.Model, Messages: []ai.Message{{Role: "user", Content: prompt}}, MaxTokens: 256}
+	sec := s.secretFor(settings.Provider)
+	base := firstNonEmpty(sec.BaseURL, os.Getenv("HUSHFUSION_AI_BASE_URL"))
+	resp, err := ai.Chat(ctx, settings.Provider, req, ai.ClientOptions{BaseURL: base, APIKey: sec.APIKey})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "room: 群组定名失败(%s): %v\n", groupID, err)
+		return
+	}
+	if resp == nil || strings.TrimSpace(resp.Content) == "" {
+		fr := ""
+		if resp != nil {
+			fr = resp.FinishReason
+		}
+		fmt.Fprintf(os.Stderr, "room: 群组定名空响应(%s) finish=%q\n", groupID, fr)
+		return
+	}
+	title := strings.TrimSpace(resp.Content)
+	title = strings.Trim(title, "\"“”'‘’「」` \n\r\t。.")
+	title = strings.ReplaceAll(title, "\n", "")
+	r := []rune(title)
+	if len(r) == 0 {
+		return
+	}
+	if len(r) > 16 {
+		r = r[:16]
+	}
+	title = string(r)
+	s.mu.Lock()
+	g2 := s.groupByID(groupID)
+	if g2 != nil && !g2.TitleLocked {
+		g2.Topic = title
+		_ = s.save()
+		fmt.Fprintf(os.Stderr, "room: 群组定名(%s): %s\n", groupID, title)
+	}
+	s.mu.Unlock()
 }
 
 func (s *Server) setRoomMember(groupID string, ag Agent, status string) {
@@ -985,7 +1070,11 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	mux.HandleFunc("GET /api/update", s.handleUpdate)
 	mux.HandleFunc("GET /api/version", s.handleVersion)
 	mux.HandleFunc("POST /api/update/apply", s.handleUpdateApply)
-	mux.Handle("/", http.FileServer(http.FS(assets)))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// 前端与二进制同版本发布：禁止缓存旧 JS（否则新后端配旧前端会出现行为错位）。
+		w.Header().Set("Cache-Control", "no-store")
+		http.FileServer(http.FS(assets)).ServeHTTP(w, r)
+	})
 	s.http = &http.Server{Addr: addr, Handler: security(mux)}
 	return s, nil
 }
