@@ -567,6 +567,32 @@ func (s *Server) handleRoomStop(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, map[string]any{"ok": true})
 }
 
+// handleRoomGuide 用户向群组内所有智能体一次性下发引导/目标；
+// 指导消息以 guide 类别进入频道，智能体在最近消息里看到并在下一轮遵循。
+func (s *Server) handleRoomGuide(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		GroupID string `json:"group_id,omitempty"`
+		Text    string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "请求不是 JSON", http.StatusBadRequest)
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		http.Error(w, "引导内容不能为空", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	gid := strings.TrimSpace(req.GroupID)
+	if gid == "" {
+		gid = s.activeGroupID()
+	}
+	s.mu.Unlock()
+	s.postRoom(gid, Agent{Name: "用户"}, "群组指导", "", "guide", "【用户引导，全体遵循】"+text)
+	s.writeJSON(w, map[string]any{"ok": true})
+}
+
 // handleRoomNew 新建一个空白群组（tab）；不落盘（save 时剪枝空白群组）。
 func (s *Server) handleRoomNew(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -1090,6 +1116,7 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	mux.HandleFunc("POST /api/room", s.handleRoomPost)
 	mux.HandleFunc("POST /api/room/new", s.handleRoomNew)
 	mux.HandleFunc("POST /api/room/close", s.handleRoomClose)
+	mux.HandleFunc("POST /api/room/guide", s.handleRoomGuide)
 	mux.HandleFunc("POST /api/room/start", s.handleRoomStart)
 	mux.HandleFunc("POST /api/room/stop", s.handleRoomStop)
 	mux.HandleFunc("GET /api/kernel", s.handleKernel)
