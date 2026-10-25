@@ -881,13 +881,9 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 	as, err := s.agentSession(settings, &sess, agentCopy, nil)
 	if err == nil {
 		as.LoadMessages(nil)
-		s.mu.Lock()
-		lg := s.groupByID(groupID)
-		isLeader := lg != nil && lg.LeaderAgentID == agentCopy.ID
-		s.mu.Unlock()
-		if isLeader {
-			as.GrantAllWrites() // 管理者：完全工具权限（派发/验收/全局记忆）
-		}
+		// 频道只做过程汇报：本轮全部写工具关闭（room.post/room.read 非写不受影响），
+		// 任务执行留在各智能体自己的 workspace 后台，不在这里耗费执行时间。
+		as.ClearAllowWrites()
 	}
 	before := s.roomLen()
 	var reply string
@@ -898,7 +894,7 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 		lg2 := s.groupByID(groupID)
 		isLeader := lg2 != nil && lg2.LeaderAgentID == agentCopy.ID
 		s.mu.Unlock()
-		turnCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		turnCtx, cancel := context.WithTimeout(ctx, 60*time.Second) // 汇报轮要短：不在这里执行任务
 		reply, err = as.Turn(turnCtx, s.roomPrompt(agentCopy, groupID, topic, isLeader))
 		cancel()
 		if err != nil && isTransientTurnErr(err) {
@@ -957,8 +953,9 @@ func (s *Server) roomPrompt(ag Agent, groupID, topic string, isLeader bool) stri
 		}
 		fmt.Fprintf(&b, "[%s] %s：%s\n", m.Kind, who, m.Text)
 	}
+	b.WriteString("\n本频道只做简短过程汇报（进度/阻塞/下一步），禁止在这里执行任务；任务请在各自 workspace 后台执行，完成后来这里汇报结果。汇报保持具体、简短。")
 	if isLeader {
-		b.WriteString("\n你是本群组推举的警长（管理者）。你对群内每一位成员负有责任与义务：①派发任务——room_post 点名指派，明确目标与期限；②验收成果——检查成员交付，不合格要求返工；③协调分歧——成员争执时给出裁决；④督促滞后——长时间无发言的成员主动点名唤醒；⑤如实同步——风险、阻塞、失败必须第一时间向成员与用户公开，不得粉饰；⑥以身作则——不滥用权限，工具与全局记忆只为推进群组目标服务。")
+		b.WriteString("\n你是本群组推举的警长（管理者）。你对群内每一位成员负有责任与义务：①派发任务——room_post 点名指派，明确目标与期限（执行由成员在自己 workspace 后台进行）；②验收成果——依据成员汇报检查交付，不合格要求返工；③协调分歧——成员争执时给出裁决；④督促滞后——长时间无发言的成员主动点名唤醒；⑤如实同步——风险、阻塞、失败必须第一时间向成员与用户公开，不得粉饰；⑥以身作则——不滥用权限。")
 	}
 	if isLeader {
 		b.WriteString("\n你是本群组推举的管理者：负责任务派发（room_post 点名指派成员）、验收成果、协调分歧；你拥有全部工具权限与全局记忆（mem 工具），请主动维护秩序并推进目标。")

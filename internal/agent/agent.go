@@ -243,6 +243,13 @@ func (s *Session) GrantAllWrites() {
 	}
 }
 
+// ClearAllowWrites 清空写工具白名单：本会话退化为只读（非写工具如 room.post /
+// room.read 不受影响）。用于群组商议轮次——频道只做过程汇报，任务执行留在各
+// 智能体自己的 workspace 后台进行。
+func (s *Session) ClearAllowWrites() {
+	s.AllowWrites = map[string]bool{}
+}
+
 // ResolveName 把模型返回的安全名映射回内部注册名（original）。
 func (r *ToolRegistry) ResolveName(name string) (string, bool) {
 	orig, _, ok := r.resolve(name)
