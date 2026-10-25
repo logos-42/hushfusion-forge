@@ -250,6 +250,7 @@ func startNodeChan(bin, script string) (*nodeChan, error) {
 		return nil, fmt.Errorf("dchat: 找不到 node（设置 DCHAT_NODE_BIN 指到 Node）: %w", err)
 	}
 	cmd := exec.Command(bin, script)
+	cmd.Dir = filepath.Dir(script) // IPFS repo 等相对路径落在助手目录，不污染进程 cwd
 	cmd.Env = os.Environ()
 	in, err := cmd.StdinPipe()
 	if err != nil {
@@ -292,17 +293,22 @@ func (c *nodeChan) call(ctx context.Context, req map[string]any) (map[string]any
 	}
 	done := make(chan res, 1)
 	go func() {
-		line, err := c.stdout.ReadBytes('\n')
-		if err != nil {
-			done <- res{err: err}
+		// 助手 stdout 可能混入库横幅（如 IPFS 初始化 "generating Ed25519
+		// keypair..."），非 JSON 行跳过，只认 JSON 响应。
+		for {
+			line, err := c.stdout.ReadBytes('\n')
+			if err != nil {
+				done <- res{err: err}
+				return
+			}
+			var v map[string]any
+			if jsonErr := json.Unmarshal(line, &v); jsonErr != nil {
+				fmt.Fprintf(os.Stderr, "dchat: 忽略助手非 JSON 行: %q\n", strings.TrimSpace(string(line)))
+				continue
+			}
+			done <- res{v: v}
 			return
 		}
-		var v map[string]any
-		if err := json.Unmarshal(line, &v); err != nil {
-			done <- res{err: fmt.Errorf("dchat: 助手返回非 JSON: %q", string(line))}
-			return
-		}
-		done <- res{v: v}
 	}()
 	select {
 	case <-ctx.Done():

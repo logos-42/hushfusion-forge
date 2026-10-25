@@ -53,7 +53,13 @@ async function getChannel(name) {
     if (typeof OrbitDB?.createInstance !== "function" || typeof ipfsFactory !== "function") {
       throw new Error("orbit-db/ipfs-core 模块加载异常（重装: npm install --prefix 助手目录）");
     }
-    const ipfs = await ipfsFactory({ repo: "./forge-orbitdb-" + process.pid, offline: false });
+    // 不监听不出网（本地 log 用途）：空 Swarm/Bootstrap 绕过老 libp2p 在新 Node
+    // 上的 "no valid addresses" 启动失败；repo 目录带 nonce，失败重试不撞锁。
+    const ipfs = await ipfsFactory({
+      repo: "./forge-orbitdb-" + process.pid + "-" + Date.now(),
+      offline: false,
+      config: { Addresses: { Swarm: [], API: {}, Gateway: {} }, Bootstrap: [] },
+    });
     const odb = await OrbitDB.createInstance(ipfs);
     const obj = { kind: "orbitdb", ipfs, odb, dbs: new Map() };
     channels.set(name, obj);

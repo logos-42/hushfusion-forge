@@ -761,7 +761,7 @@ func (s *Server) orbitProbe() {
 		s.setOrbitStatus("不可用: " + err.Error())
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second) // IPFS 冷启动可能 >30s
 	defer cancel()
 	if _, err := m.Status(ctx, "orbitdb"); err != nil {
 		s.setOrbitStatus("不可用: " + err.Error())
@@ -792,7 +792,7 @@ func (s *Server) roomMirror(msg RoomMessage) {
 	if err != nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second) // 首次含 IPFS 冷启动
 	defer cancel()
 	if _, err := m.Send(ctx, "orbitdb", "forge-room", string(b)); err != nil {
 		s.setOrbitStatus("同步失败: " + err.Error())
