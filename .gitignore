@@ -47,3 +47,6 @@ dist/
 .npm/
 Library/
 .cache/
+
+# 智能体运行时验证目录（商议/联调用，非仓库证据）
+runs/orbitdb_verify/

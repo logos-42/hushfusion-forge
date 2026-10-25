@@ -107,8 +107,11 @@ type RoomState struct {
 	Channel string `json:"channel,omitempty"`
 	// OrbitStatus 是最近一次 orbitdb 同步状态（ok / checking / 错误摘要）。
 	OrbitStatus string `json:"orbit_status,omitempty"`
-	// ArchiveCount 是已 git 存档的商议消息数（journal.jsonl 追加游标）。
+	// ArchiveCount 是已 git 存档的商议消息数（旧版游标；由 ArchiveLastID 换算维护）。
 	ArchiveCount int `json:"archive_count,omitempty"`
+	// ArchiveLastID 是最后一条已 git 存档的消息 ID（journal.jsonl 追加游标；
+	// 消息裁剪后按 ID 从尾部反查，找不到则视为现存消息全部未存档）。
+	ArchiveLastID string `json:"archive_last_id,omitempty"`
 }
 
 // RoomMember 是参与商议的智能体心跳。
@@ -326,8 +329,8 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 	if maxTurns <= 0 {
 		maxTurns = 6
 	}
-	if maxTurns > 12 {
-		maxTurns = 12
+	if maxTurns > 5000 {
+		maxTurns = 5000
 	}
 	topic := strings.TrimSpace(req.Topic)
 	if topic == "" {
@@ -600,8 +603,8 @@ func (s *Server) postRoom(ag Agent, sessionTitle, sessionID, kind, text string) 
 	}
 	s.mu.Lock()
 	s.st.Room = append(s.st.Room, msg)
-	if len(s.st.Room) > 300 {
-		s.st.Room = s.st.Room[len(s.st.Room)-300:]
+	if len(s.st.Room) > 20000 { // 5000 轮上限 × 每轮数条，全量可存档
+		s.st.Room = s.st.Room[len(s.st.Room)-20000:]
 	}
 	for i := range s.st.RoomMembers {
 		if s.st.RoomMembers[i].AgentID == ag.ID && ag.ID != "" {
@@ -1871,12 +1874,30 @@ func (s *Server) roomArchive() (string, error) {
 	s.mu.Lock()
 	msgs := make([]RoomMessage, 0, len(s.st.Room))
 	msgs = append(msgs, s.st.Room...)
-	count := s.st.RoomState.ArchiveCount
+	lastID := s.st.RoomState.ArchiveLastID
+	if lastID == "" && s.st.RoomState.ArchiveCount > 0 {
+		// 旧版条数游标迁移为 ID 游标。
+		if s.st.RoomState.ArchiveCount < len(msgs) {
+			lastID = msgs[s.st.RoomState.ArchiveCount-1].ID
+		} else if len(msgs) > 0 {
+			lastID = msgs[len(msgs)-1].ID
+		}
+	}
 	s.mu.Unlock()
-	if count >= len(msgs) {
+	start := 0
+	if lastID != "" {
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if msgs[i].ID == lastID {
+				start = i + 1
+				break
+			}
+		}
+		// 找不到 = 游标之前的消息已被裁剪，现存消息全部未存档。
+	}
+	if start >= len(msgs) {
 		return "无新增商议消息，跳过 git 存档", nil
 	}
-	newMsgs := msgs[count:]
+	newMsgs := msgs[start:]
 	dir := filepath.Join(s.dir, "room-archive")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
@@ -1914,6 +1935,9 @@ func (s *Server) roomArchive() (string, error) {
 	}
 	s.mu.Lock()
 	s.st.RoomState.ArchiveCount = len(msgs)
+	if len(msgs) > 0 {
+		s.st.RoomState.ArchiveLastID = msgs[len(msgs)-1].ID
+	}
 	_ = s.save()
 	s.mu.Unlock()
 	return summary + "（git 已提交）", nil

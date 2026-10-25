@@ -219,6 +219,10 @@ func (r *ToolRegistry) Specs() []ai.ToolSpec {
 	for _, t := range r.tools {
 		sp := t.Spec
 		sp.Function.Name = safeToolName(t.Spec.Function.Name)
+		// 无参工具也必须带合法 JSON Schema（部分供应商对缺失 parameters 直接 400）。
+		if m, ok := sp.Function.Parameters.(map[string]any); !ok || len(m) == 0 {
+			sp.Function.Parameters = map[string]any{"type": "object", "properties": map[string]any{}}
+		}
 		out = append(out, sp)
 	}
 	return out
