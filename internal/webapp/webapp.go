@@ -489,6 +489,10 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 		topic = "自由商议：同步各自进展、阻塞点和下一步"
 	}
 	gid := strings.TrimSpace(req.GroupID)
+	if gid == "" {
+		// 重新发起：当前选中的群组若已结束，就在它上面重启（不新建）。
+		gid = s.activeGroupID()
+	}
 	g := s.groupByID(gid)
 	if g != nil && g.Running {
 		s.mu.Unlock()
@@ -636,7 +640,8 @@ func (s *Server) roomStateSnapshot() RoomState {
 func (s *Server) startRoomLoop() {
 	s.roomMu.Lock()
 	if s.roomCancel != nil {
-		s.roomCancel()
+		s.roomMu.Unlock()
+		return // 循环已在运行，下一 tick 会自然带上新群组
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.roomCancel = cancel

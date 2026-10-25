@@ -425,7 +425,7 @@ function toggleRoomAgent(id){
 function renderRoomMeta(st,members,orbit,channel){
   const s=$('roomState'),m=$('roomMembers');
   if(s){
-    let base=st&&st.running?(st.max_turns>0?`交流中 · 第 ${st.turn||0}/${st.max_turns} 轮 · ${st.topic||''}`:`交流中 · 第 ${st.turn||0} 轮 · 不限轮次 · ${st.topic||''}`):'未在主动交流（点 ＋ 新建群组）';
+    let base=st&&st.running?(st.max_turns>0?`交流中 · 第 ${st.turn||0}/${st.max_turns} 轮 · ${st.topic||''}`:`交流中 · 第 ${st.turn||0} 轮 · 不限轮次 · ${st.topic||''}`):(st&&st.id?'本群组已结束 · 点「发起交流」在原群组重新开始':'未在主动交流（点 ＋ 新建群组）');
     if(channel)base+=` · orbitdb: ${orbit||'checking'}`;
     s.textContent=base;
   }
@@ -475,7 +475,7 @@ $('roomClose').onclick=()=>setRoomOpen(false);
 $('roomStartBtn').onclick=async()=>{
   const ids=[...roomPicked];
   if(ids.length<2){alert('请至少选择两个智能体（点击名字加入/移出）');return;}
-  try{await api('/api/room/start',{method:'POST',body:JSON.stringify({agent_ids:ids})});await loadRoom();}
+  try{await api('/api/room/start',{method:'POST',body:JSON.stringify({agent_ids:ids,group_id:activeRoomGroup})});await loadRoom();}
   catch(e){alert(e.message);}
 };
 $('roomStopBtn').onclick=async()=>{
