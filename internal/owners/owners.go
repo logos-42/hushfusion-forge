@@ -64,7 +64,7 @@ var Stages = []Stage{
 			"internal/webapp/",    // 2026-10-24 新增：桌面/Web 外壳（本地 HTTP + 内嵌前端 + 自动更新），归 parent
 			"internal/privacy/",   // 2026-10-25 新增：隐私围栏（私钥/凭据脱敏 + 敏感路径/命令 deny，归 parent）
 			"dist/",               // 2026-10-24 新增：发布打包产物（gitignore，但 roster 需覆盖以免门误报），归 parent
-			"npm/",                // 2026-10-24 新增：npm 启动器 + Node SDK（0.6.0），归 parent
+			"npm/",                // 2026-10-24 新增：npm 启动器 + Node SDK（0.3.1），归 parent
 			"internal/sandbox/",   // 2026-10-23 新增：exec 围栏（目录 jail + env 白名单 + 进程组 kill + 超时，归 parent）
 			"internal/proc/",      // 2026-10-23 新增：进程管理（登记表 + 取消传播 + 进程组停止 + 回收 + 并发上限，归 parent）
 			"internal/persona/",   // 2026-10-23 新增：persona/agent 文档发现 + bootstrap 注入（归 parent）
