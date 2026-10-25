@@ -688,7 +688,14 @@ func (s *Server) startRoomLoop() {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.roomCancel = cancel
 	s.roomMu.Unlock()
-	go s.roomLoop(ctx)
+	go func() {
+		s.roomLoop(ctx)
+		// 循环自退出（无运行中群组）后清掉句柄，允许下次 start 重新拉起，
+		// 否则 roomCancel 残留导致后续群组永远无人步进（假运行）。
+		s.roomMu.Lock()
+		s.roomCancel = nil
+		s.roomMu.Unlock()
+	}()
 }
 
 func (s *Server) stopRoomLoop() {
@@ -832,13 +839,19 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 	if err != nil {
 		reply = "（内部商议启动失败：" + err.Error() + "）"
 	} else {
-		turnCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		s.mu.Lock()
 		lg2 := s.groupByID(groupID)
 		isLeader := lg2 != nil && lg2.LeaderAgentID == agentCopy.ID
 		s.mu.Unlock()
+		turnCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		reply, err = as.Turn(turnCtx, s.roomPrompt(agentCopy, groupID, topic, isLeader))
 		cancel()
+		if err != nil && isTransientTurnErr(err) {
+			// 瞬时失败（取消/超时/网络抖动）：换新上下文重试一次，轮次不白费。
+			turnCtx2, cancel2 := context.WithTimeout(ctx, 2*time.Minute)
+			reply, err = as.Turn(turnCtx2, s.roomPrompt(agentCopy, groupID, topic, isLeader))
+			cancel2()
+		}
 	}
 	if err != nil {
 		reply = "（内部商议中断：" + err.Error() + "）"
@@ -982,6 +995,19 @@ func (s *Server) electLeader(ctx context.Context, groupID string, settings Setti
 	_ = s.save()
 	s.mu.Unlock()
 	s.postRoom(groupID, Agent{}, "", "", "invite", "群组推举 "+leaderName+" 为管理者：负责任务派发、验收与协调，拥有完全工具权限与全局记忆")
+}
+
+// isTransientTurnErr 判断商议轮次错误是否值得重试一次（取消/超时/网络抖动）。
+func isTransientTurnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "context canceled") ||
+		strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe")
 }
 
 // maybeAutoTitle 用 AI 按商议内容定名/刷新群组 tab 简称：

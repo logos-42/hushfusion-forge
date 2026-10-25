@@ -451,7 +451,7 @@ function renderRoomMeta(st,members,orbit,channel){
     s.textContent=base;
   }
   const lead=(st&&st.leader_agent_id)||'';
-  if(m)m.innerHTML=(members||[]).map(x=>`<span class="${x.status==='thinking'?'shimmer':''}"><span class="dot ${x.status||''}"></span>${lead&&lead===(x.agent_id||'')?'🛡️ ':''}${escapeHTML(x.agent_name||x.agent_id||'')}</span>`).join('');
+  if(m)m.innerHTML=(members||[]).map(x=>`<span class="${x.status==='thinking'?'shimmer':''}"><span class="dot ${x.status||''}"></span>${lead&&lead===(x.agent_id||'')?'🎖️ ':''}${escapeHTML(x.agent_name||x.agent_id||'')}</span>`).join('');
 }
 function renderRoom(msgs,members){
   const box=$('roomMessages');
@@ -464,7 +464,7 @@ function renderRoom(msgs,members){
   box.innerHTML=rows.map(m=>{
     const who=m.agent_name||m.agent_id||'系统';
     const a=amap[m.agent_id];
-    const ava=(a&&a.avatar?`<img class="ravatar" src="${a.avatar}" alt="">`:'<span class="ravatar sys">✦</span>')+(lastRoomLeader&&m.agent_id===lastRoomLeader?'<span title="警长（群组管理者）">🛡️</span>':'');
+    const ava=(a&&a.avatar?`<img class="ravatar" src="${a.avatar}" alt="">`:'<span class="ravatar sys">✦</span>')+(lastRoomLeader&&m.agent_id===lastRoomLeader?'<span title="警长（群组管理者）">🎖️</span>':'');
     const kind=labels[m.kind]||m.kind||'消息';
     const time=m.created_at?new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'';
     const title=m.title?` · ${escapeHTML(m.title)}`:'';
