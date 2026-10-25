@@ -228,6 +228,21 @@ func (r *ToolRegistry) Specs() []ai.ToolSpec {
 	return out
 }
 
+// GrantAllWrites 放开本会话的全部写工具（群组管理者专用权限）。
+func (s *Session) GrantAllWrites() {
+	if s.registry == nil {
+		return
+	}
+	if s.AllowWrites == nil {
+		s.AllowWrites = map[string]bool{}
+	}
+	for name, t := range s.registry.tools {
+		if t.Write {
+			s.AllowWrites[name] = true
+		}
+	}
+}
+
 // ResolveName 把模型返回的安全名映射回内部注册名（original）。
 func (r *ToolRegistry) ResolveName(name string) (string, bool) {
 	orig, _, ok := r.resolve(name)

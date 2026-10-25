@@ -46,7 +46,7 @@
   .room-msg .body{font-size:12px;line-height:1.55;color:var(--text);word-break:break-word}
   .room-msg .body p{margin:0 0 6px}
   .room-msg .body p:last-child{margin-bottom:0}
-  .room-foot{flex:none;padding:10px 12px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+  .room-foot{flex:none;padding:10px 12px 14px;border-top:1px solid var(--line);font-size:11px;color:var(--muted);overflow:visible}
   .room-tabs{display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto;align-items:center}
   .room-tab{cursor:pointer;padding:3px 10px;border:1px solid var(--line);border-radius:8px;font-size:11px;white-space:nowrap;background:var(--btn-bg);color:var(--btn-text);display:flex;align-items:center;gap:6px}
   .room-tab.on{border-color:var(--accent);color:var(--accent);font-weight:600}
@@ -269,8 +269,8 @@
     </div>
     <div id="roomMessages" class="room-messages"></div>
     <div class="room-composer">
-      <textarea id="roomInput" placeholder="向本群组全体智能体下发引导 / 目标（Enter 发送，Shift+Enter 换行）"></textarea>
-      <button id="roomGuideBtn">下发全体</button>
+      <textarea id="roomInput" placeholder="普通输入=交流；/guide 内容=全体强引导（Enter 发送）"></textarea>
+      <button id="roomGuideBtn">发送</button>
     </div>
     <div class="room-foot">
       <div class="room-controls">
@@ -450,7 +450,8 @@ function renderRoomMeta(st,members,orbit,channel){
     if(channel)base+=` · orbitdb: ${orbit||'checking'}`;
     s.textContent=base;
   }
-  if(m)m.innerHTML=(members||[]).map(x=>`<span class="${x.status==='thinking'?'shimmer':''}"><span class="dot ${x.status||''}"></span>${escapeHTML(x.agent_name||x.agent_id||'')}</span>`).join('');
+  const lead=(st&&st.leader_agent_id)||'';
+  if(m)m.innerHTML=(members||[]).map(x=>`<span class="${x.status==='thinking'?'shimmer':''}"><span class="dot ${x.status||''}"></span>${lead&&lead===(x.agent_id||'')?'🛡️ ':''}${escapeHTML(x.agent_name||x.agent_id||'')}</span>`).join('');
 }
 function renderRoom(msgs,members){
   const box=$('roomMessages');
@@ -463,7 +464,7 @@ function renderRoom(msgs,members){
   box.innerHTML=rows.map(m=>{
     const who=m.agent_name||m.agent_id||'系统';
     const a=amap[m.agent_id];
-    const ava=a&&a.avatar?`<img class="ravatar" src="${a.avatar}" alt="">`:'<span class="ravatar sys">✦</span>';
+    const ava=(a&&a.avatar?`<img class="ravatar" src="${a.avatar}" alt="">`:'<span class="ravatar sys">✦</span>')+(lastRoomLeader&&m.agent_id===lastRoomLeader?'<span title="警长（群组管理者）">🛡️</span>':'');
     const kind=labels[m.kind]||m.kind||'消息';
     const time=m.created_at?new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'';
     const title=m.title?` · ${escapeHTML(m.title)}`:'';
@@ -477,12 +478,13 @@ function renderRoom(msgs,members){
   if(!rows.length&&!think.length){box.innerHTML='<div class="hint">还没有内部汇报。智能体完成任务后会自动出现在这里。</div>';}
   if(stick)box.scrollTop=box.scrollHeight;
 }
-let activeRoomGroup='';
+let activeRoomGroup='', lastRoomLeader='';
 async function loadRoom(){
   try{
     const j=await api('/api/room'+(activeRoomGroup?('?group='+encodeURIComponent(activeRoomGroup)):''));
     renderRoom(j.messages||[],j.members);renderRoomMeta(j.state,j.members,j.orbit_status,j.channel);renderRoomTabs(j.groups||[]);
     if(j.active_group_id)activeRoomGroup=j.active_group_id;
+    lastRoomLeader=(j.state&&j.state.leader_agent_id)||'';
     // 芯片点亮与当前群组实际参与者保持一致（用户手动改过则不覆盖）
     if(!roomPickedDirty||roomPickedFor!==activeRoomGroup){
       roomPicked=new Set((j.state&&j.state.participants)||[]);
@@ -522,10 +524,13 @@ $('roomStopBtn').onclick=async()=>{
 };
 function sendRoomGuide(){
   const ta=$('roomInput');
-  const text=(ta.value||'').trim();
+  let text=(ta.value||'').trim();
   if(!text)return;
   if(privacyBlocked(text)){alert('检测到私钥/凭据，未发送');return;}
-  api('/api/room/guide',{method:'POST',body:JSON.stringify({group_id:activeRoomGroup,text})})
+  let kind='discuss';
+  if(text.startsWith('/guide')){kind='guide';text=text.replace(/^\/guide\s*/,'').trim();}
+  if(!text){ta.value='';return;}
+  api('/api/room/guide',{method:'POST',body:JSON.stringify({group_id:activeRoomGroup,text,kind})})
     .then(()=>{ta.value='';loadRoom();}).catch(e=>alert(e.message));
 }
 $('roomGuideBtn').onclick=sendRoomGuide;

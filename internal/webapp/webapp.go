@@ -121,16 +121,17 @@ type RoomState struct {
 
 // RoomGroup 是一个群组商议（tab），可独立运行/停止/关闭。
 type RoomGroup struct {
-	ID           string       `json:"id"`
-	Topic        string       `json:"topic,omitempty"`        // tab 简称；未锁定时由 AI 按内容定名/刷新
-	TitleLocked  bool         `json:"title_locked,omitempty"` // 用户显式给过主题 = 锁定，AI 不再改名
-	Running      bool         `json:"running"`
-	Participants []string     `json:"participants,omitempty"`
-	Turn         int          `json:"turn"`
-	MaxTurns     int          `json:"max_turns,omitempty"` // 0 = 不限轮次
-	NextAgentID  string       `json:"next_agent_id,omitempty"`
-	Members      []RoomMember `json:"members,omitempty"`
-	UpdatedAt    time.Time    `json:"updated_at,omitempty"`
+	ID            string       `json:"id"`
+	Topic         string       `json:"topic,omitempty"`           // tab 简称；未锁定时由 AI 按内容定名/刷新
+	LeaderAgentID string       `json:"leader_agent_id,omitempty"` // 推举产生的群组管理者
+	TitleLocked   bool         `json:"title_locked,omitempty"`    // 用户显式给过主题 = 锁定，AI 不再改名
+	Running       bool         `json:"running"`
+	Participants  []string     `json:"participants,omitempty"`
+	Turn          int          `json:"turn"`
+	MaxTurns      int          `json:"max_turns,omitempty"` // 0 = 不限轮次
+	NextAgentID   string       `json:"next_agent_id,omitempty"`
+	Members       []RoomMember `json:"members,omitempty"`
+	UpdatedAt     time.Time    `json:"updated_at,omitempty"`
 }
 
 // migrateRoomState 把旧版单群组字段搬进 Groups（一次性、幂等）。
@@ -174,7 +175,7 @@ func (st *State) pruneRoomGroups() {
 	}
 	kept := st.RoomState.Groups[:0]
 	for _, g := range st.RoomState.Groups {
-		if g.Running || hasMsg[g.ID] || g.Turn > 0 {
+		if g.Running || hasMsg[g.ID] || g.Turn > 0 || time.Since(g.UpdatedAt) < 10*time.Minute { // 新建宽限期：防"新建→发起"间隙被并发 save 剪掉
 			kept = append(kept, g)
 		}
 	}
@@ -572,6 +573,7 @@ func (s *Server) handleRoomStop(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRoomGuide(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		GroupID string `json:"group_id,omitempty"`
+		Kind    string `json:"kind,omitempty"` // guide = 全体强引导；discuss = 普通交流
 		Text    string `json:"text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -589,7 +591,14 @@ func (s *Server) handleRoomGuide(w http.ResponseWriter, r *http.Request) {
 		gid = s.activeGroupID()
 	}
 	s.mu.Unlock()
-	s.postRoom(gid, Agent{Name: "用户"}, "群组指导", "", "guide", "【用户引导，全体遵循】"+text)
+	kind := req.Kind
+	if kind != "guide" {
+		kind = "discuss"
+	}
+	if kind == "guide" {
+		text = "【用户引导，全体遵循】" + text
+	}
+	s.postRoom(gid, Agent{Name: "用户"}, "群组指导", "", kind, text)
 	s.writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -741,6 +750,23 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 		go s.autoArchive(groupID)
 		return
 	}
+	if g.LeaderAgentID == "" {
+		// 群组管理者推举：建群首轮自动进行；唯一候选人直接指定，不耗模型调用。
+		cands := make([]Agent, 0, len(g.Participants))
+		for _, pid := range g.Participants {
+			if a := s.findAgent(pid); a != nil {
+				cands = append(cands, *a)
+			}
+		}
+		if len(cands) == 0 {
+			s.mu.Unlock()
+			return
+		}
+		topic := g.Topic
+		s.mu.Unlock()
+		s.electLeader(ctx, groupID, settings, cands, topic)
+		return // 推举消耗一轮，下一 tick 进入正常商议
+	}
 	// 找到当前应发言的智能体；失效（已删除）则从其位置顺延到下一个存活者，
 	// 而不是永远回退到第一位（否则一位失效会挤占全部发言）。
 	ag := s.findAgent(g.NextAgentID)
@@ -793,6 +819,13 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 	as, err := s.agentSession(settings, &sess, agentCopy, nil)
 	if err == nil {
 		as.LoadMessages(nil)
+		s.mu.Lock()
+		lg := s.groupByID(groupID)
+		isLeader := lg != nil && lg.LeaderAgentID == agentCopy.ID
+		s.mu.Unlock()
+		if isLeader {
+			as.GrantAllWrites() // 管理者：完全工具权限（派发/验收/全局记忆）
+		}
 	}
 	before := s.roomLen()
 	var reply string
@@ -800,7 +833,11 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 		reply = "（内部商议启动失败：" + err.Error() + "）"
 	} else {
 		turnCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		reply, err = as.Turn(turnCtx, s.roomPrompt(agentCopy, groupID, topic))
+		s.mu.Lock()
+		lg2 := s.groupByID(groupID)
+		isLeader := lg2 != nil && lg2.LeaderAgentID == agentCopy.ID
+		s.mu.Unlock()
+		reply, err = as.Turn(turnCtx, s.roomPrompt(agentCopy, groupID, topic, isLeader))
 		cancel()
 	}
 	if err != nil {
@@ -831,7 +868,7 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 	s.mu.Unlock()
 	go s.maybeAutoTitle(groupID, settings, agentCopy) // 轮转后触发：AI 按内容定名/刷新 tab 简称
 }
-func (s *Server) roomPrompt(ag Agent, groupID, topic string) string {
+func (s *Server) roomPrompt(ag Agent, groupID, topic string, isLeader bool) string {
 	s.mu.Lock()
 	var msgs []RoomMessage
 	for i := range s.st.Room {
@@ -852,6 +889,15 @@ func (s *Server) roomPrompt(ag Agent, groupID, topic string) string {
 		}
 		fmt.Fprintf(&b, "[%s] %s：%s\n", m.Kind, who, m.Text)
 	}
+	if isLeader {
+		b.WriteString("\n你是本群组推举的警长（管理者）。你对群内每一位成员负有责任与义务：①派发任务——room_post 点名指派，明确目标与期限；②验收成果——检查成员交付，不合格要求返工；③协调分歧——成员争执时给出裁决；④督促滞后——长时间无发言的成员主动点名唤醒；⑤如实同步——风险、阻塞、失败必须第一时间向成员与用户公开，不得粉饰；⑥以身作则——不滥用权限，工具与全局记忆只为推进群组目标服务。")
+	}
+	if isLeader {
+		b.WriteString("\n你是本群组推举的管理者：负责任务派发（room_post 点名指派成员）、验收成果、协调分歧；你拥有全部工具权限与全局记忆（mem 工具），请主动维护秩序并推进目标。")
+	}
+	if isLeader {
+		b.WriteString("\n你是本群组推举的管理者：负责任务派发（room_post 点名指派成员）、验收成果、协调分歧；你拥有全部工具权限与全局记忆（mem 工具），请主动维护秩序并推进目标。")
+	}
 	b.WriteString("\n请判断是否需要推进商议：需要就用 room_post 发一条具体、简短的消息；暂时不需要就只回答 PASS。不要给用户写汇报。")
 	return b.String()
 }
@@ -859,6 +905,83 @@ func (s *Server) roomLen() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.st.Room)
+}
+
+// electLeader 群组管理者推举：由模型根据候选人简介推举一人（只输出名字）；
+// 唯一候选人直接指定；解析失败按参与者顺序默认指定并如实说明。
+func (s *Server) electLeader(ctx context.Context, groupID string, settings Settings, cands []Agent, topic string) {
+	if len(cands) == 0 {
+		return
+	}
+	if len(cands) == 1 {
+		s.mu.Lock()
+		if g := s.groupByID(groupID); g != nil && g.LeaderAgentID == "" {
+			g.LeaderAgentID = cands[0].ID
+			_ = s.save()
+		}
+		s.mu.Unlock()
+		s.postRoom(groupID, Agent{}, "", "", "invite", "群组唯一成员，"+cands[0].Name+" 自动成为管理者")
+		return
+	}
+	s.postRoom(groupID, Agent{}, "", "", "invite", "开始推举群组管理者（标准：有能力、正直善良、有本事）")
+	var b strings.Builder
+	for _, c := range cands {
+		desc := []rune(c.Persona)
+		if len(desc) > 60 {
+			desc = desc[:60]
+		}
+		fmt.Fprintf(&b, "- %s：%s\n", c.Name, string(desc))
+	}
+	prompt := fmt.Sprintf("群组商议（主题：%s）需要推举一位管理者，标准：有能力、正直善良、有本事。候选人：\n%s\n只输出当选者的名字，不要解释。", topic, b.String())
+	req := ai.ChatRequest{Model: settings.Model, Messages: []ai.Message{{Role: "user", Content: prompt}}, MaxTokens: 256}
+	sec := s.secretFor(settings.Provider)
+	base := firstNonEmpty(sec.BaseURL, os.Getenv("HUSHFUSION_AI_BASE_URL"))
+	ctx2, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	resp, err := ai.Chat(ctx2, settings.Provider, req, ai.ClientOptions{BaseURL: base, APIKey: sec.APIKey})
+	if err != nil {
+		// 推举调用失败：兜底指定首位候选，群组必须有警长（如实说明）。
+		fmt.Fprintf(os.Stderr, "room: 管理者推举失败(%s): %v\n", groupID, err)
+		s.mu.Lock()
+		if g := s.groupByID(groupID); g != nil && g.LeaderAgentID == "" {
+			g.LeaderAgentID = cands[0].ID
+			_ = s.save()
+		}
+		s.mu.Unlock()
+		s.postRoom(groupID, Agent{}, "", "", "invite", "推举调用失败，按顺序默认指定 "+cands[0].Name+" 为警长（可再次发起商议重新推举）")
+		return
+	}
+	name := strings.TrimSpace(resp.Content)
+	name = strings.Trim(name, "\"“”'‘’「」` \n\r\t。.")
+	name = strings.ReplaceAll(name, "\n", "")
+	s.mu.Lock()
+	g := s.groupByID(groupID)
+	if g == nil || g.LeaderAgentID != "" {
+		s.mu.Unlock()
+		return
+	}
+	leaderID := ""
+	leaderName := ""
+	for _, c := range cands {
+		if name != "" && (c.Name == name || strings.Contains(c.Name, name) || strings.Contains(name, c.Name)) {
+			leaderID = c.ID
+			leaderName = c.Name
+			break
+		}
+	}
+	if leaderID == "" {
+		leaderID = cands[0].ID
+		leaderName = cands[0].Name
+		g.LeaderAgentID = leaderID
+		_ = s.save()
+		s.mu.Unlock()
+		s.postRoom(groupID, Agent{}, "", "", "invite", "推举结果解析失败，默认指定 "+leaderName+" 为群组管理者")
+		return
+	}
+	g.LeaderAgentID = leaderID
+	_ = s.save()
+	s.mu.Unlock()
+	s.postRoom(groupID, Agent{}, "", "", "invite", "群组推举 "+leaderName+" 为管理者：负责任务派发、验收与协调，拥有完全工具权限与全局记忆")
 }
 
 // maybeAutoTitle 用 AI 按商议内容定名/刷新群组 tab 简称：
