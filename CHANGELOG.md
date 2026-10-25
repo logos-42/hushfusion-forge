@@ -9,6 +9,13 @@ MAJOR  冻结契约的断裂性变更        MINOR  新增能力        PATCH  �
 
 ---
 
+## 0.3.2 — 2026-10-25（PATCH：OrbitDB 链路收口 + 多智能体商议 + 输入体验）
+
+- dchat/OrbitDB 全链路打通并实测：`ipfs-core` 具名导出兼容（无 default）、空 Swarm/Bootstrap 绕过老 libp2p 启动失败、repo 目录带 nonce 防撞锁、Go 侧行协议容错 IPFS 初始化横幅、助手 cwd 固定到助手目录、依赖版本修正（`orbit-db ^0.29.0`）、镜像/探测超时放宽 120s；真实 send 成功（`sent:true, hash:12D3Koo…`），商议面板 `orbit: ok`。
+- 内部商议支持**任意多个智能体**：缺省全员参与、参与者/心跳列表全量、前端多选（Cmd/Ctrl）。
+- Web 输入体验：输入法组词确认（`isComposing`/`keyCode 229`）不再误触发发送；busy 时消息进入会话级队列，空闲自动依次发送，可一键清空。
+- 修复：无参工具补全 `parameters` schema（部分供应商 400）；会话 `pinned` 去掉 `omitempty`（取消固定生效）；term 沙箱缓存重定向 /tmp 防杂物写入仓库；商议轮次上限提至 5000、git 存档游标改消息 ID。
+
 ## 0.6.0 — 2026-10-25（MINOR：需求清单收口 + OrbitDB 依赖自装）
 
 - dchat 助手目录持久化到 `~/.forge/dchat`（`DCHAT_NODE_DIR` 可覆盖），内嵌 `package.json` 声明 `orbit-db` / `ipfs-core` / `hyperswarm` 依赖；频道启动时 status 探测，缺依赖自动 `npm install --no-audit --no-fund` 一次并重试（只试一次，失败如实报错并给出手动命令）。
