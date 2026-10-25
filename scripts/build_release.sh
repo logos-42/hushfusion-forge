@@ -6,13 +6,14 @@
 #   - Windows: hushfusion-forge_<ver>_windows_<arch>.zip
 #   - macOS:   hushfusion-forge_<ver>_darwin_<arch>.tar.gz
 #              Hushfusion Forge.app（darwin arm64/amd64 各一个 .app.zip）
+#              + 同架构 .dmg（含拖拽到 Applications 的符号链接）
 #
 # 用法：
 #   VERSION=0.3.2 scripts/build_release.sh            # 打包并创建/上传 release
 #   VERSION=0.3.2 scripts/build_release.sh --no-push  # 只打包，不动 GitHub
 set -euo pipefail
 
-VERSION="${VERSION:-0.3.2}"
+VERSION="${VERSION:-0.3.3}"
 PUSH=1
 if [[ "${1:-}" == "--no-push" ]]; then PUSH=0; fi
 
@@ -32,7 +33,7 @@ cat > "$DIST/README.md" <<EOF
 桌面/Web App：本地 HTTP + 内嵌前端。
 
 ## 运行
-- macOS：解压 \`Hushfusion Forge.app.zip\`，把 \`Hushfusion Forge.app\` 拖进应用程序，双击运行。
+- macOS：双击 \`hushfusion-forge_<ver>_darwin_<arch>.dmg\`，把 \`Hushfusion Forge\` 拖进 Applications（或解压 .app.zip）。
 - Linux：\`tar xzf hushfusion-forge_${VERSION}_linux_<arch>.tar.gz && ./hushfusion-forge web\`
 - Windows：解压 zip，双击 \`hushfusion-forge.exe web\`
 
@@ -104,6 +105,17 @@ package_darwin_app() {
 </plist>
 PLIST
   (cd "$DIST" && zip -qr "$BIN-$VERSION-darwin-$arch-app.zip" "Hushfusion Forge.app")
+
+  # DMG：经典拖拽安装布局（App + Applications 符号链接）
+  local dmg="$DIST/$BIN-$VERSION-darwin-$arch.dmg"
+  local stage="$DIST/.dmg-stage"
+  rm -rf "$stage" "$dmg"
+  mkdir -p "$stage"
+  cp -R "$app" "$stage/"
+  ln -s /Applications "$stage/Applications"
+  hdiutil create -volname "Hushfusion Forge $VERSION" -srcfolder "$stage" -ov -format UDZO "$dmg" >/dev/null
+  rm -rf "$stage"
+
   rm -rf "$app" "$DIST/$BIN"
 }
 

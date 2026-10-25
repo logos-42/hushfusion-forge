@@ -1,11 +1,11 @@
 # @hibs/forge
 
-HUSHFUSION Forge 的 npm 启动器与 Node.js SDK，版本 `0.3.2`。
+HUSHFUSION Forge 的 npm 启动器与 Node.js SDK，版本 `0.3.3`。
 
 首次运行会从 GitHub Release 下载对应 OS/arch 的 Go 二进制，缓存到：
 
 ```text
-~/.hushfusion-forge/bin/0.3.2/
+~/.hushfusion-forge/bin/0.3.3/
 ```
 
 ## CLI
@@ -66,7 +66,7 @@ await client.bootstrap();
 
 ## 版本
 
-npm 包版本与 GitHub Release / Go 模块标签均为 `v0.3.2`：
+npm 包版本与 GitHub Release / Go 模块标签均为 `v0.3.3`：
 
-- https://github.com/logos-42/hushfusion-forge/releases/tag/v0.3.2
-- `go install github.com/logos-42/hushfusion-forge/cmd/forge@v0.3.2`
+- https://github.com/logos-42/hushfusion-forge/releases/tag/v0.3.3
+- `go install github.com/logos-42/hushfusion-forge/cmd/forge@v0.3.3`
