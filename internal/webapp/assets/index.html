@@ -233,6 +233,7 @@
       </button>
       <button class="primary" id="send">发送</button>
     </div>
+    <div id="queueHint" class="hint" style="display:none"></div>
     <div class="composer-footer">
       <button id="modelBtn" class="mini" title="选择模型">⚙ 模型：<span id="modelLabel">…</span></button>
     </div>
@@ -304,10 +305,33 @@
 <script>
 let state=null, update=null, models=null, pendingImages=[], editingAgentId='', menuSessionId='', editingMessageIndex=null, editingSessionId='';
 const busySessions=new Set(), aborts=new Map(), resumeTimers=new Map();
+const sendQueues=new Map(); // sid -> [{text,images}]：busy 时排队，空闲自动依次发送
 const PRIVATE_INPUT=/-----BEGIN[\s\S]*?PRIVATE KEY-----|\bsk-[A-Za-z0-9_-]{16,}\b|\bgh[pousr]_[A-Za-z0-9]{20,}\b|\bAKIA[0-9A-Z]{16}\b|api[_-]?key\s*[:=]\s*\S{8,}/i;
 const privacyBlocked=(text)=>PRIVATE_INPUT.test(text||'');
 const isBusy=(id)=>{const sid=id||(state&&state.active_session_id);return !!(sid&&busySessions.has(sid));};
-function setBusy(id,on){if(!id)return;if(on)busySessions.add(id);else busySessions.delete(id);renderSendState();}
+function setBusy(id,on){if(!id)return;if(on)busySessions.add(id);else{busySessions.delete(id);flushQueue(id);}renderSendState();}
+const queueLen=(id)=>{const sid=id||(state&&state.active_session_id);const q=sid&&sendQueues.get(sid);return q?q.length:0;};
+function enqueueSend(text,images){
+  const sid=state&&state.active_session_id;
+  if(!sid)return;
+  if(!sendQueues.has(sid))sendQueues.set(sid,[]);
+  sendQueues.get(sid).push({text,images});
+  renderSendState();
+}
+async function flushQueue(sid){
+  sid=sid||(state&&state.active_session_id);
+  if(!sid||isBusy(sid)||sid!==state.active_session_id)return; // 只在回到该会话且空闲时发送
+  const q=sendQueues.get(sid);
+  if(!q||!q.length)return;
+  const item=q.shift();
+  renderSendState();
+  try{await submitMessage(item.text,item.images);}catch(e){alert(e.message);}
+  if(!isBusy(sid))flushQueue(sid);
+}
+function clearQueue(sid){
+  sid=sid||(state&&state.active_session_id);
+  sendQueues.delete(sid);renderSendState();
+}
 
 const $=(id)=>document.getElementById(id);
 const escapeHTML=(s)=>String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -562,11 +586,11 @@ async function pickAgent(id){
   state.active_agent_id=id;
   let s=state.sessions.find(x=>x.agent_id===id);
   if(!s){s=await api('/api/sessions',{method:'POST',body:JSON.stringify({agent_id:id})});state.sessions.push(s);}
-  state.active_session_id=s.id;renderSidebar();renderHeader();renderChat();renderSendState();resumeRunning();
+  state.active_session_id=s.id;renderSidebar();renderHeader();renderChat();flushQueue();renderSendState();resumeRunning();
 }
 function pickSession(id){
   cancelEdit();
-  state.active_session_id=id;renderSidebar();renderChat();renderSendState();resumeRunning();
+  state.active_session_id=id;renderSidebar();renderChat();flushQueue();renderSendState();resumeRunning();
 }
 
 async function copyText(text){
@@ -919,6 +943,12 @@ function renderSendState(){
   }else{
     b.classList.remove('stop');b.title='发送';b.textContent='发送';
   }
+  const qh=$('queueHint');
+  if(qh){
+    const n=queueLen();
+    if(n>0){qh.style.display='';qh.innerHTML=`已排队 ${n} 条，本轮结束后依次发送 · <a href="#" onclick="clearQueue();return false;">清空队列</a>`;}
+    else qh.style.display='none';
+  }
 }
 async function stopStreaming(){
   const s=state&&state.sessions.find(x=>x.id===state.active_session_id);
@@ -974,7 +1004,6 @@ async function submitMessage(text,images){
   }
 }
 async function send(){
-  if(isBusy())return;
   const text=$('input').value.trim();
   if(!text&&pendingImages.length===0)return;
   if(privacyBlocked(text)){
@@ -982,6 +1011,9 @@ async function send(){
     if(s){s.messages=s.messages||[];s.messages.push({role:'assistant',text:'（隐私围栏：检测到私钥/凭据，消息未发送，也未写入会话）',time:new Date().toISOString()});renderChat();renderSidebar();}
     $('input').value='';return;
   }
+  const images=[...pendingImages];pendingImages=[];renderImgPreview();
+  $('input').value='';
+  if(isBusy()){enqueueSend(text,images);return;} // 忙时入队，不丢弃
   const s=state.sessions.find(x=>x.id===state.active_session_id);
   if(s&&editingMessageIndex!=null&&editingSessionId===s.id){
     try{
@@ -990,8 +1022,6 @@ async function send(){
     }catch(e){alert(e.message);return;}
   }
   cancelEdit();
-  const images=[...pendingImages];pendingImages=[];renderImgPreview();
-  $('input').value='';
   await submitMessage(text,images);
 }
 $('editBtn').onclick=()=>{
@@ -1006,7 +1036,12 @@ $('editBtn').onclick=()=>{
   t.focus();
 };
 $('send').onclick=()=>{if(isBusy())stopStreaming();else send();};
-$('input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
+$('input').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){
+    if(e.isComposing||e.keyCode===229)return; // 输入法组词确认（中/英文候选），不触发发送
+    e.preventDefault();send();
+  }
+});
 
 boot().finally(()=>{
   setTimeout(refreshUpdate,5000);
