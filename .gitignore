@@ -47,6 +47,11 @@ dist/
 .npm/
 Library/
 .cache/
+.kilo/
+.claude/
 
 # 智能体运行时验证目录（商议/联调用，非仓库证据）
 runs/orbitdb_verify/
+
+# dchat 节点的 IPFS 运行时仓库（按 PID 命名，进程产物，非仓库证据）
+forge-orbitdb-*/

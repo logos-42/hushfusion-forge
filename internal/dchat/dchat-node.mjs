@@ -45,9 +45,15 @@ async function getChannel(name) {
     return obj;
   }
   if (name === "orbitdb") {
-    const OrbitDB = (await import("orbit-db")).default;
-    const IPFS = (await import("ipfs-core")).default;
-    const ipfs = await IPFS.create({ repo: "./forge-orbitdb-" + process.pid, offline: false });
+    // 兼容两种导出形态：orbit-db 有 default；ipfs-core 0.18 是纯 ESM 具名导出（create）。
+    const odbMod = await import("orbit-db");
+    const OrbitDB = odbMod.default || odbMod.OrbitDB || odbMod;
+    const ipfsMod = await import("ipfs-core");
+    const ipfsFactory = ipfsMod.default?.create || ipfsMod.create;
+    if (typeof OrbitDB?.createInstance !== "function" || typeof ipfsFactory !== "function") {
+      throw new Error("orbit-db/ipfs-core 模块加载异常（重装: npm install --prefix 助手目录）");
+    }
+    const ipfs = await ipfsFactory({ repo: "./forge-orbitdb-" + process.pid, offline: false });
     const odb = await OrbitDB.createInstance(ipfs);
     const obj = { kind: "orbitdb", ipfs, odb, dbs: new Map() };
     channels.set(name, obj);
