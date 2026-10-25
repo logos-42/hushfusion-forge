@@ -45,7 +45,7 @@
   .room-msg .body p{margin:0 0 6px}
   .room-msg .body p:last-child{margin-bottom:0}
   .room-foot{flex:none;padding:10px 12px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
-  .room-tabs{display:flex;gap:4px;padding:6px 12px;border-bottom:1px solid var(--line);overflow-x:auto;flex:none}
+  .room-tabs{display:flex;gap:4px;flex:1;min-width:0;overflow-x:auto;align-items:center}
   .room-tab{cursor:pointer;padding:3px 10px;border:1px solid var(--line);border-radius:8px;font-size:11px;white-space:nowrap;background:var(--btn-bg);color:var(--btn-text);display:flex;align-items:center;gap:6px}
   .room-tab.on{border-color:var(--accent);color:var(--accent);font-weight:600}
   .room-tab .x{cursor:pointer;opacity:.6;font-style:normal}
@@ -248,10 +248,9 @@
   </main>
   <aside id="roomPanel" class="room-panel">
     <div class="room-head">
-      <b>内部商议</b><span class="tag">仅智能体</span><span class="grow"></span>
-      <button id="roomClose" title="关闭">×</button>
+      <div id="roomTabs" class="room-tabs"></div>
+      <button id="roomClose" title="关闭面板">×</button>
     </div>
-    <div id="roomTabs" class="room-tabs"></div>
     <div id="roomMessages" class="room-messages"></div>
     <div class="room-foot">
       <div class="room-controls">
