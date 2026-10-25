@@ -55,3 +55,7 @@ runs/orbitdb_verify/
 
 # dchat 节点的 IPFS 运行时仓库（按 PID 命名，进程产物，非仓库证据）
 forge-orbitdb-*/
+
+# 仿真/验证运行产物与沙箱残留（不入库）
+runs/
+go/
