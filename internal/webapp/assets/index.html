@@ -468,8 +468,7 @@ function renderRoomTabs(groups){
 }
 function switchRoomGroup(id){activeRoomGroup=id;roomPickedDirty=false;loadRoom();}
 async function newRoomGroup(){
-  const topic=prompt('新群组主题（可留空，发起交流时可再设）','')||'';
-  try{const r=await api('/api/room/new',{method:'POST',body:JSON.stringify({topic})});activeRoomGroup=r.id;await loadRoom();}catch(e){alert(e.message);}
+  try{const r=await api('/api/room/new',{method:'POST',body:'{}'});activeRoomGroup=r.id;await loadRoom();}catch(e){alert(e.message);}
 }
 async function closeRoomGroup(id){
   try{const r=await api('/api/room/close',{method:'POST',body:JSON.stringify({group_id:id})});if(activeRoomGroup===id)activeRoomGroup=r.active_group_id||'';await loadRoom();}catch(e){alert(e.message);}
