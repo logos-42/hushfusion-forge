@@ -69,7 +69,7 @@ type Session struct {
 	Title      string    `json:"title"`
 	CreatedAt  time.Time `json:"created_at"`
 	Messages   []Message `json:"messages"`
-	Pinned     bool      `json:"pinned,omitempty"`
+	Pinned     bool      `json:"pinned"` // 不能 omitempty：false 必须显式下发，否则前端取消固定后收不到新值
 	ShareToken string    `json:"share_token,omitempty"`
 }
 

@@ -668,7 +668,7 @@ function openSessionMenu(e,id){
   m.innerHTML=`
     <button onclick="renameSession()">重命名</button>
     <button onclick="deleteSession()">删除</button>
-    <button onclick="pinSession()">${s&&s.pinned?'取消固定':'固定 ping'}</button>
+    <button onclick="pinSession()">${s&&s.pinned?'取消固定':'固定'}</button>
     <button onclick="shareSession(menuSessionId)">分享</button>`;
   m.classList.remove('hidden');
   const w=170,h=170;
