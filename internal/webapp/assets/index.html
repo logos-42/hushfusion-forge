@@ -409,16 +409,17 @@ async function boot(){
 function renderAll(){ renderUpdate(); renderSidebar(); renderHeader(); renderChat(); renderModel(); renderRoomControls(); }
 
 let roomTimer=null;
-let roomPicked=new Set(); // 已选参与商议的智能体 id（芯片栏）
+let roomPicked=new Set(), roomPickedDirty=false, roomPickedFor=''; // 芯片栏选中；dirty=用户手动改过，切换群组时以群组 participants 为准
 function renderRoomControls(){
   const bar=$('roomAgents');
   if(!bar||!state)return;
-  if(roomPicked.size===0){(state.agents||[]).slice(0,2).forEach(a=>roomPicked.add(a.id));} // 首次缺省选前两个
+  if(roomPicked.size===0&&!roomPickedDirty){(state.agents||[]).slice(0,2).forEach(a=>roomPicked.add(a.id));} // 首次缺省选前两个
   const alive=new Set((state.agents||[]).map(x=>x.id));
   for(const id of [...roomPicked])if(!alive.has(id))roomPicked.delete(id);
   bar.innerHTML=(state.agents||[]).map(x=>`<span class="agent-chip${roomPicked.has(x.id)?' on':''}" onclick="toggleRoomAgent('${x.id}')">${escapeHTML(x.name)}</span>`).join('');
 }
 function toggleRoomAgent(id){
+  roomPickedDirty=true; // 用户手动改过：轮询不再覆盖，直到切换群组
   if(roomPicked.has(id))roomPicked.delete(id);else roomPicked.add(id);
   renderRoomControls();
 }
@@ -449,13 +450,23 @@ function renderRoom(msgs){
 }
 let activeRoomGroup='';
 async function loadRoom(){
-  try{const j=await api('/api/room'+(activeRoomGroup?('?group='+encodeURIComponent(activeRoomGroup)):''));renderRoom(j.messages||[]);renderRoomMeta(j.state,j.members,j.orbit_status,j.channel);renderRoomTabs(j.groups||[]);if(j.active_group_id)activeRoomGroup=j.active_group_id;}catch(_){}
+  try{
+    const j=await api('/api/room'+(activeRoomGroup?('?group='+encodeURIComponent(activeRoomGroup)):''));
+    renderRoom(j.messages||[]);renderRoomMeta(j.state,j.members,j.orbit_status,j.channel);renderRoomTabs(j.groups||[]);
+    if(j.active_group_id)activeRoomGroup=j.active_group_id;
+    // 芯片点亮与当前群组实际参与者保持一致（用户手动改过则不覆盖）
+    if(!roomPickedDirty||roomPickedFor!==activeRoomGroup){
+      roomPicked=new Set((j.state&&j.state.participants)||[]);
+      roomPickedFor=activeRoomGroup;roomPickedDirty=false;
+      renderRoomControls();
+    }
+  }catch(_){}
 }
 function renderRoomTabs(groups){
   const el=$('roomTabs');if(!el)return;
   el.innerHTML=(groups||[]).map(g=>`<span class="room-tab${g.id===activeRoomGroup?' on':''}" onclick="switchRoomGroup('${g.id}')" title="${escapeHTML(g.topic||'')}">${escapeHTML((g.topic||'群组').slice(0,10))}${g.running?' ●':''}<i class="x" onclick="event.stopPropagation();closeRoomGroup('${g.id}')">×</i></span>`).join('')+`<span class="room-tab new" onclick="newRoomGroup()" title="新建群组商议">＋ 新建</span>`;
 }
-function switchRoomGroup(id){activeRoomGroup=id;loadRoom();}
+function switchRoomGroup(id){activeRoomGroup=id;roomPickedDirty=false;loadRoom();}
 async function newRoomGroup(){
   const topic=prompt('新群组主题（可留空，发起交流时可再设）','')||'';
   try{const r=await api('/api/room/new',{method:'POST',body:JSON.stringify({topic})});activeRoomGroup=r.id;await loadRoom();}catch(e){alert(e.message);}
@@ -475,7 +486,7 @@ $('roomClose').onclick=()=>setRoomOpen(false);
 $('roomStartBtn').onclick=async()=>{
   const ids=[...roomPicked];
   if(ids.length<2){alert('请至少选择两个智能体（点击名字加入/移出）');return;}
-  try{await api('/api/room/start',{method:'POST',body:JSON.stringify({agent_ids:ids,group_id:activeRoomGroup})});await loadRoom();}
+  try{await api('/api/room/start',{method:'POST',body:JSON.stringify({agent_ids:ids,group_id:activeRoomGroup})});roomPickedDirty=false;await loadRoom();}
   catch(e){alert(e.message);}
 };
 $('roomStopBtn').onclick=async()=>{
