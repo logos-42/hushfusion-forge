@@ -897,6 +897,11 @@ func (s *Server) dispatchRoomAll(groupID string) {
 	s.mu.Unlock()
 	for _, id := range ids {
 		go func(agentID string) {
+			defer func() { // 兜底：任何成员的异常只记日志，绝不拖垮整个服务
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "room: 成员 %s 分发轮异常: %v\n", agentID, r)
+				}
+			}()
 			unlock := s.tryLockAgentStep(groupID, agentID)
 			if unlock == nil {
 				return // 该成员已有进行中的一轮
@@ -965,6 +970,9 @@ func (s *Server) agentTurn(ctx context.Context, groupID string, agentCopy Agent,
 	if err != nil {
 		// 失败不逐条刷屏：只在"可用→不可用"第一跳发一条提示，群组退避 2 分钟后自动恢复。
 		s.mu.Lock()
+		if s.roomBackoff == nil { // 防御：任何路径下都不允许 nil map 写入 panic
+			s.roomBackoff = map[string]time.Time{}
+		}
 		first := s.roomBackoff[groupID].IsZero()
 		s.roomBackoff[groupID] = time.Now().Add(2 * time.Minute)
 		s.mu.Unlock()
@@ -1338,7 +1346,8 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	}
 	s := &Server{addr: addr, dir: dir, root: root, osDir: osDir,
 		agentSesses: map[string]*agent.Session{}, secrets: map[string]Secret{},
-		runs: map[string]*chatRun{}, workspaceLocks: map[string]*sync.Mutex{},
+		roomBackoff: map[string]time.Time{},
+		runs:        map[string]*chatRun{}, workspaceLocks: map[string]*sync.Mutex{},
 		kernel: newDualKernel(dir, 4)}
 	if err := s.load(); err != nil {
 		return nil, err
