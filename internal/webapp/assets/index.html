@@ -51,6 +51,14 @@
   .room-tab .x{cursor:pointer;opacity:.6;font-style:normal}
   .room-tab .x:hover{opacity:1}
   .room-tab.new{border-style:dashed}
+  .ravatar{width:22px;height:22px;border-radius:50%;flex:none;object-fit:cover}
+  .ravatar.sys{display:inline-flex;align-items:center;justify-content:center;font-size:12px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+  .shimmer{position:relative;overflow:hidden}
+  .shimmer::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent 20%,rgba(142,197,255,.18) 50%,transparent 80%);background-size:200% 100%;animation:flowlight 1.4s linear infinite;pointer-events:none}
+  @keyframes flowlight{0%{background-position:200% 0}100%{background-position:-200% 0}}
+  .room-msg.typing{opacity:.85}
+  .room-msg.typing .tdots{animation:blinktd 1.2s steps(3,end) infinite}
+  @keyframes blinktd{0%{opacity:.2}50%{opacity:1}100%{opacity:.2}}
   .room-controls{display:flex;gap:6px;align-items:center;margin-bottom:8px}
   .room-agent-bar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
   .agent-chip{cursor:pointer;padding:3px 10px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:.5;user-select:none;background:var(--btn-bg);color:var(--btn-text)}
@@ -430,29 +438,37 @@ function renderRoomMeta(st,members,orbit,channel){
     if(channel)base+=` · orbitdb: ${orbit||'checking'}`;
     s.textContent=base;
   }
-  if(m)m.innerHTML=(members||[]).map(x=>`<span><span class="dot ${x.status||''}"></span>${escapeHTML(x.agent_name||x.agent_id||'')}</span>`).join('');
+  if(m)m.innerHTML=(members||[]).map(x=>`<span class="${x.status==='thinking'?'shimmer':''}"><span class="dot ${x.status||''}"></span>${escapeHTML(x.agent_name||x.agent_id||'')}</span>`).join('');
 }
-function renderRoom(msgs){
+function renderRoom(msgs,members){
   const box=$('roomMessages');
   if(!box)return;
+  const amap={};(state.agents||[]).forEach(a=>amap[a.id]=a);
   const rows=(msgs||[]).slice(-120);
-  if(!rows.length){box.innerHTML='<div class="hint">还没有内部汇报。智能体完成任务后会自动出现在这里。</div>';return;}
   const stick=nearBottom(box);
   const labels={report:'汇报',discuss:'商议',invite:'邀请'};
+  const think=(members||[]).filter(x=>x.status==='thinking');
   box.innerHTML=rows.map(m=>{
     const who=m.agent_name||m.agent_id||'系统';
+    const a=amap[m.agent_id];
+    const ava=a&&a.avatar?`<img class="ravatar" src="${a.avatar}" alt="">`:'<span class="ravatar sys">✦</span>';
     const kind=labels[m.kind]||m.kind||'消息';
     const time=m.created_at?new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'';
     const title=m.title?` · ${escapeHTML(m.title)}`:'';
-    return `<div class="room-msg"><div class="meta"><b>${escapeHTML(who)}</b><span>${kind}${title}</span><span style="margin-left:auto">${time}</span></div><div class="body">${mdToHTML(m.text||'')}</div></div>`;
+    return `<div class="room-msg"><div class="meta">${ava}<b>${escapeHTML(who)}</b><span>${kind}${title}</span><span style="margin-left:auto">${time}</span></div><div class="body">${mdToHTML(m.text||'')}</div></div>`;
   }).join('');
+  if(think.length){
+    const names=think.map(x=>escapeHTML(x.agent_name||x.agent_id||'')).join('、');
+    box.innerHTML+=`<div class="room-msg typing shimmer"><div class="body"><b>${names}</b> 正在发言<span class="tdots">…</span></div></div>`;
+  }
+  if(!rows.length&&!think.length){box.innerHTML='<div class="hint">还没有内部汇报。智能体完成任务后会自动出现在这里。</div>';}
   if(stick)box.scrollTop=box.scrollHeight;
 }
 let activeRoomGroup='';
 async function loadRoom(){
   try{
     const j=await api('/api/room'+(activeRoomGroup?('?group='+encodeURIComponent(activeRoomGroup)):''));
-    renderRoom(j.messages||[]);renderRoomMeta(j.state,j.members,j.orbit_status,j.channel);renderRoomTabs(j.groups||[]);
+    renderRoom(j.messages||[],j.members);renderRoomMeta(j.state,j.members,j.orbit_status,j.channel);renderRoomTabs(j.groups||[]);
     if(j.active_group_id)activeRoomGroup=j.active_group_id;
     // 芯片点亮与当前群组实际参与者保持一致（用户手动改过则不覆盖）
     if(!roomPickedDirty||roomPickedFor!==activeRoomGroup){

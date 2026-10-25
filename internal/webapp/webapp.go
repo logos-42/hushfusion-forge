@@ -715,9 +715,20 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 		go s.autoArchive(groupID)
 		return
 	}
+	// 找到当前应发言的智能体；失效（已删除）则从其位置顺延到下一个存活者，
+	// 而不是永远回退到第一位（否则一位失效会挤占全部发言）。
 	ag := s.findAgent(g.NextAgentID)
 	if ag == nil {
-		ag = s.findAgent(g.Participants[0])
+		idx := 0
+		for i, id := range g.Participants {
+			if id == g.NextAgentID {
+				idx = i
+				break
+			}
+		}
+		for n := 1; n <= len(g.Participants) && ag == nil; n++ {
+			ag = s.findAgent(g.Participants[(idx+n)%len(g.Participants)])
+		}
 	}
 	var agentCopy Agent
 	if ag != nil {
@@ -730,6 +741,22 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 	}
 	run, _, ok := s.beginRun("room-" + agentCopy.ID)
 	if !ok {
+		// 该智能体正忙（如正在与用户会话）：本轮跳过，把发言权顺延给下一位，
+		// 避免 busy 成员卡住整组轮转（表现就是"4 人只有 3 人在交流"）。
+		s.mu.Lock()
+		if cur := s.groupByID(groupID); cur != nil && len(cur.Participants) > 0 {
+			next := cur.Participants[0]
+			for i, id := range cur.Participants {
+				if id == agentCopy.ID && i+1 < len(cur.Participants) {
+					next = cur.Participants[i+1]
+					break
+				}
+			}
+			cur.NextAgentID = next
+			cur.UpdatedAt = time.Now()
+			_ = s.save()
+		}
+		s.mu.Unlock()
 		return
 	}
 	defer s.endRun("room-"+agentCopy.ID, run)
