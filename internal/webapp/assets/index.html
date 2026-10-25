@@ -45,6 +45,12 @@
   .room-msg .body p{margin:0 0 6px}
   .room-msg .body p:last-child{margin-bottom:0}
   .room-foot{flex:none;padding:10px 12px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+  .room-tabs{display:flex;gap:4px;padding:6px 12px;border-bottom:1px solid var(--line);overflow-x:auto;flex:none}
+  .room-tab{cursor:pointer;padding:3px 10px;border:1px solid var(--line);border-radius:8px;font-size:11px;white-space:nowrap;background:var(--btn-bg);color:var(--btn-text);display:flex;align-items:center;gap:6px}
+  .room-tab.on{border-color:var(--accent);color:var(--accent);font-weight:600}
+  .room-tab .x{cursor:pointer;opacity:.6;font-style:normal}
+  .room-tab .x:hover{opacity:1}
+  .room-tab.new{border-style:dashed}
   .room-controls{display:flex;gap:6px;align-items:center;margin-bottom:8px}
   .room-agent-bar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
   .agent-chip{cursor:pointer;padding:3px 10px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:.5;user-select:none;background:var(--btn-bg);color:var(--btn-text)}
@@ -245,6 +251,7 @@
       <b>内部商议</b><span class="tag">仅智能体</span><span class="grow"></span>
       <button id="roomClose" title="关闭">×</button>
     </div>
+    <div id="roomTabs" class="room-tabs"></div>
     <div id="roomMessages" class="room-messages"></div>
     <div class="room-foot">
       <div class="room-controls">
@@ -416,11 +423,11 @@ function toggleRoomAgent(id){
   if(roomPicked.has(id))roomPicked.delete(id);else roomPicked.add(id);
   renderRoomControls();
 }
-function renderRoomMeta(st,members){
+function renderRoomMeta(st,members,orbit,channel){
   const s=$('roomState'),m=$('roomMembers');
   if(s){
-    let base=st&&st.active?(st.max_turns>0?`交流中 · 第 ${st.turn||0}/${st.max_turns} 轮 · ${st.topic||''}`:`交流中 · 第 ${st.turn||0} 轮 · 不限轮次 · ${st.topic||''}`):'未在主动交流';
-    if(st&&st.channel)base+=` · orbitdb: ${st.orbit_status||'checking'}`;
+    let base=st&&st.running?(st.max_turns>0?`交流中 · 第 ${st.turn||0}/${st.max_turns} 轮 · ${st.topic||''}`:`交流中 · 第 ${st.turn||0} 轮 · 不限轮次 · ${st.topic||''}`):'未在主动交流（点 ＋ 新建群组）';
+    if(channel)base+=` · orbitdb: ${orbit||'checking'}`;
     s.textContent=base;
   }
   if(m)m.innerHTML=(members||[]).map(x=>`<span><span class="dot ${x.status||''}"></span>${escapeHTML(x.agent_name||x.agent_id||'')}</span>`).join('');
@@ -441,8 +448,22 @@ function renderRoom(msgs){
   }).join('');
   if(stick)box.scrollTop=box.scrollHeight;
 }
+let activeRoomGroup='';
 async function loadRoom(){
-  try{const j=await api('/api/room');renderRoom(j.messages||[]);renderRoomMeta(j.state,j.members);}catch(_){}
+  try{const j=await api('/api/room'+(activeRoomGroup?('?group='+encodeURIComponent(activeRoomGroup)):''));renderRoom(j.messages||[]);renderRoomMeta(j.state,j.members,j.orbit_status,j.channel);renderRoomTabs(j.groups||[]);if(j.active_group_id)activeRoomGroup=j.active_group_id;}catch(_){}
+}
+function renderRoomTabs(groups){
+  const el=$('roomTabs');if(!el)return;
+  el.innerHTML=(groups||[]).map(g=>`<span class="room-tab${g.id===activeRoomGroup?' on':''}" onclick="switchRoomGroup('${g.id}')" title="${escapeHTML(g.topic||'')}">${escapeHTML((g.topic||'群组').slice(0,10))}${g.running?' ●':''}<i class="x" onclick="event.stopPropagation();closeRoomGroup('${g.id}')">×</i></span>`).join('')+`<span class="room-tab new" onclick="newRoomGroup()" title="新建群组商议">＋ 新建</span>`;
+}
+function switchRoomGroup(id){activeRoomGroup=id;loadRoom();}
+async function newRoomGroup(){
+  const topic=prompt('新群组主题（可留空，发起交流时可再设）','')||'';
+  try{const r=await api('/api/room/new',{method:'POST',body:JSON.stringify({topic})});activeRoomGroup=r.id;await loadRoom();}catch(e){alert(e.message);}
+}
+async function closeRoomGroup(id){
+  if(!confirm('关闭该群组商议？运行中的会先停止（消息保留在 git 存档）。'))return;
+  try{const r=await api('/api/room/close',{method:'POST',body:JSON.stringify({group_id:id})});if(activeRoomGroup===id)activeRoomGroup=r.active_group_id||'';await loadRoom();}catch(e){alert(e.message);}
 }
 function setRoomOpen(open){
   const app=$('app');
@@ -459,7 +480,7 @@ $('roomStartBtn').onclick=async()=>{
   catch(e){alert(e.message);}
 };
 $('roomStopBtn').onclick=async()=>{
-  try{await api('/api/room/stop',{method:'POST',body:'{}'});await loadRoom();}
+  try{await api('/api/room/stop',{method:'POST',body:JSON.stringify({group_id:activeRoomGroup})});await loadRoom();}
   catch(e){alert(e.message);}
 };
 

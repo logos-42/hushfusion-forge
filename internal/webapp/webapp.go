@@ -94,15 +94,11 @@ type State struct {
 	RoomMembers     []RoomMember  `json:"room_members,omitempty"`
 }
 
-// RoomState 是内部商议的主动维护状态（心跳/轮次）。
+// RoomState 是内部商议状态：多个群组（tab）+ 当前选中群组。
+// 兼容旧版单群组字段（Active/Topic/...）：load 后由 migrateRoomState 一次性搬进 Groups。
 type RoomState struct {
-	Active       bool      `json:"active"`
-	Topic        string    `json:"topic,omitempty"`
-	Participants []string  `json:"participants,omitempty"`
-	Turn         int       `json:"turn"`
-	MaxTurns     int       `json:"max_turns,omitempty"`
-	NextAgentID  string    `json:"next_agent_id,omitempty"`
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	Groups        []RoomGroup `json:"groups,omitempty"`
+	ActiveGroupID string      `json:"active_group_id,omitempty"`
 	// Channel 是交流的分布式维护频道（orbitdb）；空 = 不镜像。
 	Channel string `json:"channel,omitempty"`
 	// OrbitStatus 是最近一次 orbitdb 同步状态（ok / checking / 错误摘要）。
@@ -112,6 +108,87 @@ type RoomState struct {
 	// ArchiveLastID 是最后一条已 git 存档的消息 ID（journal.jsonl 追加游标；
 	// 消息裁剪后按 ID 从尾部反查，找不到则视为现存消息全部未存档）。
 	ArchiveLastID string `json:"archive_last_id,omitempty"`
+
+	// ↓ 旧版单群组字段：仅用于迁移读取，migrateRoomState 后清空。
+	Active       bool      `json:"active,omitempty"`
+	Topic        string    `json:"topic,omitempty"`
+	Participants []string  `json:"participants,omitempty"`
+	Turn         int       `json:"turn,omitempty"`
+	MaxTurns     int       `json:"max_turns,omitempty"`
+	NextAgentID  string    `json:"next_agent_id,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+}
+
+// RoomGroup 是一个群组商议（tab），可独立运行/停止/关闭。
+type RoomGroup struct {
+	ID           string       `json:"id"`
+	Topic        string       `json:"topic,omitempty"`
+	Running      bool         `json:"running"`
+	Participants []string     `json:"participants,omitempty"`
+	Turn         int          `json:"turn"`
+	MaxTurns     int          `json:"max_turns,omitempty"` // 0 = 不限轮次
+	NextAgentID  string       `json:"next_agent_id,omitempty"`
+	Members      []RoomMember `json:"members,omitempty"`
+	UpdatedAt    time.Time    `json:"updated_at,omitempty"`
+}
+
+// migrateRoomState 把旧版单群组字段搬进 Groups（一次性、幂等）。
+func (st *State) migrateRoomState() {
+	if len(st.RoomState.Groups) > 0 {
+		return
+	}
+	if !st.RoomState.Active && len(st.Room) == 0 {
+		return
+	}
+	g := RoomGroup{
+		ID: "room-default", Topic: st.RoomState.Topic, Running: st.RoomState.Active,
+		Participants: st.RoomState.Participants, Turn: st.RoomState.Turn, MaxTurns: st.RoomState.MaxTurns,
+		NextAgentID: st.RoomState.NextAgentID, Members: st.RoomMembers, UpdatedAt: st.RoomState.UpdatedAt,
+	}
+	st.RoomState.Groups = []RoomGroup{g}
+	if st.RoomState.ActiveGroupID == "" {
+		st.RoomState.ActiveGroupID = g.ID
+	}
+	for i := range st.Room {
+		if st.Room[i].GroupID == "" {
+			st.Room[i].GroupID = g.ID
+		}
+	}
+	st.RoomState.Active = false
+	st.RoomState.Topic = ""
+	st.RoomState.Participants = nil
+	st.RoomState.Turn = 0
+	st.RoomState.MaxTurns = 0
+	st.RoomState.NextAgentID = ""
+	st.RoomMembers = nil
+}
+
+// pruneRoomGroups：空白（无消息、未跑过）且未在运行的群组不落盘。
+func (st *State) pruneRoomGroups() {
+	hasMsg := map[string]bool{}
+	for i := range st.Room {
+		if st.Room[i].GroupID != "" {
+			hasMsg[st.Room[i].GroupID] = true
+		}
+	}
+	kept := st.RoomState.Groups[:0]
+	for _, g := range st.RoomState.Groups {
+		if g.Running || hasMsg[g.ID] || g.Turn > 0 {
+			kept = append(kept, g)
+		}
+	}
+	st.RoomState.Groups = kept
+	if st.RoomState.ActiveGroupID != "" {
+		ok := false
+		for _, g := range st.RoomState.Groups {
+			if g.ID == st.RoomState.ActiveGroupID {
+				ok = true
+			}
+		}
+		if !ok {
+			st.RoomState.ActiveGroupID = ""
+		}
+	}
 }
 
 // RoomMember 是参与商议的智能体心跳。
@@ -126,6 +203,7 @@ type RoomMember struct {
 // RoomMessage 是智能体内部商议频道的一条消息（仅 Web 内部使用）。
 type RoomMessage struct {
 	ID        string    `json:"id"`
+	GroupID   string    `json:"group_id,omitempty"` // 所属群组商议（tab）
 	AgentID   string    `json:"agent_id,omitempty"`
 	AgentName string    `json:"agent_name,omitempty"`
 	SessionID string    `json:"session_id,omitempty"`
@@ -162,6 +240,7 @@ type Server struct {
 	http        *http.Server
 	agentSesses map[string]*agent.Session
 	secrets     map[string]Secret
+	roomAgentMu sync.Mutex
 
 	// runMu/runs 管理服务端后台对话任务：任务不绑浏览器请求生命周期。
 	runMu sync.Mutex
@@ -179,6 +258,58 @@ type Server struct {
 	// dchat 是去中心化频道（orbitdb 等）的 Node 助手管理器（懒启动）。
 	dchatMu sync.Mutex
 	dchatM  *dchat.Manager
+
+	// roomAgentGroup 记录每个智能体正在参与的群组商议（step 期间），
+	// 供 room.read / room_post 工具定位群组；step 结束即清除。
+	roomAgentGroup map[string]string
+}
+
+// groupByID 返回群组指针（调用方需已持有 s.mu）。
+func (s *Server) groupByID(id string) *RoomGroup {
+	if id == "" {
+		return nil
+	}
+	for i := range s.st.RoomState.Groups {
+		if s.st.RoomState.Groups[i].ID == id {
+			return &s.st.RoomState.Groups[i]
+		}
+	}
+	return nil
+}
+
+// activeGroupID 返回当前选中/运行中的群组 ID（调用方需已持有 s.mu）。
+func (s *Server) activeGroupID() string {
+	if gid := s.st.RoomState.ActiveGroupID; gid != "" && s.groupByID(gid) != nil {
+		return gid
+	}
+	for _, g := range s.st.RoomState.Groups {
+		if g.Running {
+			return g.ID
+		}
+	}
+	if len(s.st.RoomState.Groups) > 0 {
+		return s.st.RoomState.Groups[len(s.st.RoomState.Groups)-1].ID
+	}
+	return ""
+}
+
+func (s *Server) setRoomAgentGroup(agentID, groupID string) {
+	s.roomAgentMu.Lock()
+	if s.roomAgentGroup == nil {
+		s.roomAgentGroup = map[string]string{}
+	}
+	if groupID == "" {
+		delete(s.roomAgentGroup, agentID)
+	} else {
+		s.roomAgentGroup[agentID] = groupID
+	}
+	s.roomAgentMu.Unlock()
+}
+
+func (s *Server) roomAgentGroupOf(agentID string) string {
+	s.roomAgentMu.Lock()
+	defer s.roomAgentMu.Unlock()
+	return s.roomAgentGroup[agentID]
 }
 
 // chatRun 是一轮后台对话的共享状态（部分文本 + 取消）。
@@ -281,16 +412,43 @@ func (s *Server) handleKernel(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRoom(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	msgs := make([]RoomMessage, 0, len(s.st.Room))
-	msgs = append(msgs, s.st.Room...)
-	state := s.st.RoomState
-	members := append([]RoomMember(nil), s.st.RoomMembers...)
+	gid := strings.TrimSpace(r.URL.Query().Get("group"))
+	if gid == "" {
+		gid = s.activeGroupID()
+	}
+	msgs := []RoomMessage{}
+	for i := range s.st.Room {
+		if s.st.Room[i].GroupID == gid {
+			msgs = append(msgs, s.st.Room[i])
+		}
+	}
+	var g RoomGroup
+	if gp := s.groupByID(gid); gp != nil {
+		g = *gp
+	}
+	type gview struct {
+		ID           string   `json:"id"`
+		Topic        string   `json:"topic,omitempty"`
+		Running      bool     `json:"running"`
+		Turn         int      `json:"turn"`
+		Participants []string `json:"participants,omitempty"`
+	}
+	groups := make([]gview, 0, len(s.st.RoomState.Groups))
+	for _, gg := range s.st.RoomState.Groups {
+		groups = append(groups, gview{ID: gg.ID, Topic: gg.Topic, Running: gg.Running, Turn: gg.Turn, Participants: gg.Participants})
+	}
+	channel := s.st.RoomState.Channel
+	orbit := s.st.RoomState.OrbitStatus
 	s.mu.Unlock()
-	s.writeJSON(w, map[string]any{"messages": msgs, "state": state, "members": members})
+	s.writeJSON(w, map[string]any{
+		"messages": msgs, "state": g, "members": g.Members, "groups": groups,
+		"active_group_id": gid, "orbit_status": orbit, "channel": channel,
+	})
 }
 
 func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		GroupID  string   `json:"group_id,omitempty"`
 		AgentIDs []string `json:"agent_ids"`
 		Topic    string   `json:"topic"`
 		MaxTurns int      `json:"max_turns"`
@@ -300,11 +458,6 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	if s.st.RoomState.Active {
-		s.mu.Unlock()
-		http.Error(w, "内部商议已在运行", http.StatusConflict)
-		return
-	}
 	ids := append([]string(nil), req.AgentIDs...)
 	if len(ids) == 0 {
 		for _, a := range s.st.Agents { // 缺省：全部智能体参与
@@ -335,48 +488,142 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 	if topic == "" {
 		topic = "自由商议：同步各自进展、阻塞点和下一步"
 	}
-	participantIDs := make([]string, 0, len(agents))
+	gid := strings.TrimSpace(req.GroupID)
+	g := s.groupByID(gid)
+	if g != nil && g.Running {
+		s.mu.Unlock()
+		http.Error(w, "该群组已在交流中", http.StatusConflict)
+		return
+	}
+	if g == nil {
+		gid = fmt.Sprintf("room-%d", time.Now().UnixNano())
+		s.st.RoomState.Groups = append(s.st.RoomState.Groups, RoomGroup{ID: gid})
+		g = s.groupByID(gid)
+	}
+	participants := make([]string, 0, len(agents))
+	g.Members = make([]RoomMember, 0, len(agents))
 	for _, a := range agents {
-		participantIDs = append(participantIDs, a.ID)
+		participants = append(participants, a.ID)
+		g.Members = append(g.Members, RoomMember{AgentID: a.ID, AgentName: a.Name, Status: "idle", LastBeat: time.Now()})
 	}
-	s.st.RoomState = RoomState{
-		Active: true, Topic: topic, Participants: participantIDs,
-		Turn: 0, MaxTurns: maxTurns, NextAgentID: participantIDs[0], UpdatedAt: time.Now(),
-		Channel: "orbitdb", OrbitStatus: "checking",
+	g.Topic = topic
+	g.Participants = participants
+	g.Turn = 0
+	g.MaxTurns = maxTurns
+	g.NextAgentID = participants[0]
+	g.Running = true
+	g.UpdatedAt = time.Now()
+	s.st.RoomState.ActiveGroupID = gid
+	if s.st.RoomState.Channel == "" {
+		s.st.RoomState.Channel = "orbitdb"
 	}
-	s.st.RoomMembers = make([]RoomMember, 0, len(agents))
-	for _, a := range agents {
-		s.st.RoomMembers = append(s.st.RoomMembers, RoomMember{AgentID: a.ID, AgentName: a.Name, Status: "idle", LastBeat: time.Now()})
-	}
+	s.st.RoomState.OrbitStatus = "checking"
 	_ = s.save()
 	s.mu.Unlock()
 	go s.orbitProbe() // 异步探测 orbitdb 可用性，状态写回 RoomState.OrbitStatus
-	s.postRoom(agents[0], "内部商议", "", "invite", "开始内部商议："+topic)
+	s.postRoom(gid, agents[0], "内部商议", "", "invite", "开始内部商议："+topic)
 	s.startRoomLoop()
-	s.writeJSON(w, map[string]any{"ok": true, "state": s.roomStateSnapshot()})
+	s.mu.Lock()
+	gp := s.groupByID(gid)
+	var snap RoomGroup
+	if gp != nil {
+		snap = *gp
+	}
+	s.mu.Unlock()
+	s.writeJSON(w, map[string]any{"ok": true, "state": snap})
 }
 
 func (s *Server) handleRoomStop(w http.ResponseWriter, r *http.Request) {
-	s.stopRoomLoop()
+	var req struct {
+		GroupID string `json:"group_id,omitempty"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
 	s.mu.Lock()
-	st := s.st.RoomState
-	st.Active = false
-	st.UpdatedAt = time.Now()
-	s.st.RoomState = st
-	for i := range s.st.RoomMembers {
-		s.st.RoomMembers[i].Status = "offline"
+	gid := strings.TrimSpace(req.GroupID)
+	if gid == "" {
+		gid = s.activeGroupID()
+	}
+	if g := s.groupByID(gid); g != nil {
+		g.Running = false
+		g.UpdatedAt = time.Now()
+		for i := range g.Members {
+			g.Members[i].Status = "offline"
+		}
 	}
 	_ = s.save()
 	s.mu.Unlock()
-	s.postRoom(Agent{}, "", "", "discuss", "内部商议已停止")
-	go s.autoArchive()
+	s.postRoom(gid, Agent{}, "", "", "discuss", "内部商议已停止")
+	go s.autoArchive(gid)
 	s.writeJSON(w, map[string]any{"ok": true})
 }
 
+// handleRoomNew 新建一个空白群组（tab）；不落盘（save 时剪枝空白群组）。
+func (s *Server) handleRoomNew(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Topic    string   `json:"topic,omitempty"`
+		AgentIDs []string `json:"agent_ids,omitempty"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	s.mu.Lock()
+	ids := req.AgentIDs
+	if len(ids) == 0 {
+		for _, a := range s.st.Agents {
+			ids = append(ids, a.ID)
+		}
+	}
+	g := RoomGroup{
+		ID:           fmt.Sprintf("room-%d", time.Now().UnixNano()),
+		Topic:        strings.TrimSpace(req.Topic),
+		Participants: ids,
+		UpdatedAt:    time.Now(),
+	}
+	for _, id := range ids {
+		if a := s.findAgent(id); a != nil {
+			g.Members = append(g.Members, RoomMember{AgentID: a.ID, AgentName: a.Name, Status: "idle", LastBeat: time.Now()})
+		}
+	}
+	s.st.RoomState.Groups = append(s.st.RoomState.Groups, g)
+	s.st.RoomState.ActiveGroupID = g.ID
+	// 不 save：空白群组不落盘（save 时也会被 pruneRoomGroups 剪掉）。
+	groups := s.st.RoomState.Groups
+	s.mu.Unlock()
+	s.writeJSON(w, map[string]any{"ok": true, "id": g.ID, "groups": groups})
+}
+
+// handleRoomClose 关闭一个群组 tab：停掉运行、移除群组（消息保留以维持存档游标）。
+func (s *Server) handleRoomClose(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		GroupID string `json:"group_id,omitempty"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	s.mu.Lock()
+	gid := strings.TrimSpace(req.GroupID)
+	if gid == "" {
+		gid = s.activeGroupID()
+	}
+	if g := s.groupByID(gid); g != nil {
+		g.Running = false
+		kept := s.st.RoomState.Groups[:0]
+		for _, gg := range s.st.RoomState.Groups {
+			if gg.ID != gid {
+				kept = append(kept, gg)
+			}
+		}
+		s.st.RoomState.Groups = kept
+	}
+	if s.st.RoomState.ActiveGroupID == gid {
+		s.st.RoomState.ActiveGroupID = ""
+	}
+	_ = s.save() // prune 后 ActiveGroupID 指向存在的群组或为空
+	newActive := s.activeGroupID()
+	s.mu.Unlock()
+	s.writeJSON(w, map[string]any{"ok": true, "active_group_id": newActive})
+}
+
 // autoArchive 商议结束时自动 git 存档；失败把错误摘要投递到 room（不假装成功）。
-func (s *Server) autoArchive() {
+func (s *Server) autoArchive(groupID string) {
 	if _, err := s.roomArchive(); err != nil {
-		s.postRoom(Agent{}, "", "", "discuss", "（git 存档失败："+err.Error()+"）")
+		s.postRoom(groupID, Agent{}, "", "", "discuss", "（git 存档失败："+err.Error()+"）")
 	}
 }
 
@@ -414,44 +661,57 @@ func (s *Server) roomLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if !s.roomStateSnapshot().Active {
-				return
+			s.mu.Lock()
+			var running []string
+			for _, g := range s.st.RoomState.Groups {
+				if g.Running {
+					running = append(running, g.ID)
+				}
 			}
-			s.roomStep(ctx)
+			s.mu.Unlock()
+			if len(running) == 0 {
+				return // 没有运行中的群组，循环自然退出
+			}
+			for _, gid := range running { // 每个运行中的群组各走一步
+				if ctx.Err() != nil {
+					return
+				}
+				s.stepGroup(ctx, gid)
+			}
 		}
 	}
 }
 
-// roomStep 唤醒下一个智能体：读最近商议、决定是否 room_post 发言，然后轮转。
-func (s *Server) roomStep(ctx context.Context) {
+// stepGroup 唤醒群组里的下一个智能体：读最近商议、决定是否 room_post 发言，然后轮转。
+func (s *Server) stepGroup(ctx context.Context, groupID string) {
 	s.mu.Lock()
-	st := s.st.RoomState
-	settings := s.st.Settings
-	if !st.Active || len(st.Participants) < 2 {
+	g := s.groupByID(groupID)
+	if g == nil || !g.Running || len(g.Participants) < 2 {
 		s.mu.Unlock()
 		return
 	}
-	if st.MaxTurns > 0 && st.Turn >= st.MaxTurns { // MaxTurns=0：不限轮次，直到手动停止
-		st.Active = false
-		st.UpdatedAt = time.Now()
-		s.st.RoomState = st
-		for i := range s.st.RoomMembers {
-			s.st.RoomMembers[i].Status = "offline"
+	settings := s.st.Settings
+	if g.MaxTurns > 0 && g.Turn >= g.MaxTurns { // MaxTurns=0：不限轮次，直到手动停止
+		g.Running = false
+		g.UpdatedAt = time.Now()
+		for i := range g.Members {
+			g.Members[i].Status = "offline"
 		}
 		_ = s.save()
 		s.mu.Unlock()
-		s.postRoom(Agent{}, "", "", "discuss", "内部商议达到轮次上限，已自动结束")
-		go s.autoArchive()
+		s.postRoom(groupID, Agent{}, "", "", "discuss", "内部商议达到轮次上限，已自动结束")
+		go s.autoArchive(groupID)
 		return
 	}
-	ag := s.findAgent(st.NextAgentID)
+	ag := s.findAgent(g.NextAgentID)
 	if ag == nil {
-		ag = s.findAgent(st.Participants[0])
+		ag = s.findAgent(g.Participants[0])
 	}
 	var agentCopy Agent
 	if ag != nil {
 		agentCopy = *ag
 	}
+	topic := g.Topic
 	s.mu.Unlock()
 	if ag == nil {
 		return
@@ -461,7 +721,9 @@ func (s *Server) roomStep(ctx context.Context) {
 		return
 	}
 	defer s.endRun("room-"+agentCopy.ID, run)
-	s.setRoomMember(agentCopy, "thinking")
+	s.setRoomAgentGroup(agentCopy.ID, groupID)
+	defer s.setRoomAgentGroup(agentCopy.ID, "")
+	s.setRoomMember(groupID, agentCopy, "thinking")
 	sess := Session{ID: "room-" + agentCopy.ID, AgentID: agentCopy.ID, Title: "内部商议"}
 	as, err := s.agentSession(settings, &sess, agentCopy, nil)
 	if err == nil {
@@ -473,19 +735,23 @@ func (s *Server) roomStep(ctx context.Context) {
 		reply = "（内部商议启动失败：" + err.Error() + "）"
 	} else {
 		turnCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		reply, err = as.Turn(turnCtx, s.roomPrompt(agentCopy, st))
+		reply, err = as.Turn(turnCtx, s.roomPrompt(agentCopy, groupID, topic))
 		cancel()
 	}
 	if err != nil {
 		reply = "（内部商议中断：" + err.Error() + "）"
 	}
 	if s.roomLen() == before && strings.TrimSpace(reply) != "" && !strings.EqualFold(strings.TrimSpace(reply), "PASS") {
-		s.postRoom(agentCopy, "内部商议", sess.ID, "discuss", reply)
+		s.postRoom(groupID, agentCopy, "内部商议", sess.ID, "discuss", reply)
 	}
-	s.setRoomMember(agentCopy, "idle")
+	s.setRoomMember(groupID, agentCopy, "idle")
 	// 轮转：按参与者顺序找下一个。
 	s.mu.Lock()
-	cur := s.st.RoomState
+	cur := s.groupByID(groupID)
+	if cur == nil {
+		s.mu.Unlock()
+		return
+	}
 	cur.Turn++
 	next := cur.Participants[0]
 	for i, id := range cur.Participants {
@@ -496,20 +762,23 @@ func (s *Server) roomStep(ctx context.Context) {
 	}
 	cur.NextAgentID = next
 	cur.UpdatedAt = time.Now()
-	s.st.RoomState = cur
 	_ = s.save()
 	s.mu.Unlock()
 }
-
-func (s *Server) roomPrompt(ag Agent, st RoomState) string {
+func (s *Server) roomPrompt(ag Agent, groupID, topic string) string {
 	s.mu.Lock()
-	msgs := append([]RoomMessage(nil), s.st.Room...)
+	var msgs []RoomMessage
+	for i := range s.st.Room {
+		if s.st.Room[i].GroupID == groupID {
+			msgs = append(msgs, s.st.Room[i])
+		}
+	}
 	s.mu.Unlock()
 	if len(msgs) > 16 {
 		msgs = msgs[len(msgs)-16:]
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "你是 %s。内部商议正在主动维护，主题：%s。\n最近消息：\n", ag.Name, st.Topic)
+	fmt.Fprintf(&b, "你是 %s。内部群组商议正在主动维护，主题：%s。\n最近消息：\n", ag.Name, topic)
 	for _, m := range msgs {
 		who := m.AgentName
 		if who == "" {
@@ -520,27 +789,30 @@ func (s *Server) roomPrompt(ag Agent, st RoomState) string {
 	b.WriteString("\n请判断是否需要推进商议：需要就用 room_post 发一条具体、简短的消息；暂时不需要就只回答 PASS。不要给用户写汇报。")
 	return b.String()
 }
-
 func (s *Server) roomLen() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.st.Room)
 }
 
-func (s *Server) setRoomMember(ag Agent, status string) {
+func (s *Server) setRoomMember(groupID string, ag Agent, status string) {
 	s.mu.Lock()
 	now := time.Now()
+	g := s.groupByID(groupID)
+	if g == nil {
+		s.mu.Unlock()
+		return
+	}
 	found := false
-	for i := range s.st.RoomMembers {
-		if s.st.RoomMembers[i].AgentID == ag.ID {
-			s.st.RoomMembers[i].Status = status
-			s.st.RoomMembers[i].LastBeat = now
+	for i := range g.Members {
+		if g.Members[i].AgentID == ag.ID {
+			g.Members[i].Status = status
+			g.Members[i].LastBeat = now
 			found = true
-			break
 		}
 	}
-	if !found {
-		s.st.RoomMembers = append(s.st.RoomMembers, RoomMember{AgentID: ag.ID, AgentName: ag.Name, Status: status, LastBeat: now})
+	if !found && ag.ID != "" {
+		g.Members = append(g.Members, RoomMember{AgentID: ag.ID, AgentName: ag.Name, Status: status, LastBeat: now})
 	}
 	_ = s.save()
 	s.mu.Unlock()
@@ -574,12 +846,15 @@ func (s *Server) handleRoomPost(w http.ResponseWriter, r *http.Request) {
 		title = sess.Title
 	}
 	s.mu.Unlock()
-	s.postRoom(a, title, req.SessionID, "discuss", text)
+	s.mu.Lock()
+	gid := s.activeGroupID()
+	s.mu.Unlock()
+	s.postRoom(gid, a, title, req.SessionID, "discuss", text)
 	s.writeJSON(w, map[string]any{"ok": true})
 }
 
 // postRoom 追加一条内部商议消息；最多保留最近 300 条。
-func (s *Server) postRoom(ag Agent, sessionTitle, sessionID, kind, text string) {
+func (s *Server) postRoom(groupID string, ag Agent, sessionTitle, sessionID, kind, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return
@@ -595,6 +870,7 @@ func (s *Server) postRoom(ag Agent, sessionTitle, sessionID, kind, text string) 
 	}
 	msg := RoomMessage{
 		ID:        fmt.Sprintf("room-%d", time.Now().UnixNano()),
+		GroupID:   groupID,
 		AgentID:   ag.ID,
 		AgentName: ag.Name,
 		SessionID: sessionID,
@@ -608,11 +884,13 @@ func (s *Server) postRoom(ag Agent, sessionTitle, sessionID, kind, text string) 
 	if len(s.st.Room) > 20000 { // 5000 轮上限 × 每轮数条，全量可存档
 		s.st.Room = s.st.Room[len(s.st.Room)-20000:]
 	}
-	for i := range s.st.RoomMembers {
-		if s.st.RoomMembers[i].AgentID == ag.ID && ag.ID != "" {
-			s.st.RoomMembers[i].LastBeat = time.Now()
-			s.st.RoomMembers[i].LastPost = time.Now()
-			s.st.RoomMembers[i].Status = "idle"
+	if g := s.groupByID(groupID); g != nil && ag.ID != "" {
+		for i := range g.Members {
+			if g.Members[i].AgentID == ag.ID {
+				g.Members[i].LastBeat = time.Now()
+				g.Members[i].LastPost = time.Now()
+				g.Members[i].Status = "idle"
+			}
 		}
 	}
 	mirror := s.st.RoomState.Channel != ""
@@ -693,6 +971,8 @@ func NewWithRoot(addr, dir, root string) (*Server, error) {
 	mux.HandleFunc("POST /api/chat/stop", s.handleChatStop)
 	mux.HandleFunc("GET /api/room", s.handleRoom)
 	mux.HandleFunc("POST /api/room", s.handleRoomPost)
+	mux.HandleFunc("POST /api/room/new", s.handleRoomNew)
+	mux.HandleFunc("POST /api/room/close", s.handleRoomClose)
 	mux.HandleFunc("POST /api/room/start", s.handleRoomStart)
 	mux.HandleFunc("POST /api/room/stop", s.handleRoomStop)
 	mux.HandleFunc("GET /api/kernel", s.handleKernel)
@@ -824,9 +1104,11 @@ func (s *Server) load() error {
 	if err := json.Unmarshal(b, &s.st); err != nil {
 		return fmt.Errorf("webapp: 状态文件损坏: %w", err)
 	}
+	s.st.migrateRoomState()
 	if len(s.st.Agents) == 0 {
 		return s.initState()
 	}
+	s.st.migrateRoomState()
 	return nil
 }
 
@@ -1053,6 +1335,7 @@ func (s *Server) initState() error {
 }
 
 func (s *Server) save() error {
+	s.st.pruneRoomGroups() // 空白群组不落盘
 	b, err := json.MarshalIndent(&s.st, "", "  ")
 	if err != nil {
 		return err
@@ -1671,7 +1954,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	title := sess.Title
 	_ = s.save()
 	s.mu.Unlock()
-	s.postRoom(*agent, title, sess.ID, "report", reply)
+	s.postRoom(s.roomAgentGroupOf(agent.ID), *agent, title, sess.ID, "report", reply)
 	s.writeJSON(w, map[string]any{"reply": reply})
 }
 
@@ -1800,7 +2083,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		title := sess.Title
 		_ = s.save()
 		s.mu.Unlock()
-		s.postRoom(*ag, title, sess.ID, "report", "任务中断："+err.Error())
+		s.postRoom(s.roomAgentGroupOf(ag.ID), *ag, title, sess.ID, "report", "任务中断："+err.Error())
 		send("error", map[string]string{"error": err.Error()})
 		return
 	}
@@ -1809,7 +2092,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	title := sess.Title
 	_ = s.save()
 	s.mu.Unlock()
-	s.postRoom(*ag, title, sess.ID, "report", reply)
+	s.postRoom(s.roomAgentGroupOf(ag.ID), *ag, title, sess.ID, "report", reply)
 	send("done", map[string]string{"reply": reply})
 }
 
@@ -1822,7 +2105,16 @@ func (s *Server) registerRoomTools(as *agent.Session, sess *Session, ag Agent) e
 	readSpec.Function.Description = "读取智能体内部商议频道最近的消息（只读，用于了解其它智能体的汇报/讨论）"
 	if err := as.RegisterTool(agent.Tool{Spec: readSpec, Executor: func(_ context.Context, _ string, _ map[string]any) (string, error) {
 		s.mu.Lock()
-		msgs := append([]RoomMessage(nil), s.st.Room...)
+		gid := s.roomAgentGroupOf(ag.ID)
+		if gid == "" {
+			gid = s.activeGroupID()
+		}
+		var msgs []RoomMessage
+		for i := range s.st.Room {
+			if s.st.Room[i].GroupID == gid {
+				msgs = append(msgs, s.st.Room[i])
+			}
+		}
 		s.mu.Unlock()
 		if len(msgs) == 0 {
 			return "（内部商议暂无消息）", nil
@@ -1855,7 +2147,13 @@ func (s *Server) registerRoomTools(as *agent.Session, sess *Session, ag Agent) e
 		if strings.TrimSpace(text) == "" {
 			return "", fmt.Errorf("room.post: text 为空")
 		}
-		s.postRoom(ag, sess.Title, sess.ID, "discuss", text)
+		gid := s.roomAgentGroupOf(ag.ID)
+		if gid == "" {
+			s.mu.Lock()
+			gid = s.activeGroupID()
+			s.mu.Unlock()
+		}
+		s.postRoom(gid, ag, sess.Title, sess.ID, "discuss", text)
 		return "已发送到内部商议频道（本地 + orbitdb 镜像）", nil
 	}})
 }
