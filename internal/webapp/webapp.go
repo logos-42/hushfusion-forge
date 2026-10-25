@@ -264,6 +264,9 @@ type Server struct {
 	// roomAgentGroup 记录每个智能体正在参与的群组商议（step 期间），
 	// 供 room.read / room_post 工具定位群组；step 结束即清除。
 	roomAgentGroup map[string]string
+	// roomStepping 防止同一群组并发步进（心跳 tick 与用户消息立即触发竞争）。
+	roomStepMu   sync.Mutex
+	roomStepping map[string]bool
 }
 
 // groupByID 返回群组指针（调用方需已持有 s.mu）。
@@ -598,7 +601,39 @@ func (s *Server) handleRoomGuide(w http.ResponseWriter, r *http.Request) {
 	if kind == "guide" {
 		text = "【用户引导，全体遵循】" + text
 	}
+	s.mu.Lock()
+	g := s.groupByID(gid)
+	needStart := false
+	if g != nil {
+		// 用户消息唤醒：已结束的群组自动恢复运行，警长优先响应。
+		needStart = !g.Running
+		g.Running = true
+		g.UpdatedAt = time.Now()
+		for i := range g.Members {
+			if g.Members[i].Status == "offline" {
+				g.Members[i].Status = "idle"
+			}
+		}
+		if len(g.Participants) > 0 {
+			next := g.Participants[0]
+			if g.LeaderAgentID != "" {
+				for _, id := range g.Participants {
+					if id == g.LeaderAgentID {
+						next = id
+						break
+					}
+				}
+			}
+			g.NextAgentID = next
+		}
+		_ = s.save()
+	}
+	s.mu.Unlock()
 	s.postRoom(gid, Agent{Name: "用户"}, "群组指导", "", kind, text)
+	if needStart {
+		s.startRoomLoop()
+	}
+	go s.kickRoomStep(context.Background(), gid) // 立即步进，不等心跳
 	s.writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -730,10 +765,30 @@ func (s *Server) roomLoop(ctx context.Context) {
 				if ctx.Err() != nil {
 					return
 				}
-				s.stepGroup(ctx, gid)
+				s.kickRoomStep(ctx, gid)
 			}
 		}
 	}
+}
+
+// kickRoomStep 立即步进指定群组（防重入）：用户发消息后即时响应，不等 8s 心跳。
+func (s *Server) kickRoomStep(ctx context.Context, groupID string) {
+	s.roomStepMu.Lock()
+	if s.roomStepping == nil {
+		s.roomStepping = map[string]bool{}
+	}
+	if s.roomStepping[groupID] {
+		s.roomStepMu.Unlock()
+		return
+	}
+	s.roomStepping[groupID] = true
+	s.roomStepMu.Unlock()
+	defer func() {
+		s.roomStepMu.Lock()
+		delete(s.roomStepping, groupID)
+		s.roomStepMu.Unlock()
+	}()
+	s.stepGroup(ctx, groupID)
 }
 
 // stepGroup 唤醒群组里的下一个智能体：读最近商议、决定是否 room_post 发言，然后轮转。
