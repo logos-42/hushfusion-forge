@@ -2644,6 +2644,21 @@ func (s *Server) agentSession(settings Settings, sess *Session, ag Agent, histor
 		return ai.Chat(ctx, settings.Provider, req, opts())
 	}
 	as := agent.NewSession(cfg, chat, agent.NewRegistry(), systemPrompt(ag))
+	// 技能注入：HUSHFUSION_SKILLS_DIR（缺省 <workspace>/skills）+ ~/.hermes/skills
+	// + 智能体全局 skills/；同名后者覆盖，目录缺失自动跳过（技能可选）。
+	skillDirs := []string{}
+	if d := strings.TrimSpace(os.Getenv("HUSHFUSION_SKILLS_DIR")); d != "" {
+		skillDirs = append(skillDirs, d)
+	} else {
+		skillDirs = append(skillDirs, filepath.Join(root, "skills"))
+	}
+	if home, herr := os.UserHomeDir(); herr == nil && home != "" {
+		skillDirs = append(skillDirs, filepath.Join(home, ".hermes", "skills"))
+	}
+	if globalDir != "" {
+		skillDirs = append(skillDirs, filepath.Join(globalDir, "skills"))
+	}
+	as.Skills = agent.NewSkills(skillDirs, nil)
 	mem, err := agent.NewMemStoreFile(filepath.Join(globalDir, "memory.json"))
 	if err != nil {
 		return nil, fmt.Errorf("加载智能体记忆失败: %w", err)
