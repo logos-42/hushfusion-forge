@@ -516,6 +516,7 @@ func (s *Server) handleRoomStart(w http.ResponseWriter, r *http.Request) {
 		g.TitleLocked = true // 用户显式给的主题锁定，AI 不改名
 	} else if g.Topic == "" {
 		g.Topic = "自由商议：同步各自进展、阻塞点和下一步"
+		topic = g.Topic
 	}
 	participants := make([]string, 0, len(agents))
 	g.Members = make([]RoomMember, 0, len(agents))
@@ -796,6 +797,10 @@ func (s *Server) stepGroup(ctx context.Context, groupID string) {
 		return
 	}
 	settings := s.st.Settings
+	if !s.roomBackoff[groupID].IsZero() && time.Now().Before(s.roomBackoff[groupID]) {
+		s.mu.Unlock()
+		return // 模型不可用退避中，心跳暂停；用户发消息仍可强制尝试
+	}
 	if g.MaxTurns > 0 && g.Turn >= g.MaxTurns { // MaxTurns=0：不限轮次，直到手动停止
 		g.Running = false
 		g.UpdatedAt = time.Now()
@@ -958,15 +963,23 @@ func (s *Server) agentTurn(ctx context.Context, groupID string, agentCopy Agent,
 		}
 	}
 	if err != nil {
-		reply = "（内部商议中断：" + err.Error() + "）"
-	}
-	if s.roomLen() == before && strings.TrimSpace(reply) != "" && !strings.EqualFold(strings.TrimSpace(reply), "PASS") {
+		// 失败不逐条刷屏：只在"可用→不可用"第一跳发一条提示，群组退避 2 分钟后自动恢复。
+		s.mu.Lock()
+		first := s.roomBackoff[groupID].IsZero()
+		s.roomBackoff[groupID] = time.Now().Add(2 * time.Minute)
+		s.mu.Unlock()
+		fmt.Fprintf(os.Stderr, "room: %s 模型调用失败(%s): %v\n", agentCopy.Name, groupID, err)
+		if first {
+			s.postRoom(groupID, Agent{}, "", "", "discuss", "（模型调用暂时不可用，已暂停商议，2 分钟后自动重试）")
+		}
+	} else if s.roomLen() == before && strings.TrimSpace(reply) != "" && !strings.EqualFold(strings.TrimSpace(reply), "PASS") {
 		s.postRoom(groupID, agentCopy, "内部商议", sess.ID, "discuss", reply)
 	}
 	s.setRoomMember(groupID, agentCopy, "idle")
-	// 完成即计数（并行分发没有全局顺序，按完成轮数计）。
+	// 成功才计数（并行分发没有全局顺序，按完成轮数计）；失败不烧轮次。
 	s.mu.Lock()
-	if cur := s.groupByID(groupID); cur != nil {
+	if cur := s.groupByID(groupID); cur != nil && err == nil {
+		delete(s.roomBackoff, groupID)
 		cur.Turn++
 		cur.UpdatedAt = time.Now()
 		_ = s.save()
